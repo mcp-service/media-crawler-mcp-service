@@ -99,12 +99,12 @@ def register_resources(app: FastMCP) -> None:
         返回已启用的平台列表和配置信息
         """
         import json
-        from app.config.platform_config import PlatformConfig
+        from app.config.settings import global_settings
 
-        enabled = PlatformConfig.list_enabled_platforms()
+        enabled = global_settings.platforms.list_enabled_platforms()
         all_platforms = [
-            {"code": code, "name": PlatformConfig.PLATFORM_NAMES[code]}
-            for code in PlatformConfig.ALL_PLATFORMS
+            {"code": code, "name": global_settings.platforms.PLATFORM_NAMES[code]}
+            for code in global_settings.platforms.ALL_PLATFORMS
         ]
 
         return json.dumps({

@@ -13,7 +13,7 @@ MEDIA_CRAWLER_PATH = Path(__file__).parent.parent.parent.parent / "media_crawler
 sys.path.insert(0, str(MEDIA_CRAWLER_PATH))
 
 from app.providers.logger import get_logger
-from app.config.platform_config import PlatformConfig
+from app.config.settings import global_settings
 
 router = APIRouter()
 
@@ -37,7 +37,7 @@ class LoginStatusResponse(BaseModel):
 @router.get("/platforms")
 async def get_platforms() -> List[Dict[str, str]]:
     """获取支持的平台列表"""
-    return PlatformConfig.list_enabled_platforms()
+    return global_settings.platforms.list_enabled_platforms()
 
 
 @router.post("/start")
@@ -48,23 +48,29 @@ async def start_login(request: LoginRequest) -> Dict[str, Any]:
     这个接口会启动一个登录会话，返回二维码或提示信息
     """
     try:
-        if request.platform not in PlatformConfig.get_enabled_platforms():
+        if request.platform not in global_settings.platforms.get_enabled_platforms():
             raise HTTPException(status_code=400, detail=f"平台 {request.platform} 未启用")
-
-        # TODO: 实现实际的登录逻辑
-        # 1. 创建登录会话
-        # 2. 根据login_type启动对应的登录流程
-        # 3. 返回二维码URL或其他提示信息
 
         get_logger().info(f"[登录管理] 启动登录: platform={request.platform}, type={request.login_type}")
 
+        # 导入登录管理器
+        from app.core.login_service import login_service
+
+        # 创建登录会话
+        session = await login_service.start_login(
+            platform=request.platform,
+            login_type=request.login_type,
+            phone=request.phone,
+            cookie=request.cookie
+        )
+
         return {
-            "status": "pending",
+            "status": session.get("status"),
             "platform": request.platform,
             "login_type": request.login_type,
-            "message": f"登录流程已启动，请在{request.platform}完成登录操作",
-            "session_id": f"session_{request.platform}_{request.login_type}",
-            "qr_code_url": None  # 实际实现时返回二维码图片URL
+            "message": session.get("message"),
+            "session_id": session.get("session_id"),
+            "qr_code_base64": session.get("qr_code_base64")  # 直接返回base64图片数据
         }
 
     except Exception as e:
@@ -78,7 +84,7 @@ async def get_login_status(platform: str) -> LoginStatusResponse:
     获取平台登录状态
     """
     try:
-        if platform not in PlatformConfig.get_enabled_platforms():
+        if platform not in global_settings.platforms.get_enabled_platforms():
             raise HTTPException(status_code=400, detail=f"平台 {platform} 未启用")
 
         # TODO: 实际实现
@@ -106,7 +112,7 @@ async def logout(platform: str) -> Dict[str, Any]:
     清除指定平台的登录态
     """
     try:
-        if platform not in PlatformConfig.get_enabled_platforms():
+        if platform not in global_settings.platforms.get_enabled_platforms():
             raise HTTPException(status_code=400, detail=f"平台 {platform} 未启用")
 
         # TODO: 实际实现
@@ -127,6 +133,32 @@ async def logout(platform: str) -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/session/{session_id}")
+async def get_session_status(session_id: str) -> Dict[str, Any]:
+    """
+    获取登录会话状态
+    """
+    try:
+        from app.core.login_service import login_service
+        
+        session = await login_service.get_session_status(session_id)
+        if not session:
+            raise HTTPException(status_code=404, detail="会话不存在")
+        
+        return {
+            "status": session.get("status"),
+            "platform": session.get("platform"),
+            "message": session.get("message"),
+            "qr_code_base64": session.get("qr_code_base64")
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        get_logger().error(f"[登录管理] 获取会话状态失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/sessions")
 async def list_sessions() -> List[Dict[str, Any]]:
     """
@@ -134,16 +166,21 @@ async def list_sessions() -> List[Dict[str, Any]]:
     """
     try:
         sessions = []
-        for platform_info in PlatformConfig.list_enabled_platforms():
+        for platform_info in global_settings.platforms.list_enabled_platforms():
             platform_code = platform_info["code"]
-
-            # TODO: 实际检查登录状态
+            
+            # 检查是否有保存的会话
+            browser_data_dir = Path(f"browser_data/{platform_code}")
+            session_file = Path(f"browser_data/{platform_code}_session.json")
+            
+            is_logged_in = browser_data_dir.exists() or session_file.exists()
+            
             sessions.append({
                 "platform": platform_code,
                 "platform_name": platform_info["name"],
-                "is_logged_in": False,  # 实际实现时检查
-                "last_login_time": None,
-                "expires_at": None
+                "is_logged_in": is_logged_in,
+                "last_login": "最近登录" if is_logged_in else "从未登录",
+                "session_path": str(browser_data_dir) if browser_data_dir.exists() else None
             })
 
         return sessions

@@ -29,7 +29,7 @@ WORKDIR /app
 COPY pyproject.toml poetry.lock* ./
 
 # 更新 lock 文件（如果 pyproject.toml 有变化）
-RUN poetry lock --no-update || poetry lock
+RUN poetry lock
 
 # 导出包含所有依赖的 requirements.txt
 RUN poetry export \

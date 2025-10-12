@@ -59,6 +59,75 @@ services:
     networks:
       - mcp-network
 
+  # MediaCrawler Sidecar Service - 常驻爬虫服务（新增）
+  media-crawler-sidecar:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.sidecar
+      args:
+        - BUILDKIT_INLINE_CACHE=1
+    image: media-crawler-sidecar:latest
+    container_name: media-crawler-sidecar
+    restart: unless-stopped
+    environment:
+      # Application Settings
+      APP_ENV: ${APP_ENV:-prod}
+      PYTHONPATH: /app:/app/media_crawler
+      PYTHONUNBUFFERED: 1
+      TZ: Asia/Shanghai
+
+      # Database Configuration (共享配置)
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-password}
+      DB_NAME: ${DB_NAME:-mcp_tools_db}
+
+      # Redis Configuration
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_DB: ${REDIS_DB:-0}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+
+      # Sidecar Service Configuration
+      SIDECAR_PORT: ${SIDECAR_PORT:-8001}
+      BROWSER_POOL_SIZE: ${BROWSER_POOL_SIZE:-3}
+
+      # Playwright Configuration
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+    ports:
+      - "${SIDECAR_PORT:-8001}:8001"  # Sidecar HTTP API
+    volumes:
+      # Shared Data Volumes
+      - ../data:/app/data
+      - ../logs:/app/logs
+      - browser_data:/app/browser_data  # 共享浏览器数据（Cookie等）
+      # Configuration Files (read-only)
+      - ../app/config:/app/app/config:ro
+      - ../.env:/app/.env:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health", "||", "exit", "1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s  # 浏览器池初始化需要更长时间
+    networks:
+      - mcp-network
+    # Resource Limits (爬虫服务需要更多资源)
+    deploy:
+      resources:
+        limits:
+          cpus: '3'
+          memory: 4G
+        reservations:
+          cpus: '1'
+          memory: 2G
+
   # MCP Tools Service - Main FastMCP + FastAPI Application
   mcp-service:
     build:
@@ -91,16 +160,8 @@ services:
       REDIS_DB: ${REDIS_DB:-0}
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
 
-      # MediaCrawler Configuration
-      ENABLED_PLATFORMS: ${ENABLED_PLATFORMS:-all}
-      MEDIA_CRAWLER_PLATFORM: ${MEDIA_CRAWLER_PLATFORM:-xhs}
-      MEDIA_CRAWLER_TYPE: ${MEDIA_CRAWLER_TYPE:-search}
-      MEDIA_CRAWLER_LOGIN_TYPE: ${MEDIA_CRAWLER_LOGIN_TYPE:-qrcode}
-      MEDIA_CRAWLER_HEADLESS: ${MEDIA_CRAWLER_HEADLESS:-true}
-      MEDIA_CRAWLER_SAVE_DATA_OPTION: ${MEDIA_CRAWLER_SAVE_DATA_OPTION:-json}
-
-      # Playwright Configuration
-      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+      # MediaCrawler Sidecar Connection（新增）
+      MEDIA_CRAWLER_SIDECAR_URL: http://media-crawler-sidecar:8001
 
       # JWT Configuration (optional)
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-your-secret-key-change-in-production}
@@ -111,7 +172,6 @@ services:
       # Application Data
       - ../data:/app/data
       - ../logs:/app/logs
-      - browser_data:/app/browser_data
       # Configuration Files (read-only)
       - ../app/config:/app/app/config:ro
       - ../.env:/app/.env:ro
@@ -120,6 +180,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      media-crawler-sidecar:
+        condition: service_healthy  # 依赖边车服务
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9090/health", "||", "exit", "1"]
       interval: 30s
@@ -128,15 +190,15 @@ services:
       start_period: 60s
     networks:
       - mcp-network
-    # Resource Limits (adjust based on your needs)
+    # Resource Limits (主服务资源需求降低)
     deploy:
       resources:
         limits:
-          cpus: '2'
-          memory: 2G
+          cpus: '1.5'
+          memory: 1.5G
         reservations:
           cpus: '0.5'
-          memory: 1G
+          memory: 512M
 
   # Nginx Reverse Proxy (Optional - for production deployment)
   nginx:

@@ -1,7 +1,7 @@
 [tool.poetry]
-name = "mcp-toolse"
+name = "media-crawler-mcp-service"
 version = "0.1.0"
-description = "IKB Agent Service - AI工具服务"
+description = "MediaCrawler 的社交媒体爬虫功能暴露为 MCP 协议工具"
 authors = ["yancyyu <yancyyu.ok@gmail.com>"]
 readme = "README.md"
 packages = [{include = "app"}, {include = "common_sdk"}]
@@ -12,6 +12,7 @@ python = "^3.11"
 asyncpg = "^0.30.0"
 fastmcp = "*"
 httpx = "^0.27.0"
+jinja2 = "^3.1.0"
 loguru = "^0.7.0"
 pydantic = "^2.5.0"
 pydantic-settings = "^2.1.0"
@@ -25,6 +26,7 @@ websockets = "^13.0"
 aiofiles = "^24.1.0"
 qrcode = {extras = ["pil"], version = "^7.4.2"}
 pillow = "^10.0.0"
+psutil = "^5.9.0"
 
 # Media Crawler Dependencies (from media_crawler/pyproject.toml)
 aiomysql = "0.2.0"
@@ -81,7 +83,7 @@ extend-exclude = '''
 profile = "black"
 multi_line_output = 3
 line_length = 88
-known_first_party = ["app", "common_sdk"]
+known_first_party = ["app", "media_crawler"]
 
 [tool.mypy]
 python_version = "3.11"

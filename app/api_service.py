@@ -113,14 +113,14 @@ def _patch_fastmcp_sse(app: FastMCP):
 def auto_discover_endpoints():
     """自动发现并注册所有端点（支持选择性注册平台）"""
     try:
-        from app.config.platform_config import PlatformConfig
+        from app.config.settings import global_settings
 
         # 获取启用的平台
-        enabled_platforms = PlatformConfig.get_enabled_platforms()
+        enabled_platforms = global_settings.platforms.get_enabled_platforms()
         get_logger().info(f"✅ 启用的平台: {', '.join(sorted(enabled_platforms))}")
 
         # 注册社交媒体平台端点
-        from app.api.endpoints.platforms import (
+        from app.api.endpoints.mcp import (
             XiaohongshuEndpoint,
             DouyinEndpoint,
             KuaishouEndpoint,
@@ -129,6 +129,10 @@ def auto_discover_endpoints():
             TiebaEndpoint,
             ZhihuEndpoint,
         )
+        
+        # 注册新增的登录和边车服务端点
+        from app.api.endpoints.login import LoginEndpoint
+        from app.api.endpoints.sidecar import SidecarEndpoint
 
         # 平台端点映射
         platform_endpoints = {
@@ -147,9 +151,16 @@ def auto_discover_endpoints():
             if platform_code in enabled_platforms:
                 endpoint_registry.register(endpoint_class())
                 registered_count += 1
-                get_logger().info(f"  ✅ 已注册 {PlatformConfig.get_platform_name(platform_code)} ({platform_code})")
+                get_logger().info(f"  ✅ 已注册 {global_settings.platforms.get_platform_name(platform_code)} ({platform_code})")
 
-        get_logger().info(f"✅ 所有端点自动发现完成 ({registered_count} 个平台)")
+        # 注册登录和边车服务端点（总是启用）
+        endpoint_registry.register(LoginEndpoint())
+        endpoint_registry.register(SidecarEndpoint())
+        registered_count += 2
+        get_logger().info(f"  ✅ 已注册 登录管理端点")
+        get_logger().info(f"  ✅ 已注册 边车服务端点")
+
+        get_logger().info(f"✅ 所有端点自动发现完成 ({registered_count} 个端点：{registered_count-2} 个平台 + 2 个服务）")
 
     except Exception as e:
         get_logger().error(f"❌ 端点自动发现失败: {e}")
