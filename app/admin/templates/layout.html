@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}MCP Tools 管理后台{% endblock %}</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+    <style>
+        [x-cloak] { display: none !important; }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <nav class="bg-white shadow-lg">
+        <div class="max-w-7xl mx-auto px-4">
+            <div class="flex justify-between items-center py-4">
+                <div class="flex space-x-7">
+                    <a href="/" class="flex items-center">
+                        <span class="font-semibold text-gray-500 text-lg">🤖 MCP Tools 管理后台</span>
+                    </a>
+                    <div class="flex items-center space-x-1">
+                        <a href="/" class="py-4 px-2 text-gray-500 font-semibold hover:text-blue-500 transition duration-300">仪表板</a>
+                        <a href="/login" class="py-4 px-2 text-gray-500 font-semibold hover:text-blue-500 transition duration-300">登录管理</a>
+                        <a href="/config" class="py-4 px-2 text-gray-500 font-semibold hover:text-blue-500 transition duration-300">配置管理</a>
+                    </div>
+                </div>
+                <div class="flex items-center space-x-3">
+                    <span class="text-sm text-gray-600">MCP端口: 9090 | 管理端口: 9091</span>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <main class="max-w-7xl mx-auto px-4 py-6">
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer class="bg-white mt-8">
+        <div class="max-w-7xl mx-auto px-4 py-4 text-center text-gray-500 text-sm">
+            <p>MCP Tools Admin v1.0.0 | 社交媒体爬虫管理系统</p>
+        </div>
+    </footer>
+
+    {% block scripts %}{% endblock %}
+</body>
+</html>

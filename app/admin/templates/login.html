@@ -1,0 +1,129 @@
+{% extends "layout.html" %}
+
+{% block title %}登录管理 - MCP Tools{% endblock %}
+
+{% block content %}
+<div class="bg-white rounded-lg shadow p-6" x-data="loginManager()">
+    <h1 class="text-2xl font-bold mb-6">🔐 平台登录管理</h1>
+
+    <!-- 平台登录状态 -->
+    <div class="mb-8">
+        <h2 class="text-lg font-semibold mb-4">登录状态</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" x-cloak>
+            <template x-for="session in sessions" :key="session.platform">
+                <div class="border rounded-lg p-4 hover:shadow-md transition">
+                    <div class="flex justify-between items-start mb-2">
+                        <h3 class="font-semibold" x-text="session.platform_name"></h3>
+                        <span :class="session.is_logged_in ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'"
+                              class="px-2 py-1 rounded text-xs"
+                              x-text="session.is_logged_in ? '已登录' : '未登录'"></span>
+                    </div>
+                    <p class="text-sm text-gray-600 mb-3" x-text="session.platform"></p>
+                    <button @click="showLoginModal(session.platform)"
+                            class="w-full bg-blue-500 hover:bg-blue-600 text-white py-2 px-4 rounded text-sm">
+                        <span x-text="session.is_logged_in ? '重新登录' : '开始登录'"></span>
+                    </button>
+                </div>
+            </template>
+        </div>
+    </div>
+
+    <!-- 登录模态框 -->
+    <div x-show="showModal" x-cloak class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+         @click.away="showModal = false">
+        <div class="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+            <h3 class="text-lg font-semibold mb-4" x-text="'登录到 ' + selectedPlatform"></h3>
+
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">登录方式</label>
+                    <select x-model="loginType" class="w-full border rounded p-2">
+                        <option value="qrcode">二维码扫码</option>
+                        <option value="cookie">Cookie登录</option>
+                    </select>
+                </div>
+
+                <div x-show="loginType === 'qrcode'" class="text-center">
+                    <p class="text-sm text-gray-600 mb-4">请在浏览器中打开对应平台扫码登录</p>
+                    <div class="bg-gray-100 h-48 flex items-center justify-center rounded">
+                        <span class="text-gray-400">二维码区域（需要实现）</span>
+                    </div>
+                </div>
+
+                <div x-show="loginType === 'cookie'">
+                    <label class="block text-sm font-medium text-gray-700 mb-2">粘贴Cookie</label>
+                    <textarea x-model="cookieValue" rows="4"
+                              class="w-full border rounded p-2 text-sm"
+                              placeholder="从浏览器开发者工具获取Cookie..."></textarea>
+                </div>
+
+                <div class="flex space-x-2">
+                    <button @click="startLogin"
+                            class="flex-1 bg-blue-500 hover:bg-blue-600 text-white py-2 px-4 rounded">
+                        确认登录
+                    </button>
+                    <button @click="showModal = false"
+                            class="flex-1 bg-gray-300 hover:bg-gray-400 text-gray-800 py-2 px-4 rounded">
+                        取消
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function loginManager() {
+    return {
+        sessions: [],
+        showModal: false,
+        selectedPlatform: '',
+        loginType: 'qrcode',
+        cookieValue: '',
+
+        async init() {
+            await this.loadSessions();
+        },
+
+        async loadSessions() {
+            try {
+                const response = await fetch('/api/login/sessions');
+                this.sessions = await response.json();
+            } catch (error) {
+                console.error('加载登录会话失败:', error);
+            }
+        },
+
+        showLoginModal(platform) {
+            this.selectedPlatform = platform;
+            this.showModal = true;
+            this.loginType = 'qrcode';
+            this.cookieValue = '';
+        },
+
+        async startLogin() {
+            try {
+                const response = await fetch('/api/login/start', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        platform: this.selectedPlatform,
+                        login_type: this.loginType,
+                        cookie: this.cookieValue
+                    })
+                });
+
+                const result = await response.json();
+                alert(result.message || '登录流程已启动');
+                this.showModal = false;
+                await this.loadSessions();
+            } catch (error) {
+                alert('登录失败: ' + error.message);
+            }
+        }
+    }
+}
+</script>
+{% endblock %}

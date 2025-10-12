@@ -1,0 +1,269 @@
+{% extends "layout.html" %}
+
+{% block title %}仪表板 - MCP Tools{% endblock %}
+
+{% block content %}
+<div class="space-y-6" x-data="dashboard()">
+    <!-- 系统状态概览 -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div class="bg-white rounded-lg shadow p-6">
+            <div class="flex items-center">
+                <div class="flex-shrink-0 bg-blue-500 rounded-md p-3">
+                    <span class="text-2xl text-white">💻</span>
+                </div>
+                <div class="ml-5 w-0 flex-1">
+                    <dl>
+                        <dt class="text-sm font-medium text-gray-500 truncate">CPU使用率</dt>
+                        <dd class="flex items-baseline">
+                            <div class="text-2xl font-semibold text-gray-900" x-text="systemStatus.cpu_percent + '%'"></div>
+                        </dd>
+                    </dl>
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-white rounded-lg shadow p-6">
+            <div class="flex items-center">
+                <div class="flex-shrink-0 bg-green-500 rounded-md p-3">
+                    <span class="text-2xl text-white">🧠</span>
+                </div>
+                <div class="ml-5 w-0 flex-1">
+                    <dl>
+                        <dt class="text-sm font-medium text-gray-500 truncate">内存使用率</dt>
+                        <dd class="flex items-baseline">
+                            <div class="text-2xl font-semibold text-gray-900" x-text="systemStatus.memory_percent + '%'"></div>
+                        </dd>
+                    </dl>
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-white rounded-lg shadow p-6">
+            <div class="flex items-center">
+                <div class="flex-shrink-0 bg-yellow-500 rounded-md p-3">
+                    <span class="text-2xl text-white">💾</span>
+                </div>
+                <div class="ml-5 w-0 flex-1">
+                    <dl>
+                        <dt class="text-sm font-medium text-gray-500 truncate">磁盘使用率</dt>
+                        <dd class="flex items-baseline">
+                            <div class="text-2xl font-semibold text-gray-900" x-text="systemStatus.disk_usage_percent + '%'"></div>
+                        </dd>
+                    </dl>
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-white rounded-lg shadow p-6">
+            <div class="flex items-center">
+                <div class="flex-shrink-0 bg-purple-500 rounded-md p-3">
+                    <span class="text-2xl text-white">📊</span>
+                </div>
+                <div class="ml-5 w-0 flex-1">
+                    <dl>
+                        <dt class="text-sm font-medium text-gray-500 truncate">数据文件</dt>
+                        <dd class="flex items-baseline">
+                            <div class="text-2xl font-semibold text-gray-900" x-text="dataStatus.total_files"></div>
+                        </dd>
+                    </dl>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 服务状态 -->
+    <div class="bg-white rounded-lg shadow p-6">
+        <h2 class="text-xl font-bold mb-4">🔧 服务状态</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4" x-cloak>
+            <template x-for="(service, key) in services" :key="key">
+                <div class="border rounded-lg p-4">
+                    <div class="flex justify-between items-center mb-2">
+                        <h3 class="font-semibold" x-text="service.name"></h3>
+                        <span :class="service.status === 'running' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'"
+                              class="px-2 py-1 rounded text-xs"
+                              x-text="service.status === 'running' ? '运行中' : '未知'"></span>
+                    </div>
+                    <template x-if="service.url">
+                        <p class="text-sm text-gray-600" x-text="service.url"></p>
+                    </template>
+                    <template x-if="service.host">
+                        <p class="text-sm text-gray-600" x-text="service.host + ':' + service.port"></p>
+                    </template>
+                </div>
+            </template>
+        </div>
+    </div>
+
+    <!-- 平台状态 -->
+    <div class="bg-white rounded-lg shadow p-6">
+        <h2 class="text-xl font-bold mb-4">📱 平台状态</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4" x-cloak>
+            <template x-for="platform in platforms" :key="platform.code">
+                <div class="border rounded-lg p-4">
+                    <div class="flex justify-between items-start mb-2">
+                        <h3 class="font-semibold" x-text="platform.name"></h3>
+                        <span :class="platform.enabled ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'"
+                              class="px-2 py-1 rounded text-xs">
+                            <span x-text="platform.enabled ? '已启用' : '未启用'"></span>
+                        </span>
+                    </div>
+                    <div class="text-sm space-y-1">
+                        <div class="flex items-center">
+                            <span x-text="platform.has_session ? '✅' : '❌'"></span>
+                            <span class="ml-2 text-gray-600">登录状态</span>
+                        </div>
+                        <div class="flex items-center">
+                            <span x-text="platform.tools_available ? '✅' : '❌'"></span>
+                            <span class="ml-2 text-gray-600">工具可用</span>
+                        </div>
+                    </div>
+                </div>
+            </template>
+        </div>
+    </div>
+
+    <!-- 爬取数据统计 -->
+    <div class="bg-white rounded-lg shadow p-6">
+        <h2 class="text-xl font-bold mb-4">📈 数据统计</h2>
+        <div class="mb-4">
+            <div class="flex justify-between text-sm text-gray-600 mb-1">
+                <span>总文件数</span>
+                <span x-text="dataStatus.total_files"></span>
+            </div>
+            <div class="flex justify-between text-sm text-gray-600 mb-1">
+                <span>总数据大小</span>
+                <span x-text="dataStatus.total_size_mb + ' MB'"></span>
+            </div>
+            <div class="flex justify-between text-sm text-gray-600 mb-1">
+                <span>数据路径</span>
+                <span class="text-xs" x-text="dataStatus.data_path"></span>
+            </div>
+        </div>
+
+        <div class="mt-6" x-show="Object.keys(dataStatus.platforms || {}).length > 0">
+            <h3 class="font-semibold mb-3">各平台数据</h3>
+            <div class="space-y-2">
+                <template x-for="(stats, platform) in dataStatus.platforms" :key="platform">
+                    <div class="border rounded p-3">
+                        <div class="flex justify-between items-center">
+                            <span class="font-medium" x-text="platform"></span>
+                            <span class="text-sm text-gray-600" x-text="stats.files_count + ' 个文件'"></span>
+                        </div>
+                        <div class="mt-1 text-sm text-gray-500">
+                            <span x-text="'大小: ' + stats.total_size_mb + ' MB'"></span>
+                            <span class="mx-2">|</span>
+                            <span x-text="'最新: ' + stats.latest_file"></span>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </div>
+
+        <div x-show="Object.keys(dataStatus.platforms || {}).length === 0" class="text-center text-gray-500 py-8">
+            暂无爬取数据
+        </div>
+    </div>
+
+    <!-- 快捷操作 -->
+    <div class="bg-white rounded-lg shadow p-6">
+        <h2 class="text-xl font-bold mb-4">⚡ 快捷操作</h2>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <a href="/login" class="flex flex-col items-center justify-center p-4 border rounded-lg hover:bg-gray-50 transition">
+                <span class="text-3xl mb-2">🔐</span>
+                <span class="text-sm font-medium">登录管理</span>
+            </a>
+            <a href="/config" class="flex flex-col items-center justify-center p-4 border rounded-lg hover:bg-gray-50 transition">
+                <span class="text-3xl mb-2">⚙️</span>
+                <span class="text-sm font-medium">配置管理</span>
+            </a>
+            <button @click="refreshData" class="flex flex-col items-center justify-center p-4 border rounded-lg hover:bg-gray-50 transition">
+                <span class="text-3xl mb-2">🔄</span>
+                <span class="text-sm font-medium">刷新数据</span>
+            </button>
+            <a href="http://localhost:9090/sse" target="_blank" class="flex flex-col items-center justify-center p-4 border rounded-lg hover:bg-gray-50 transition">
+                <span class="text-3xl mb-2">🔌</span>
+                <span class="text-sm font-medium">MCP服务</span>
+            </a>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function dashboard() {
+    return {
+        systemStatus: {
+            cpu_percent: 0,
+            memory_percent: 0,
+            disk_usage_percent: 0
+        },
+        dataStatus: {
+            total_files: 0,
+            total_size_mb: 0,
+            data_path: '',
+            platforms: {}
+        },
+        services: {},
+        platforms: [],
+
+        async init() {
+            await this.loadAllData();
+            // 每30秒刷新一次
+            setInterval(() => this.loadAllData(), 30000);
+        },
+
+        async loadAllData() {
+            await Promise.all([
+                this.loadSystemStatus(),
+                this.loadDataStatus(),
+                this.loadServicesStatus(),
+                this.loadPlatformsStatus()
+            ]);
+        },
+
+        async loadSystemStatus() {
+            try {
+                const response = await fetch('/api/status/system');
+                this.systemStatus = await response.json();
+            } catch (error) {
+                console.error('加载系统状态失败:', error);
+            }
+        },
+
+        async loadDataStatus() {
+            try {
+                const response = await fetch('/api/status/data');
+                this.dataStatus = await response.json();
+            } catch (error) {
+                console.error('加载数据状态失败:', error);
+            }
+        },
+
+        async loadServicesStatus() {
+            try {
+                const response = await fetch('/api/status/services');
+                const data = await response.json();
+                this.services = data.services;
+            } catch (error) {
+                console.error('加载服务状态失败:', error);
+            }
+        },
+
+        async loadPlatformsStatus() {
+            try {
+                const response = await fetch('/api/status/platforms');
+                this.platforms = await response.json();
+            } catch (error) {
+                console.error('加载平台状态失败:', error);
+            }
+        },
+
+        async refreshData() {
+            await this.loadAllData();
+            alert('数据已刷新');
+        }
+    }
+}
+</script>
+{% endblock %}
