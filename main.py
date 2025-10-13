@@ -1,13 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-MCP工具服务 - 支持STDIO和SSE双模式 + 管理服务
+MCP工具服务 - 支持STDIO和SSE双模式
 """
 
 import argparse
 import asyncio
 import signal
 import sys
-import uvicorn
 from app.config.settings import global_settings
 from app.api_service import create_app
 from app.providers.logger import get_logger
@@ -16,31 +15,6 @@ from app.providers.logger import get_logger
 # 全局变量存储运行中的任务
 running_tasks = []
 shutdown_event = asyncio.Event()
-
-
-async def run_admin_service(port: int = 9091):
-    """运行管理服务"""
-    from app.admin import create_admin_app
-
-    get_logger().info(f"🎛️ 启动管理服务于端口 {port}...")
-
-    admin_app = create_admin_app()
-
-    config = uvicorn.Config(
-        admin_app,
-        host="0.0.0.0",
-        port=port,
-        log_level="info",
-        loop="asyncio"
-    )
-    server = uvicorn.Server(config)
-
-    try:
-        await server.serve()
-    except asyncio.CancelledError:
-        get_logger().info("管理服务正在关闭...")
-        await server.shutdown()
-        raise
 
 
 def signal_handler(signum, frame):
@@ -63,18 +37,6 @@ async def main():
         default="both",
         help="传输方式: stdio(STDIO), sse(SSE), both(同时运行)"
     )
-    parser.add_argument(
-        "--admin",
-        action="store_true",
-        default=True,
-        help="启动管理服务 (默认: True)"
-    )
-    parser.add_argument(
-        "--admin-port",
-        type=int,
-        default=9091,
-        help="管理服务端口 (默认: 9091)"
-    )
 
     args = parser.parse_args()
 
@@ -90,10 +52,8 @@ async def main():
 
     if args.transport in ["sse", "both"]:
         mcp_port = global_settings.app.port
-        get_logger().info(f"🌐 MCP服务地址: 0.0.0.0:{mcp_port}/sse")
-
-    if args.admin:
-        get_logger().info(f"🎛️ 管理服务地址: http://0.0.0.0:{args.admin_port}")
+        get_logger().info(f"🌐 MCP服务地址: http://0.0.0.0:{mcp_port}/sse")
+        get_logger().info(f"🎛️ 管理界面地址: http://0.0.0.0:{mcp_port}/admin")
 
     # 创建MCP应用
     app = create_app()
@@ -111,10 +71,6 @@ async def main():
         tasks.append(asyncio.create_task(app.run_stdio_async()))
         tasks.append(asyncio.create_task(app.run_sse_async()))
 
-    # 添加管理服务（独立于传输方式）
-    if args.admin:
-        tasks.append(asyncio.create_task(run_admin_service(args.admin_port)))
-
     # 保存到全局变量以便信号处理器访问
     global running_tasks
     running_tasks = tasks
@@ -128,6 +84,8 @@ async def main():
         get_logger().info("收到键盘中断")
     except Exception as e:
         get_logger().error(f"服务运行出错: {e}")
+        import traceback
+        get_logger().error(traceback.format_exc())
     finally:
         # 清理资源
         get_logger().info("清理资源...")

@@ -1,7 +1,7 @@
 // Admin Interface JavaScript
 
 // 全局配置
-const API_BASE = '/api';
+const API_BASE = '/admin/api';
 
 // 工具函数
 function showMessage(message, type = 'info') {
@@ -63,12 +63,16 @@ class LoginManager {
     constructor() {
         this.currentSession = null;
         this.pollInterval = null;
+        this.pollTimeout = null;
+        this.pollStartTime = null;
+        this.maxPollTime = 5 * 60 * 1000; // 5分钟超时
+        this.qrCodeDisplayed = false; // 标记二维码是否已显示
     }
-    
+
     async startLogin(platform, loginType, phone = '', cookie = '') {
         try {
             showMessage('正在启动登录流程...', 'info');
-            
+
             const response = await apiRequest('/login/start', {
                 method: 'POST',
                 body: JSON.stringify({
@@ -78,66 +82,109 @@ class LoginManager {
                     cookie
                 })
             });
-            
+
             this.currentSession = response.session_id;
-            
+
             if (loginType === 'qrcode') {
                 this.startPolling();
                 this.displayQRCode(response);
             } else {
                 this.checkStatus();
             }
-            
+
         } catch (error) {
             showError(`启动登录失败: ${error.message}`);
         }
     }
-    
+
     displayQRCode(response) {
+        console.log('[DEBUG] displayQRCode called with:', response);
+        console.log('[DEBUG] qr_code_base64 length:', response.qr_code_base64 ? response.qr_code_base64.length : 'null');
+
         const qrContainer = document.getElementById('qr-code-container');
-        if (qrContainer && response.qr_code_base64) {
-            qrContainer.innerHTML = `
-                <div class="text-center mb-3">
-                    <h4>请扫描二维码登录</h4>
-                </div>
-                <div class="text-center">
-                    <img src="data:image/png;base64,${response.qr_code_base64}" 
-                         class="qr-code-img" alt="登录二维码">
-                </div>
-                <div class="text-center mt-3">
-                    <p class="status status-info">请使用${response.platform}移动端扫描上方二维码</p>
-                </div>
-            `;
-            qrContainer.style.display = 'block';
+        if (!qrContainer) {
+            console.error('[DEBUG] qr-code-container element not found!');
+            return;
         }
+
+        if (!response.qr_code_base64) {
+            console.warn('[DEBUG] No QR code base64 data received, will retry...');
+            // 如果还没有二维码，继续等待
+            return;
+        }
+
+        qrContainer.innerHTML = `
+            <div class="text-center mb-3">
+                <h4>请扫描二维码登录</h4>
+            </div>
+            <div class="text-center">
+                <img src="data:image/png;base64,${response.qr_code_base64}"
+                     class="qr-code-img" alt="登录二维码"
+                     style="max-width: 300px; border: 2px solid #ddd; padding: 10px; border-radius: 8px;">
+            </div>
+            <div class="text-center mt-3">
+                <p class="status status-info">请使用${response.platform}移动端扫描上方二维码</p>
+            </div>
+        `;
+        qrContainer.classList.remove('d-none');  // 移除隐藏类
+        console.log('[DEBUG] QR code displayed successfully');
+
+        // 二维码已显示，标记状态
+        this.qrCodeDisplayed = true;
     }
-    
+
     startPolling() {
         this.stopPolling();
+        this.pollStartTime = Date.now();
+
         this.pollInterval = setInterval(() => {
+            // 检查是否超时
+            if (Date.now() - this.pollStartTime > this.maxPollTime) {
+                showWarning('登录超时（5分钟），请重新尝试');
+                this.stopPolling();
+                this.hideQRCode();
+                return;
+            }
             this.checkStatus();
         }, 2000); // 每2秒检查一次
+
+        // 设置最大超时
+        this.pollTimeout = setTimeout(() => {
+            showWarning('登录超时（5分钟），请重新尝试');
+            this.stopPolling();
+            this.hideQRCode();
+        }, this.maxPollTime);
     }
-    
+
     stopPolling() {
         if (this.pollInterval) {
             clearInterval(this.pollInterval);
             this.pollInterval = null;
         }
+        if (this.pollTimeout) {
+            clearTimeout(this.pollTimeout);
+            this.pollTimeout = null;
+        }
+        this.pollStartTime = null;
     }
-    
+
     async checkStatus() {
         if (!this.currentSession) return;
-        
+
         try {
-            const response = await apiRequest(`/login/status/${this.currentSession}`);
-            
+            const response = await apiRequest(`/login/session/${this.currentSession}`);
+
             const statusElement = document.getElementById('login-status');
             if (statusElement) {
                 statusElement.textContent = response.message || '检查中...';
             }
-            
-            if (response.status === 'logged_in') {
+
+            // 如果二维码还没显示，尝试显示
+            if (!this.qrCodeDisplayed && response.qr_code_base64) {
+                this.displayQRCode(response);
+            }
+
+            if (response.status === 'success') {
                 showSuccess('登录成功！');
                 this.stopPolling();
                 this.hideQRCode();
@@ -148,19 +195,21 @@ class LoginManager {
             } else if (response.status === 'failed') {
                 showError(`登录失败: ${response.message}`);
                 this.stopPolling();
+                this.hideQRCode();
             } else if (response.status === 'expired') {
                 showWarning('二维码已过期，请重新获取');
                 this.stopPolling();
+                this.hideQRCode();
             }
         } catch (error) {
             console.error('检查登录状态失败:', error);
         }
     }
-    
+
     hideQRCode() {
         const qrContainer = document.getElementById('qr-code-container');
         if (qrContainer) {
-            qrContainer.style.display = 'none';
+            qrContainer.classList.add('d-none');  // 添加隐藏类
         }
     }
 }

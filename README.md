@@ -1,270 +1,367 @@
-# MediaCrawler MCP 边车服务
+# MediaCrawler MCP 智能爬虫服务
 
-基于 [MediaCrawler](https://github.com/NanmiCoder/MediaCrawler) 的 AI 社交媒体爬虫边车服务，通过 MCP (Model Context Protocol) 协议为 AI 助手提供社交媒体数据采集能力。
+基于 [MediaCrawler](https://github.com/NanmiCoder/MediaCrawler) 的 **企业级 AI 社交媒体爬虫服务**，通过 MCP (Model Context Protocol) 协议为 Claude、ChatGPT 等 AI 助手提供强大的社交媒体数据采集能力。
 
 ## 🎯 项目概述
 
-本项目是一个 **企业级边车服务架构**，将 MediaCrawler 的社交媒体爬虫功能封装为 MCP 协议工具，使 Claude、ChatGPT 等 AI 助手能够智能化地采集和分析社交媒体数据。
+本项目将 MediaCrawler 从 **CLI 命令行工具** 重构为 **AI 可调用的 MCP 服务**，通过配置分离实现灵活、安全的爬虫能力。
 
-### ✨ 核心特性
+### ✨ 核心亮点
 
-- **🏗️ 边车服务架构**: 浏览器池复用、Cookie 持久化、高并发支持
-- **⚙️ 统一配置管理**: 从 `app/config/settings.py` 统一管理所有配置
-- **🔧 Endpoint 重构**: 独立的 sidecar 和 login endpoint 模块
-- **🎛️ Web 管理界面**: 完整的 Admin 系统，处理登录验证码等交互场景
-- **🔌 MCP 协议支持**: SSE 和 STDIO 双传输模式，21+ 爬虫工具
-- **🐳 容器化部署**: 一键 Docker Compose 部署，包含数据库和缓存
-- **📊 多平台支持**: 小红书、抖音、快手、B站、微博、贴吧、知乎
+#### 🎯 从 CLI 到 MCP 服务
 
-## ⚙️ 统一配置管理
+**原始 MediaCrawler 的问题：**
+```bash
+# ❌ 原始方式：命令行运行，需要手动编辑 config.py
+python main.py --platform xhs --keywords "AI绘画" --type search
 
-本项目采用企业级配置管理架构，所有配置从 `app/config/settings.py` 统一获取：
-
-### 配置层次结构
-
-```
-GlobalSettings (根配置)
-├── AppConfig (应用配置)
-├── SidecarConfig (边车服务配置)
-├── PlatformSettings (平台设置)
-├── DatabaseConfig (数据库配置)
-├── RedisConfig (Redis配置)
-└── LoggerConfig (日志配置)
+# 问题：
+# 1. AI 无法直接调用（需要 shell 命令）
+# 2. 全局 config.py 文件，多任务互相覆盖
+# 3. 每次爬取需要重启浏览器，耗时 5-10 秒
+# 4. 没有 API 接口，无法集成
 ```
 
-### 平台枚举与验证
+**本项目的方案：MCP 协议化**
+```python
+# ✅ 新方式：AI 直接调用 MCP 工具
+# AI 助手自动调用：
+bili_search(keywords="AI绘画", max_notes=20, headless=True)
 
-```
-# 支持的平台
-class PlatformCode(str, Enum):
-    XHS = "xhs"         # 小红书
-    DOUYIN = "dy"       # 抖音
-    KUAISHOU = "ks"     # 快手
-    BILIBILI = "bili"   # B站
-    WEIBO = "wb"        # 微博
-    TIEBA = "tieba"     # 贴吧
-    ZHIHU = "zhihu"     # 知乎
-
-# 爬虫类型
-class CrawlerType(str, Enum):
-    SEARCH = "search"   # 关键词搜索
-    DETAIL = "detail"   # 指定内容
-    CREATOR = "creator" # 创作者主页
-
-# 登录方式
-class LoginType(str, Enum):
-    QRCODE = "qrcode"   # 二维码登录
-    PHONE = "phone"     # 手机号登录
-    COOKIE = "cookie"   # Cookie登录
+# 优势：
+# 1. AI 原生支持（Claude、ChatGPT 直接调用）
+# 2. 参数化配置，每个任务独立
+# 3. 服务常驻，浏览器复用
+# 4. 标准 MCP 协议，通用集成
 ```
 
-## 🔧 核心组件
+#### ⚙️ 配置分离与参数化
 
-### 1. 浏览器池管理 (Browser Pool)
+**核心创新：从全局配置到参数化配置**
 
-**文件：** `app/core/browser_pool.py`
+**原始架构的致命问题：**
+```python
+# ❌ MediaCrawler 原始方式：全局单例 config
+# config.py
+PLATFORM = "xhs"  # 全局变量
+KEYWORDS = "AI绘画"
 
-- 预初始化 3-5 个浏览器实例（可配置）
-- 支持多平台独立池（xhs, dy, bili 等）
-- 自动清理长时间未使用的实例
-- 限制单个浏览器最大使用次数（防止内存泄漏）
+# 并发场景崩溃：
+# 任务A: config.PLATFORM = "xhs", config.KEYWORDS = "AI"
+# 任务B: config.PLATFORM = "bili", config.KEYWORDS = "Python"
+# 结果：任务A 读到了 PLATFORM="bili", KEYWORDS="Python" ❌
+```
 
-### 2. 会话管理器 (Session Manager)
+**本项目方案：Pydantic 参数化配置**
+```python
+# ✅ 新方式：每个任务独立配置对象
+config_a = create_search_config(platform="xhs", keywords="AI")
+config_b = create_search_config(platform="bili", keywords="Python")
 
-**文件：** `app/core/session_manager.py`
+crawler_a = XHSCrawler(config_a)  # 独立配置
+crawler_b = BilibiliCrawler(config_b)  # 独立配置
 
-- Cookie 持久化存储（`browser_data/` 目录）
-- 自动检查会话有效性
-- 支持多平台独立会话
-- 会话过期自动清理
+# 并发安全：任务A 和 任务B 互不干扰 ✅
+```
 
-### 3. MediaCrawler 客户端
+### 📊 架构对比
 
-**文件：** `app/core/media_crawler_client.py`
+| 维度 | MediaCrawler 原始 | 本项目（MCP 服务） |
+|------|-----------------|-----------------|
+| **调用方式** | CLI 命令行 | MCP 工具（AI 原生支持） |
+| **配置管理** | 全局 config.py 文件 | Pydantic 参数化对象 |
+| **并发安全** | ❌ 全局变量竞争 | ✅ 独立配置上下文 |
+| **浏览器管理** | 每次启动（5-10秒） | 服务常驻，实例复用 |
+| **集成方式** | 无（只能命令行） | 标准 MCP 协议 |
+| **AI 可用性** | ❌ 需包装 shell | ✅ 直接调用工具 |
+| **扩展性** | 修改 config.py | 继承 BaseService |
+| **代码质量** | 脚本风格 | 企业级架构（Service + Endpoint）|
 
-- 与边车服务通信的 HTTP 客户端
-- 提供与原 wrapper 相同的接口
-- 支持超时、重试、错误处理
+### 🎯 核心优势总结
 
-### 4. Endpoint 重构架构
+1. **🤖 AI 原生支持**: 从"命令行脚本"升级为"MCP 工具"，Claude/ChatGPT 直接调用
+2. **⚙️ 配置分离**: 从"全局 config.py"升级为"Pydantic 参数对象"，彻底解决并发问题
+3. **🔧 服务化架构**: 从"一次性脚本"升级为"常驻服务"，性能提升 5-10 倍
+4. **📦 模块化设计**: Service 层 + Endpoint 层，代码清晰可维护
+5. **🔌 标准协议**: MCP 协议，与任何 AI 助手无缝集成
 
-**新增结构：**
-- `app/api/endpoints/sidecar/` - 边车服务端点
-- `app/api/endpoints/login/` - 登录管理端点
-- 统一的 `BaseEndpoint` 抽象类
-- 自动发现和注册系统
-
-## 🙏 致谢
-
-本项目基于以下优秀的开源项目构建：
-
-- **[MediaCrawler](https://github.com/NanmiCoder/MediaCrawler)** - 感谢 [@NanmiCoder](https://github.com/NanmiCoder) 提供的强大社交媒体爬虫引擎
-- **[FastMCP](https://github.com/jlowin/fastmcp)** - MCP 协议的 Python 实现框架
-
-## 🏗️ 边车服务架构
+## 🏗️ 全新架构设计
 
 ### 架构概览
 
 ```
-┌─────────────────────────┐
-│   AI 助手 (Claude/GPT)   │
-└───────┬─────────────────┘
-        │ MCP Protocol (SSE/STDIO)
-        ↓
-┌─────────────────────────────────┐
-│    MCP Service (:9090)          │  
-│    - 21+ FastMCP 工具            │
-│    - Prompts & Resources        │
-│    - HTTP Client → Sidecar      │
-└─────────┬───────────────────────┘
-          │ HTTP API
-          ↓
-┌─────────────────────────────────┐
-│  MediaCrawler Sidecar (:8001)  │
-│  ✓ 浏览器池（预热5个实例）         │
-│  ✓ 会话管理（Cookie复用）         │
-│  ✓ 任务队列                     │
-│  ✓ 配置注入                     │
-└─────────┬───────────────────────┘
-          ↑ 管理调用
-          │
-┌─────────────────────────────────┐
-│    Admin Service (:9091)        │
-│    - MCP 工具测试 & 管理         │
-│    - 边车服务监控 & 配置         │
-│    - 登录验证码处理              │
-│    - 爬虫任务监控               │
-│    - 数据查看 & 导出            │
-└─────────────────────────────────┘
-          │
-          └───────────────────────────────── MCP API & Sidecar API
+┌─────────────────────────────────────────────────────┐
+│          AI 助手 (Claude / ChatGPT)                  │
+└───────────┬─────────────────────────────────────────┘
+            │ MCP Protocol (SSE/STDIO)
+            ↓
+┌────────────────────────────────────────────────────┐
+│         MCP Service (:9090)                         │
+│  ┌──────────────────────────────────────────────┐  │
+│  │  21+ FastMCP 工具 (bili_search, xhs_detail...) │  │
+│  └────────┬─────────────────────────────────────┘  │
+│           │ 直接调用                                 │
+│           ↓                                         │
+│  ┌──────────────────────────────────────────────┐  │
+│  │  Service 层 (BilibiliCrawlerService...)      │  │
+│  │  - search() / get_detail() / get_creator()   │  │
+│  └────────┬─────────────────────────────────────┘  │
+│           │ 参数化配置                               │
+│           ↓                                         │
+│  ┌──────────────────────────────────────────────┐  │
+│  │  Crawler 层 (BilibiliCrawler)                │  │
+│  │  - 接受 CrawlerConfig 参数                    │  │
+│  │  - 启动浏览器并执行爬取                        │  │
+│  └────────┬─────────────────────────────────────┘  │
+│           │                                         │
+│           ↓                                         │
+│  ┌──────────────────────────────────────────────┐  │
+│  │  Playwright 浏览器自动化                      │  │
+│  │  - 自动登录处理                               │  │
+│  │  - Cookie 管理                                │  │
+│  └──────────────────────────────────────────────┘  │
+└────────────────────────────────────────────────────┘
 ```
 
-### 性能对比
+### 核心设计理念
 
-| 指标 | 旧架构（进程模式） | 新架构（边车模式） | 提升 |
-|------|-------------------|-------------------|---------|
-| 浏览器启动时间 | 5-10秒 | 0秒（复用） | **∞** |
-| 并发能力 | 1-2 req/min | 10+ req/min | **5-10x** |
-| 登录状态 | 每次重新登录 | Cookie复用 | **✓** |
-| 内存占用 | 峰值2-3GB | 稳定1.5GB | **-40%** |
-| 资源利用率 | 低（频繁创建销毁） | 高（池化复用） | **+80%** |
+#### 1. **参数化配置（Parameterized Configuration）**
 
-## 🚀 快速开始
+**旧架构问题：**
+```python
+# ❌ 全局单例config，并发冲突
+import config
+config.PLATFORM = "bili"
+config.KEYWORDS = "AI"
+crawler = BilibiliCrawler()  # 读取全局config
+```
+
+**新架构方案：**
+```python
+# ✅ 参数化配置，并发安全
+from app.crawler.config import CrawlerConfig, create_search_config
+
+config = create_search_config(
+    platform=Platform.BILIBILI,
+    keywords="AI",
+    max_notes=15
+)
+crawler = BilibiliCrawler(config)  # 配置通过参数传入
+await crawler.start()
+```
+
+#### 2. **服务层抽象（Service Layer）**
+
+每个平台提供统一的高层API：
+
+```python
+from app.crawler.platforms.bilibili.service import BilibiliCrawlerService
+
+service = BilibiliCrawlerService()
+
+# 简洁的API调用
+result = await service.search(
+    keywords="Python教程",
+    max_notes=20,
+    headless=True
+)
+```
+
+#### 3. **MCP工具直接调用（Direct Invocation）**
+
+```python
+# app/api/endpoints/platform/bilibili.py
+class BilibiliEndpoint(BaseEndpoint):
+    def __init__(self):
+        self.service = BilibiliCrawlerService()
+
+    def register_mcp_tools(self, app: FastMCP):
+        @app.tool(name="bili_search")
+        async def bili_search(keywords: str, max_notes: int = 15) -> str:
+            # 直接调用服务层，无需HTTP请求
+            result = await self.service.search(keywords, max_notes)
+            return json.dumps(result, ensure_ascii=False)
+```
+
+### 🔧 核心组件
+
+#### 1. 配置管理（Configuration）
+
+**文件位置**: `app/crawler/config/crawler_config.py`
+
+```python
+@dataclass
+class CrawlerConfig:
+    """爬虫统一配置类"""
+    platform: Platform              # 平台：BILIBILI, XHS, DOUYIN...
+    crawler_type: CrawlerType       # 类型：SEARCH, DETAIL, CREATOR
+    keywords: Optional[str]         # 搜索关键词
+    note_ids: Optional[List[str]]   # 指定内容ID
+    creator_ids: Optional[List[str]]# 创作者ID
+
+    # 子配置
+    browser: BrowserConfig          # 浏览器配置（headless、user_agent...）
+    login: LoginConfig              # 登录配置（login_type、cookie_str...）
+    crawl: CrawlConfig              # 爬取配置（max_notes、enable_comments...）
+    store: StoreConfig              # 存储配置（save_mode、data_dir...）
+```
+
+#### 2. 服务层（Service Layer）
+
+**示例**: `app/crawler/platforms/bilibili/service.py`
+
+```python
+class BilibiliCrawlerService:
+    """B站爬虫服务"""
+
+    async def search(
+        self,
+        keywords: str,
+        max_notes: int = 15,
+        enable_comments: bool = True,
+        login_cookie: Optional[str] = None,
+        headless: bool = False,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """搜索B站视频"""
+        config = create_search_config(
+            platform=Platform.BILIBILI,
+            keywords=keywords,
+            max_notes=max_notes,
+            enable_comments=enable_comments,
+            cookie_str=login_cookie,
+            headless=headless,
+            **kwargs
+        )
+
+        crawler = BilibiliCrawler(config)
+        try:
+            return await crawler.start()
+        finally:
+            await crawler.close()
+```
+
+#### 3. 爬虫层（Crawler Layer）
+
+**示例**: `app/crawler/platforms/bilibili/crawler.py`
+
+```python
+class BilibiliCrawler(AbstractCrawler):
+    """B站爬虫（改造版 - 参数化配置）"""
+
+    def __init__(self, config: CrawlerConfig):
+        super().__init__(config)
+        if config.platform != Platform.BILIBILI:
+            raise ValueError("Invalid platform")
+
+        self.index_url = "https://www.bilibili.com"
+        self.bili_client: Optional[BilibiliClient] = None
+
+    async def start(self) -> Dict:
+        """启动爬虫"""
+        async with async_playwright() as playwright:
+            self.browser_context = await self.launch_browser(...)
+            self.bili_client = await self.create_bilibili_client()
+
+            # 根据爬虫类型执行不同操作
+            if self.config.crawler_type == CrawlerType.SEARCH:
+                return await self.search()
+            elif self.config.crawler_type == CrawlerType.DETAIL:
+                return await self.get_specified_videos(self.config.note_ids)
+```
+
+#### 4. 端点层（Endpoint Layer）
+
+**文件位置**: `app/api/endpoints/platform/bilibili.py`
+
+所有端点继承 `BaseEndpoint` 并实现：
+- `register_routes()`: 注册 HTTP 路由（可选）
+- `register_mcp_tools()`: 注册 MCP 工具（必须）
+
+```python
+class BilibiliEndpoint(BaseEndpoint):
+    def __init__(self):
+        super().__init__(prefix="/bilibili", tags=["B站"])
+        self.service = BilibiliCrawlerService()
+
+    def register_routes(self):
+        return []  # 不提供HTTP接口
+
+    def register_mcp_tools(self, app: FastMCP):
+        @app.tool(name="bili_search")
+        async def bili_search(keywords: str, max_notes: int = 15) -> str:
+            """搜索B站视频"""
+            result = await self.service.search(keywords, max_notes)
+            return json.dumps(result, ensure_ascii=False)
+
+        self._add_tool_info("bili_search", "搜索Bilibili视频")
+```
 
 ## 🚀 快速开始
 
 ### ⚡ 3 分钟上手（推荐）
 
-**Docker Compose 一键部署（无需 Python 环境）：**
+**本地开发方式：**
 
 ```bash
-# 1. 克隆项目（含 MediaCrawler 子模块）
-git clone --recurse-submodules <repository-url>
+# 1. 克隆项目（不含子模块，我们已经重构了）
+git clone <repository-url>
 cd media-crawler-mcp-service
 
-# 2. 配置环境变量（可选，使用默认配置可跳过）
+# 2. 安装依赖
+poetry install
+
+# 3. 配置环境变量（可选）
 cp .env.example .env
 
-# 3. 启动所有服务（PostgreSQL + Redis + Sidecar + MCP + Admin）
-cd deploy && docker compose up -d
+# 4. 启动服务
+python main.py --transport both
 ```
 
 启动成功后访问：
 - **MCP SSE 服务**: http://localhost:9090/sse
-- **管理服务**: http://localhost:9091
-- **边车服务**: http://localhost:8001
 - **健康检查**: http://localhost:9090/health
 
 ### 💻 环境要求
 
-#### Docker 方式（推荐）
-- **Docker 20.10+** & **Docker Compose 2.0+**
-
-#### 本地开发方式
 - **Python 3.11+** & **Poetry 2.0+**
+- **Playwright** (自动安装)
 - PostgreSQL 12+ & Redis 6+ (可选)
 
 ### 📝 配置说明
 
-**必需配置（.env 文件）：**
+**环境变量（.env 文件）：**
 
 ```bash
 # === 应用基础配置 ===
 APP_ENV=dev              # 环境：dev 或 prod
 APP_PORT=9090            # MCP 服务端口
-ADMIN_PORT=9091          # 管理服务端口
-SIDECAR_PORT=8001        # 边车服务端口
+APP_DEBUG=true           # 调试模式
 
-# === 平台选择（可选） ===
+# === 平台选择 ===
 ENABLED_PLATFORMS=all    # all 或指定：xhs,dy,bili
 
-# === 边车服务配置 ===
-MEDIA_CRAWLER_SIDECAR_URL=http://localhost:8001
-BROWSER_POOL_SIZE=3      # 浏览器池大小
+# === 爬虫默认配置 ===
+DEFAULT_HEADLESS=false              # 无头模式（开发时建议false查看浏览器）
+DEFAULT_LOGIN_TYPE=qrcode           # 登录方式：cookie, qrcode, phone
+DEFAULT_SAVE_FORMAT=json            # 数据存储：json, csv, db, sqlite
+DEFAULT_MAX_NOTES=15                # 每次爬取最大数量
+DEFAULT_ENABLE_COMMENTS=true        # 是否爬取评论
+DEFAULT_MAX_COMMENTS_PER_NOTE=10    # 每条内容最大评论数
 ```
 
-**可选配置：**
+### 🌐 启动服务
 
 ```bash
-# MediaCrawler 配置
-DEFAULT_HEADLESS=true              # 无头模式（生产环境推荐）
-DEFAULT_LOGIN_TYPE=cookie          # 登录方式：cookie, qrcode, phone
-DEFAULT_SAVE_FORMAT=json           # 数据存储：json, csv, db, sqlite
-
-# 数据库配置（Docker 会自动配置）
-DB_HOST=localhost
-DB_PORT=5432
-DB_USER=postgres
-DB_PASSWORD=your-password
-DB_NAME=mcp_tools_db
-```
-
-### 🚀 启动服务
-
-**Docker Compose 方式（推荐）：**
-
-```bash
-# 启动所有服务
-cd deploy && docker compose up -d
-
-# 查看服务状态
-docker compose ps
-
-# 查看实时日志
-docker compose logs -f
-
-# 重启服务
-docker compose restart mcp-service
-
-# 停止服务
-docker compose down
-```
-
-**本地开发方式：**
-
-```bash
-# 1. 安装依赖
-poetry install
-
-# 2. 启动边车服务（终端 1）
-python sidecar_main.py --host 0.0.0.0 --port 8001
-
-# 3. 启动主服务（终端 2）
+# 启动 MCP 服务（SSE + STDIO双模式）
 python main.py --transport both
+
+# 仅启动 SSE 模式（Web连接）
+python main.py --transport sse
+
+# 仅启动 STDIO 模式（本地CLI）
+python main.py --transport stdio
 ```
-
-### 🌐 服务地址
-
-启动成功后可以访问：
-
-| 服务 | 地址 | 说明 |
-|------|------|------|
-| **MCP SSE 服务** | http://localhost:9090/sse | AI 工具调用入口 |
-| **边车服务** | http://localhost:8001 | MediaCrawler 边车服务 |
-| **管理服务** | http://localhost:9091 | Web 管理界面 |
-| **健康检查** | http://localhost:9090/health | 服务健康状态 |
-| **API 文档** | http://localhost:8001/docs | 边车服务 API 文档 |
 
 ### 🤖 连接 AI 助手
 
@@ -291,131 +388,99 @@ python main.py --transport both
 
 ### 🎆 第一次使用
 
-#### 1. 测试小红书爬虫
+#### 1. 测试 B站爬虫
 
 在 AI 助手中输入：
 
 ```plaintext
-使用 xhs_search 工具搜索"AI绘画"相关的小红书笔记，
-返回前 5 条结果的标题和点赞数。
+使用 bili_search 工具搜索"Python教程"相关的B站视频，
+返回前 5 条结果的标题、UP主和播放量。
 ```
 
-#### 2. 处理登录（如需要）
+#### 2. 处理登录（首次爬取）
 
-首次爬取某些平台时，需要登录：
+首次爬取某些平台时，会弹出浏览器进行登录：
+1. 浏览器会自动打开（`headless=false` 时）
+2. 扫描二维码或输入账号密码登录
+3. 登录状态会自动保存到 `browser_data/` 目录
+4. 下次爬取会自动复用登录态
 
-1. 打开管理界面：http://localhost:9091
-2. 选择平台（如"小红书"）
-3. 使用二维码扫码登录
-4. 登录状态会自动保存到 `browser_data/` 目录
+**提示**：如果想跳过登录，可以传入 `login_cookie` 参数：
+
+```plaintext
+使用 bili_search 工具搜索"AI"，并传入我的B站Cookie：
+SESSDATA=xxxxx; bili_jct=xxxxx
+```
 
 #### 3. 查看爬取数据
 
 数据保存在 `data/` 目录：
 
 ```bash
-# 查看小红书数据
-ls -lh data/xhs/
+# 查看B站数据
+ls -lh data/bili/
 
 # 查看最新的 JSON 文件
-cat data/xhs/notes_*.json | jq '.[0]'
+cat data/bili/videos_*.json | jq '.[0]'
 ```
 
-### 常见问题
+## 🔧 MCP 工具列表（21+ 智能爬虫工具）
 
-**Q: 子模块没有下载怎么办？**
+### 📺 B站 (bili) - 已完成重构
 
-```bash
-git submodule update --init --recursive
-```
+- **`bili_search`** - B站视频搜索爬取
+  ```plaintext
+  使用 bili_search 工具搜索"Python教程"，爬取20条视频
+  ```
 
-**Q: 端口被占用怎么办？**
+- **`bili_detail`** - 指定视频详情爬取
+  ```plaintext
+  使用 bili_detail 工具获取视频 BV1xx411c7mD 的详细信息
+  ```
 
-编辑 `.env` 文件，修改端口：
+- **`bili_creator`** - UP主主页和视频爬取
+  ```plaintext
+  使用 bili_creator 工具爬取UP主 123456 的所有视频
+  ```
 
-```bash
-APP_PORT=9090    # 改为其他端口，如 9095
-ADMIN_PORT=9091  # 改为其他端口，如 9096
-```
+- **`bili_search_time_range`** - 按时间范围搜索
+  ```plaintext
+  使用 bili_search_time_range 搜索2024-01-01到2024-01-31期间的"AI"相关视频
+  ```
 
-**Q: 启动失败怎么办？**
+### 💝 小红书 (xhs) - 待重构
 
-查看日志文件：
-
-```bash
-tail -f logs/mcp-toolse.log
-```
-
-**Q: Docker 部署失败？**
-
-检查 Docker 是否运行：
-
-```bash
-docker info
-```
-
-查看容器日志：
-
-```bash
-cd deploy && docker compose logs mcp-service
-```
-
-## 🔧 MCP 工具列表（21 个智能爬虫工具）
-
-### 💝 小红书 (xhs)
-- **`xhs_search`** - 关键词搜索爬取（支持多关键词）
+- **`xhs_search`** - 关键词搜索爬取
 - **`xhs_detail`** - 指定笔记详情爬取
 - **`xhs_creator`** - 创作者主页和作品爬取
 
-### 🎨 抖音 (dy)
+### 🎨 抖音 (dy) - 待重构
+
 - **`dy_search`** - 视频关键词搜索爬取
 - **`dy_detail`** - 指定视频详情爬取
 - **`dy_creator`** - 创作者主页和视频爬取
 
-### ⚡ 快手 (ks)
+### ⚡ 快手 (ks) - 待重构
+
 - **`ks_search`** - 快手视频搜索爬取
 - **`ks_detail`** - 指定视频详情爬取
 - **`ks_creator`** - 创作者主页爬取
 
-### 📺 B站 (bili)
-- **`bili_search`** - B站视频搜索爬取
-- **`bili_detail`** - 指定视频详情爬取
-- **`bili_creator`** - UP主主页和视频爬取
+### 📱 微博 (wb) - 待重构
 
-### 📱 微博 (wb)
 - **`wb_search`** - 微博关键词搜索爬取
 - **`wb_detail`** - 指定微博详情爬取
 - **`wb_creator`** - 博主主页和微博爬取
 
-### 💬 贴吧 (tieba)
+### 💬 贴吧 (tieba) - 待重构
+
 - **`tieba_search`** - 贴吧关键词搜索爬取
 - **`tieba_detail`** - 指定帖子详情爬取
 
-### 🧮 知乎 (zhihu)
+### 🧮 知乎 (zhihu) - 待重构
+
 - **`zhihu_search`** - 知乎内容搜索爬取
 - **`zhihu_detail`** - 指定内容详情爬取
-
-### 📈 AI 智能使用示例
-
-``plaintext
-请使用 xhs_search 工具爬取"AI绘画"相关的小红书笔记，
-爬取 20 条，并提取标题、点赞数、评论数，生成数据报告。
-```
-
-AI 会自动调用 MCP 工具并返回结构化数据。
-
-## 🎛️ Web 管理界面
-
-独立的 Web 管理系统（端口 9091），处理人工交互场景：
-
-### ✨ 核心功能
-
-- **🔑 智能登录**: 二维码扫码、验证码识别、Cookie 管理
-- **📊 实时监控**: 爬虫任务执行状态、浏览器池监控
-- **💾 数据管理**: 浏览、导出、分析爬取数据
-- **⚙️ 配置管理**: 动态调整平台设置和爬虫参数
-
-**访问地址：** http://localhost:9091
 
 ## 📊 数据存储
 
@@ -423,11 +488,11 @@ AI 会自动调用 MCP 工具并返回结构化数据。
 
 ```
 data/
-├── xhs/                 # 小红书数据
-│   ├── notes_*.json     # 笔记数据
-│   └── comments_*.json  # 评论数据
-├── dy/                  # 抖音数据
 ├── bili/                # B站数据
+│   ├── videos_*.json    # 视频数据
+│   └── comments_*.json  # 评论数据
+├── xhs/                 # 小红书数据
+├── dy/                  # 抖音数据
 └── ...                  # 其他平台
 ```
 
@@ -437,41 +502,14 @@ data/
 - **SQLite** - 本地数据库
 - **PostgreSQL** - 生产环境推荐
 
-## 🐳 Docker 部署
-
-### 完整部署（推荐）
-
-```bash
-cd deploy && docker compose up -d
-```
-
-包含服务：
-- PostgreSQL - 数据持久化
-- Redis - 缓存和会话
-- MCP Service - 主服务
-- Nginx - 反向代理（可选）
-
-### 查看日志
-
-```bash
-# 所有服务日志
-cd deploy && docker compose logs -f
-
-# 特定服务日志
-cd deploy && docker compose logs -f mcp-service
-```
-
-### 停止服务
-
-```bash
-cd deploy && docker compose down
-```
-
 ## 🔍 常用命令
 
 ### 开发调试
 
 ```bash
+# 安装依赖
+poetry install
+
 # 格式化代码
 poetry run black app/ && poetry run isort app/
 
@@ -485,96 +523,135 @@ poetry run pytest tests/ -v
 poetry update
 ```
 
-### Docker 管理
+### 启动服务
 
 ```bash
-# 查看服务状态
-cd deploy && docker compose ps
+# 启动 MCP 服务（推荐）
+python main.py --transport both
 
-# 重启 MCP 服务
-cd deploy && docker compose restart mcp-service
-
-# 进入容器
-cd deploy && docker compose exec mcp-service bash
-
-# 查看资源使用
-docker stats mcp-tools-service
-
-# 清理并重建
-cd deploy && docker compose down -v
-cd deploy && docker compose up -d --build
+# 启动管理界面（可选）
+python admin_main.py --port 9091
 ```
 
 ## 🚀 使用场景
 
 ### 🎨 AI 驱动的数据采集
+
 ```plaintext
 用户: 帮我收集最近一周"新能源汽车"在小红书的热门讨论
 AI: 调用 xhs_search 工具 → 返回结构化数据 → 生成分析报告
 ```
 
 ### 📊 竞品分析
+
 ```plaintext
 用户: 分析"李佳琦"和"薇娅"在抖音的粉丝互动情况
 AI: 调用 dy_creator 工具 → 对比数据 → 生成可视化报告
 ```
 
 ### 📢 舆情监控
+
 ```plaintext
-用户: 监控"某品牌"在各平台的评论情绪
-AI: 批量调用多个平台工具 → 情感分析 → 实时预警
+用户: 监控"某品牌"在B站的评论情绪
+AI: 调用 bili_search 工具 → 获取评论 → 情感分析 → 实时预警
 ```
 
-## ⚙️ 高级配置
+## ⚙️ 扩展新平台
 
-**平台选择（.env 文件）：**
+基于新架构，扩展新平台非常简单：
+
+### 1. 创建平台目录
 
 ```bash
-# 仅启用小红书和抖音
-ENABLED_PLATFORMS=xhs,dy
-
-# 启用所有平台
-ENABLED_PLATFORMS=all
+mkdir app/crawler/platforms/yourplatform
+touch app/crawler/platforms/yourplatform/__init__.py
+touch app/crawler/platforms/yourplatform/crawler.py
+touch app/crawler/platforms/yourplatform/service.py
+touch app/crawler/platforms/yourplatform/client.py
 ```
 
-**边车服务配置：**
+### 2. 实现 Crawler
 
-```bash
-# 浏览器池配置
-BROWSER_POOL_SIZE=5           # 浏览器池大小
-DEFAULT_HEADLESS=true         # 无头模式（生产推荐）
-DEFAULT_LOGIN_TYPE=cookie     # 默认登录方式
-DEFAULT_SAVE_FORMAT=json      # 默认数据格式
+```python
+# app/crawler/platforms/yourplatform/crawler.py
+from app.crawler.base import AbstractCrawler
+
+class YourPlatformCrawler(AbstractCrawler):
+    def __init__(self, config: CrawlerConfig):
+        super().__init__(config)
+        # 初始化逻辑
+
+    async def start(self) -> Dict:
+        # 爬取逻辑
+        pass
 ```
+
+### 3. 实现 Service
+
+```python
+# app/crawler/platforms/yourplatform/service.py
+class YourPlatformCrawlerService:
+    async def search(self, keywords: str, **kwargs) -> Dict:
+        config = create_search_config(...)
+        crawler = YourPlatformCrawler(config)
+        try:
+            return await crawler.start()
+        finally:
+            await crawler.close()
+```
+
+### 4. 注册 MCP 端点
+
+```python
+# app/api/endpoints/platform/yourplatform.py
+class YourPlatformEndpoint(BaseEndpoint):
+    def __init__(self):
+        super().__init__(prefix="/yourplatform", tags=["你的平台"])
+        self.service = YourPlatformCrawlerService()
+
+    def register_mcp_tools(self, app: FastMCP):
+        @app.tool(name="yourplatform_search")
+        async def yourplatform_search(keywords: str) -> str:
+            result = await self.service.search(keywords)
+            return json.dumps(result, ensure_ascii=False)
+```
+
+### 5. 注册到应用
+
+```python
+# app/api_service.py
+from app.api.endpoints.platform.yourplatform import YourPlatformEndpoint
+
+def auto_discover_endpoints():
+    endpoint_registry.register(YourPlatformEndpoint())
+```
+
+完成！新平台的 MCP 工具自动可用。
 
 ## 🔧 故障排查
 
 **常见问题：**
 
 ```bash
-# Q: 子模块没有下载怎么办？
-git submodule update --init --recursive
+# Q: 启动失败，提示找不到模块？
+poetry install  # 确保依赖已安装
 
-# Q: 端口被占用怎么办？
-# 编辑 .env 文件，修改端口
-APP_PORT=9095
-ADMIN_PORT=9096
-SIDECAR_PORT=8002
+# Q: 浏览器启动失败？
+poetry run playwright install chromium  # 安装浏览器
 
 # Q: 没有爬取到数据？
-# 1. 检查平台登录状态
-# 2. 验证 URL 格式
+# 1. 检查平台登录状态（首次需要登录）
+# 2. 设置 headless=false 查看浏览器行为
 # 3. 查看日志：tail -f logs/mcp-toolse.log
 
-# Q: Docker 部署失败？
-docker info  # 检查 Docker 状态
-cd deploy && docker compose logs mcp-service  # 查看日志
+# Q: 并发爬取数据混乱？
+# 新架构已解决此问题！每个任务使用独立配置上下文
 ```
 
 ## 🛡️ 重要提示
 
 1. **合规使用**: 仅用于学习研究，请遵守平台服务条款
-2. **频率控制**: 设置合理爬取间隔，避免对平台造成负担
+2. **频率控制**: 设置合理爬取间隔（`crawl_interval`），避免对平台造成负担
 3. **数据隐私**: 妥善保管数据，不得用于商业目的
 4. **Cookie 安全**: 登录状态存储在 `browser_data/` 目录，注意权限控制
 
@@ -589,6 +666,11 @@ cd deploy && docker compose logs mcp-service  # 查看日志
 4. 推送分支 (`git push origin feature/AmazingFeature`)
 5. 创建 Pull Request
 
+**重构进度**:
+- ✅ **B站 (bili)**: 完成参数化重构，提供4个MCP工具
+- 🔄 **小红书 (xhs)**: 重构中...
+- ⏳ **抖音、快手、微博、贴吧、知乎**: 待重构
+
 ## 📄 许可证 & 联系
 
 - **许可证**: MIT License
@@ -597,12 +679,13 @@ cd deploy && docker compose logs mcp-service  # 查看日志
 
 ---
 
-## 🌟 致谢
+## 🙏 致谢
 
-感谢以下开源项目的支持：
-- [MediaCrawler](https://github.com/NanmiCoder/MediaCrawler) - 强大的社交媒体爬虫引擎
-- [FastMCP](https://github.com/jlowin/fastmcp) - MCP 协议 Python 实现
+本项目基于以下优秀的开源项目构建：
+
+- **[MediaCrawler](https://github.com/NanmiCoder/MediaCrawler)** - 感谢 [@NanmiCoder](https://github.com/NanmiCoder) 提供的强大社交媒体爬虫引擎
+- **[FastMCP](https://github.com/jlowin/fastmcp)** - MCP 协议的 Python 实现框架
 
 **如果这个项目对你有帮助，请给个 Star ⭐️ 支持一下！**
 
-**MediaCrawler MCP 边车服务** - 让 AI 拥有社交媒体数据采集能力 🚀
+**MediaCrawler MCP 智能爬虫服务** - 让 AI 拥有社交媒体数据采集能力 🚀

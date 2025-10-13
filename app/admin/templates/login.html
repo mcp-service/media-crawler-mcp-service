@@ -49,7 +49,7 @@
             </div>
 
             <div class="form-group">
-                <button type="submit" class="btn btn-primary">开始登录</button>
+                <button type="submit" id="login-submit-btn" class="btn btn-primary">开始登录</button>
                 <button type="button" class="btn btn-secondary" onclick="refreshLoginStatus()">刷新状态</button>
             </div>
         </form>
@@ -99,10 +99,13 @@ function toggleLoginFields() {
 async function refreshLoginStatus() {
     try {
         showMessage('正在刷新登录状态...', 'info');
-        
+
         const response = await apiRequest('/login/sessions');
         const sessions = response || [];
-        
+
+        // 检查当前选中的平台是否已登录，禁用/启用登录按钮
+        updateLoginButtonState(sessions);
+
         const container = document.getElementById('platform-sessions');
         if (sessions.length === 0) {
             container.innerHTML = '<div class="text-center"><p style="color: #6c757d;">暂无登录会话</p></div>';
@@ -116,16 +119,62 @@ async function refreshLoginStatus() {
                     <div style="margin-top: 0.5rem; font-size: 0.875rem; color: #6c757d;">
                         ${session.last_login || '从未登录'}
                     </div>
-                    <button class="btn btn-sm btn-primary" onclick="quickLogin('${session.platform}')" style="margin-top: 0.5rem; width: 100%;">
-                        ${session.is_logged_in ? '重新登录' : '开始登录'}
+                    <button class="btn btn-sm ${session.is_logged_in ? 'btn-danger' : 'btn-primary'}"
+                            onclick="${session.is_logged_in ? `logoutPlatform('${session.platform}')` : `quickLogin('${session.platform}')`}"
+                            style="margin-top: 0.5rem; width: 100%;">
+                        ${session.is_logged_in ? '退出登录' : '开始登录'}
                     </button>
                 </div>
             `).join('');
         }
-        
+
         showSuccess('登录状态已刷新');
     } catch (error) {
         showError('刷新失败: ' + error.message);
+    }
+}
+
+function updateLoginButtonState(sessions) {
+    const platformSelect = document.getElementById('platform');
+    const submitBtn = document.getElementById('login-submit-btn');
+    const selectedPlatform = platformSelect.value;
+
+    if (!selectedPlatform || !submitBtn) {
+        return;
+    }
+
+    // 查找选中平台的登录状态
+    const platformSession = sessions.find(s => s.platform === selectedPlatform);
+
+    if (platformSession && platformSession.is_logged_in) {
+        // 已登录，禁用登录按钮
+        submitBtn.disabled = true;
+        submitBtn.textContent = '已登录';
+        submitBtn.classList.remove('btn-primary');
+        submitBtn.classList.add('btn-secondary');
+    } else {
+        // 未登录，启用登录按钮
+        submitBtn.disabled = false;
+        submitBtn.textContent = '开始登录';
+        submitBtn.classList.remove('btn-secondary');
+        submitBtn.classList.add('btn-primary');
+    }
+}
+
+async function logoutPlatform(platform) {
+    if (!confirm(`确定要退出 ${platform} 的登录吗？`)) {
+        return;
+    }
+
+    try {
+        showMessage('正在退出登录...', 'info');
+        await apiRequest(`/login/logout/${platform}`, {
+            method: 'POST'
+        });
+        showSuccess('退出登录成功');
+        refreshLoginStatus();
+    } catch (error) {
+        showError('退出登录失败: ' + error.message);
     }
 }
 
@@ -141,7 +190,21 @@ function quickLogin(platform) {
 // 页面加载时初始化
 document.addEventListener('DOMContentLoaded', function() {
     refreshLoginStatus();
-    
+
+    // 监听平台选择变化，更新登录按钮状态
+    const platformSelect = document.getElementById('platform');
+    if (platformSelect) {
+        platformSelect.addEventListener('change', async function() {
+            try {
+                const response = await apiRequest('/login/sessions');
+                const sessions = response || [];
+                updateLoginButtonState(sessions);
+            } catch (error) {
+                console.error('更新按钮状态失败:', error);
+            }
+        });
+    }
+
     // 每30秒自动刷新登录状态
     setInterval(refreshLoginStatus, 30000);
 });

@@ -56,19 +56,19 @@
                     <small>端口: 9090</small>
                 </div>
                 <div class="col">
-                    <h4>管理服务</h4>
+                    <h4>管理界面</h4>
                     <p class="status status-success">运行中</p>
-                    <small>端口: 9091</small>
-                </div>
-                <div class="col">
-                    <h4>边车服务</h4>
-                    <p class="status" id="sidecar-service-status">检查中...</p>
-                    <small>端口: 8001</small>
+                    <small>路径: /admin</small>
                 </div>
                 <div class="col">
                     <h4>数据库</h4>
                     <p class="status" id="database-status">检查中...</p>
                     <small>PostgreSQL</small>
+                </div>
+                <div class="col">
+                    <h4>Redis缓存</h4>
+                    <p class="status" id="redis-status">检查中...</p>
+                    <small>Redis</small>
                 </div>
             </div>
         </div>
@@ -117,13 +117,13 @@
         <div class="card-body">
             <div class="row">
                 <div class="col text-center">
-                    <a href="/login" class="btn btn-primary" style="text-decoration: none; display: block; padding: 1rem;">
+                    <a href="/admin/login" class="btn btn-primary" style="text-decoration: none; display: block; padding: 1rem;">
                         <div style="font-size: 2rem; margin-bottom: 0.5rem;">🔐</div>
                         <div>登录管理</div>
                     </a>
                 </div>
                 <div class="col text-center">
-                    <a href="/config" class="btn btn-primary" style="text-decoration: none; display: block; padding: 1rem;">
+                    <a href="/admin/config" class="btn btn-primary" style="text-decoration: none; display: block; padding: 1rem;">
                         <div style="font-size: 2rem; margin-bottom: 0.5rem;">⚙️</div>
                         <div>配置管理</div>
                     </a>
@@ -163,11 +163,11 @@ async function loadSystemStatus() {
 async function loadServicesStatus() {
     try {
         const response = await apiRequest('/status/services');
-        
+
         // 更新各服务状态
         updateServiceStatus('mcp-service-status', response.mcp_service);
-        updateServiceStatus('sidecar-service-status', response.sidecar_service);
         updateServiceStatus('database-status', response.database);
+        updateServiceStatus('redis-status', response.redis);
     } catch (error) {
         console.error('加载服务状态失败:', error);
     }

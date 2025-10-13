@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}MCP Tools 管理后台{% endblock %}</title>
-    <link href="{{ url_for('static', path='/css/admin.css') }}" rel="stylesheet">
+    <link href="{{ url_for('static', path='/css/admin.css') }}?v=2" rel="stylesheet">
     <style>
         .d-none { display: none !important; }
         .row { display: flex; flex-wrap: wrap; margin: -0.5rem; }
@@ -16,9 +16,9 @@
         <div class="container">
             <h1>🤖 MCP Tools 管理后台</h1>
             <nav style="margin-top: 1rem;">
-                <a href="/" class="btn btn-sm" style="margin-right: 0.5rem; background: rgba(255,255,255,0.2); color: white; text-decoration: none;">仪表板</a>
-                <a href="/login" class="btn btn-sm" style="margin-right: 0.5rem; background: rgba(255,255,255,0.2); color: white; text-decoration: none;">登录管理</a>
-                <a href="/config" class="btn btn-sm" style="background: rgba(255,255,255,0.2); color: white; text-decoration: none;">配置管理</a>
+                <a href="/admin" class="btn btn-sm" style="margin-right: 0.5rem; background: rgba(255,255,255,0.2); color: white; text-decoration: none;">仪表板</a>
+                <a href="/admin/login" class="btn btn-sm" style="margin-right: 0.5rem; background: rgba(255,255,255,0.2); color: white; text-decoration: none;">登录管理</a>
+                <a href="/admin/config" class="btn btn-sm" style="background: rgba(255,255,255,0.2); color: white; text-decoration: none;">配置管理</a>
             </nav>
         </div>
     </header>
@@ -30,10 +30,10 @@
 
     <footer style="text-align: center; padding: 2rem; color: #6c757d; border-top: 1px solid #e9ecef; margin-top: 3rem;">
         <p>MCP Tools Admin v1.0.0 | 社交媒体爬虫管理系统</p>
-        <p style="font-size: 0.875rem; margin-top: 0.5rem;">MCP端口: 9090 | 管理端口: 9091</p>
+        <p style="font-size: 0.875rem; margin-top: 0.5rem;">MCP端口: 9090 | 管理界面: /admin</p>
     </footer>
 
-    <script src="{{ url_for('static', path='/js/admin.js') }}"></script>
+    <script src="{{ url_for('static', path='/js/admin.js') }}?v=2"></script>
     {% block scripts %}{% endblock %}
 </body>
 </html>
