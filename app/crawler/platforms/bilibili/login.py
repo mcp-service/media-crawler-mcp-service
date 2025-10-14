@@ -9,12 +9,10 @@ Bilibili 登录实现类（改造版）
 """
 
 import asyncio
-import functools
-import sys
+from pathlib import Path
 from typing import Optional
 
 from playwright.async_api import BrowserContext, Page
-from tenacity import (RetryError, retry, retry_if_result, stop_after_attempt, wait_fixed)
 
 from app.config.settings import Platform, LoginType
 from app.crawler.platforms.base import AbstractLogin
@@ -59,66 +57,64 @@ class BilibiliLogin(AbstractLogin):
                 "[BilibiliLogin.begin] Invalid Login Type Currently only supported qrcode or phone or cookie ..."
             )
 
-    @retry(stop=stop_after_attempt(600), wait=wait_fixed(1), retry=retry_if_result(lambda value: value is False))
-    async def check_login_state(self) -> bool:
-        """
-        检查当前登录状态
+    async def generate_qrcode(self) -> Optional[Path]:
+        """生成二维码并返回保存路径"""
+        logger.info("[BilibiliLogin.generate_qrcode] Preparing Bilibili QR code ...")
 
-        如果登录成功返回 True，否则返回 False
-        重试装饰器会在返回 False 时重试 600 次，重试间隔为 1 秒
-        如果达到最大重试次数，抛出 RetryError
-        """
-        current_cookie = await self.browser_context.cookies()
-        cookie_dict = {cookie['name']: cookie['value'] for cookie in current_cookie}
-
-        if cookie_dict.get("SESSDATA", "") or cookie_dict.get("DedeUserID"):
-            return True
-        return False
-
-    async def login_by_qrcode(self):
-        """二维码登录 Bilibili"""
-        logger.info("[BilibiliLogin.login_by_qrcode] Begin login bilibili by qrcode ...")
-
-        # 访问 Bilibili 首页
         await self.context_page.goto("https://www.bilibili.com/")
         await asyncio.sleep(2)
 
-        # 点击登录按钮
         try:
             login_button_ele = self.context_page.locator(
                 "xpath=//div[@class='right-entry__outside go-login-btn']//div"
             )
             await login_button_ele.click()
             await asyncio.sleep(2)
-        except Exception as e:
-            logger.error(f"[BilibiliLogin.login_by_qrcode] Failed to click login button: {e}")
+        except Exception as exc:
+            logger.error(f"[BilibiliLogin.generate_qrcode] Failed to click login button: {exc}")
 
-        # 查找登录二维码并截图保存
         qrcode_img_selector = "//div[@class='login-scan-box']//img"
+        qrcode_dir = Path(f"browser_data/{Platform.BILIBILI.value}_{self.login_type}")
+        qrcode_dir.mkdir(parents=True, exist_ok=True)
+        qrcode_path = qrcode_dir / "qrcode.png"
 
         try:
-            # 等待二维码出现
             qrcode_element = self.context_page.locator(qrcode_img_selector)
             await qrcode_element.wait_for(state="visible", timeout=10000)
-
-            # 截取二维码图片
-            from pathlib import Path
-            qrcode_dir = Path(f"browser_data/{Platform.BILIBILI.value}_{self.login_type}")
-
-            qrcode_dir.mkdir(parents=True, exist_ok=True)
-
-            qrcode_path = qrcode_dir / f"qrcode.png"
             await qrcode_element.screenshot(path=str(qrcode_path))
+            logger.info(f"[BilibiliLogin.generate_qrcode] QR code saved to: {qrcode_path}")
+            return qrcode_path
+        except Exception as exc:
+            logger.error(f"[BilibiliLogin.generate_qrcode] Failed to capture QR code: {exc}")
+            return None
 
-            logger.info(f"[BilibiliLogin.login_by_qrcode] QR code saved to: {qrcode_path}")
-            logger.info("[BilibiliLogin.login_by_qrcode] Waiting for QR code scan...")
+    async def has_valid_cookie(self) -> bool:
+        """检测当前上下文是否已登录"""
+        current_cookie = await self.browser_context.cookies()
+        cookie_dict = {cookie["name"]: cookie["value"] for cookie in current_cookie}
+        return bool(cookie_dict.get("SESSDATA") or cookie_dict.get("DedeUserID"))
 
-        except Exception as e:
-            logger.error(f"[BilibiliLogin.login_by_qrcode] Failed to capture QR code: {e}")
+    async def wait_for_login(self, timeout: float = 180.0, interval: float = 1.0) -> bool:
+        """轮询检测登录状态"""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        while loop.time() < deadline:
+            try:
+                if await self.has_valid_cookie():
+                    return True
+            except Exception as exc:
+                logger.warning(f"[BilibiliLogin.wait_for_login] Failed to check login state: {exc}")
+            await asyncio.sleep(interval)
+        return False
 
-        try:
-            await self.check_login_state()
-        except RetryError:
+    async def login_by_qrcode(self):
+        """二维码登录 Bilibili"""
+        logger.info("[BilibiliLogin.login_by_qrcode] Begin login bilibili by qrcode ...")
+
+        await self.generate_qrcode()
+        logger.info("[BilibiliLogin.login_by_qrcode] Waiting for QR code scan...")
+
+        if not await self.wait_for_login():
             logger.error("[BilibiliLogin.login_by_qrcode] Login bilibili failed by qrcode login method (timeout)")
             raise Exception("二维码登录超时，用户未扫码或扫码失败")
 

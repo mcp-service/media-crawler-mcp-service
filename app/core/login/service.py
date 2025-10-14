@@ -70,7 +70,7 @@ class LoginService:
             response = await handler.start_login(session, payload)
             return response
         except Exception as exc:
-            logger.error("[登录管理] 启动登录失败: %s", exc)
+            logger.error(f"[登录管理] 启动登录失败: {exc}")
             await self.cleanup_session(session_id, remove_resources=True, drop=True)
             raise LoginServiceError(f"启动登录失败: {exc}") from exc
 
@@ -122,6 +122,9 @@ class LoginService:
             if elapsed > 180 and session.status not in {"success", "failed", "expired"}:
                 session.status = "expired"
                 session.message = "二维码已过期，请重新获取"
+                asyncio.create_task(
+                    self.cleanup_session(session_id, remove_resources=True)
+                )
 
         return session.to_public_dict()
 

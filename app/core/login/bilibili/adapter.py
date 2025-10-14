@@ -9,7 +9,7 @@ import base64
 import shutil
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional, TYPE_CHECKING
+from typing import Any, Dict, Optional
 
 from playwright.async_api import BrowserContext, async_playwright
 
@@ -20,14 +20,11 @@ from app.crawler.platforms.bilibili.login import BilibiliLogin
 from ..base import BaseLoginAdapter
 from ..models import LoginSession, LoginStartPayload, PlatformLoginState
 
-if TYPE_CHECKING:
-    from ..service import LoginService
-
 
 class BilibiliLoginAdapter(BaseLoginAdapter):
     """Bilibili 登录适配器"""
 
-    def __init__(self, service: "LoginService"):
+    def __init__(self, service):
         super().__init__(service)
         browser_cfg = getattr(global_settings, "browser", None)
         self._headless = getattr(browser_cfg, "headless", False)
@@ -42,6 +39,8 @@ class BilibiliLoginAdapter(BaseLoginAdapter):
         self._viewport = {"width": int(viewport_width), "height": int(viewport_height)}
         self._qr_wait_attempts = 50
         self._qr_wait_interval = 0.2
+        self._qr_login_timeout = 180
+        self._qr_poll_interval = 1.5
 
     @property
     def platform(self) -> str:
@@ -62,7 +61,7 @@ class BilibiliLoginAdapter(BaseLoginAdapter):
         session.status = "starting"
         session.message = "正在启动登录流程..."
         self.logger.info(
-            "[登录管理] 启动 Bilibili 登录: platform=%s, type=%s", payload.platform, payload.login_type
+            f"[登录管理] 启动 Bilibili 登录: platform={payload.platform}, type={payload.login_type}"
         )
 
         qr_dir = self._qr_code_dir(payload.login_type)
@@ -70,7 +69,7 @@ class BilibiliLoginAdapter(BaseLoginAdapter):
             try:
                 shutil.rmtree(qr_dir)
             except Exception as exc:
-                self.logger.warning("[登录管理] 清理旧二维码目录失败: %s", exc)
+                self.logger.warning(f"[登录管理] 清理旧二维码目录失败: {exc}")
 
         playwright = await async_playwright().start()
         chromium = playwright.chromium
@@ -99,31 +98,102 @@ class BilibiliLoginAdapter(BaseLoginAdapter):
         session.context_page = context_page
         session.playwright = playwright
         session.metadata["login_obj"] = login_obj
-        session.status = "started"
-        session.message = "登录流程已启动"
-        session.qrcode_timestamp = time.time() if payload.login_type == "qrcode" else 0.0
 
-        login_task = asyncio.create_task(self._execute_login(session.id))
-        session.metadata["task"] = login_task
-
-        qr_code_base64 = None
         if payload.login_type == "qrcode":
-            qr_code_base64 = await self._wait_for_qrcode(payload.login_type)
-            if qr_code_base64:
-                session.qr_code_base64 = qr_code_base64
+            session.status = "started"
+            session.message = "正在生成二维码..."
+            session.qrcode_timestamp = time.time()
+
+            qr_path = await login_obj.generate_qrcode()
+            if qr_path is None:
+                session.status = "failed"
+                session.message = "二维码生成失败，请稍后重试"
+                await self.service.cleanup_session(session.id, remove_resources=True)
             else:
-                session.message = "二维码生成中，请稍候..."
+                qr_code_base64 = await self._wait_for_qrcode(payload.login_type)
+                if qr_code_base64:
+                    session.qr_code_base64 = qr_code_base64
+                    session.status = "waiting"
+                    session.message = "二维码已生成，等待扫码..."
+                    poll_task = asyncio.create_task(self._poll_qrcode_session(session.id))
+                    session.metadata["task"] = poll_task
+                else:
+                    session.status = "failed"
+                    session.message = "二维码生成超时，请重新开始登录"
+                    await self.service.cleanup_session(session.id, remove_resources=True)
+        else:
+            session.status = "processing"
+            session.message = "正在尝试登录..."
+            session.qrcode_timestamp = 0.0
+            login_task = asyncio.create_task(self._execute_login(session.id))
+            session.metadata["task"] = login_task
 
         response = {
             "status": session.status,
             "platform": session.platform,
             "login_type": session.login_type,
-            "message": "请扫描二维码登录" if payload.login_type == "qrcode" else "请在浏览器中完成登录",
+            "message": session.message,
             "session_id": session.id,
-            "qr_code_base64": qr_code_base64,
+            "qr_code_base64": session.qr_code_base64,
             "qrcode_timestamp": session.qrcode_timestamp,
         }
         return response
+
+    async def _poll_qrcode_session(self, session_id: str) -> None:
+        """轮询检测二维码登录状态"""
+        session = self.service.get_session(session_id)
+        if not session:
+            return
+
+        login_obj: Optional[BilibiliLogin] = session.metadata.get("login_obj")
+        if not login_obj:
+            self.logger.error(f"[登录管理] 会话缺少登录对象: {session_id}")
+            return
+
+        timeout_seconds = self._qr_login_timeout
+        poll_interval = self._qr_poll_interval
+        start_ts = time.time()
+
+        try:
+            while True:
+                if await login_obj.has_valid_cookie():
+                    cookies = await session.browser_context.cookies()
+                    cookie_dict = {cookie["name"]: cookie["value"] for cookie in cookies}
+                    cookie_str = "; ".join(
+                        f"{name}={value}" for name, value in cookie_dict.items()
+                    )
+                    session.metadata["cookie_dict"] = cookie_dict
+                    session.metadata["cookie_str"] = cookie_str
+                    session.status = "success"
+                    session.message = "登录成功"
+                    self.logger.info(
+                        f"[登录管理] Bilibili 登录成功: session_id={session_id}"
+                    )
+                    await self.service.refresh_platform_state(session.platform, force=True)
+                    break
+
+                if time.time() - start_ts > timeout_seconds:
+                    session.status = "expired"
+                    session.message = "二维码已过期，请重新获取"
+                    self.logger.warning(
+                        f"[登录管理] Bilibili 登录超时: session_id={session_id}"
+                    )
+                    break
+
+                await asyncio.sleep(poll_interval)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            session.status = "failed"
+            session.message = f"登录失败: {exc}"
+            session.metadata["error"] = str(exc)
+            self.logger.error(
+                f"[登录管理] Bilibili 登录轮询失败: session_id={session_id}, error={exc}"
+            )
+        finally:
+            session.metadata.pop("task", None)
+            await asyncio.sleep(2)
+            await self.service.cleanup_session(session_id, remove_resources=True)
 
     async def _wait_for_qrcode(self, login_type: str) -> Optional[str]:
         """等待二维码文件生成并转换为 base64"""
@@ -138,7 +208,9 @@ class BilibiliLoginAdapter(BaseLoginAdapter):
                         if data:
                             return base64.b64encode(data).decode("utf-8")
                 except Exception as exc:
-                    self.logger.warning("[登录管理] 读取二维码失败（第%s次）: %s", attempt + 1, exc)
+                    self.logger.warning(
+                        f"[登录管理] 读取二维码失败（第{attempt + 1}次）: {exc}"
+                    )
             await asyncio.sleep(self._qr_wait_interval)
         self.logger.warning("[登录管理] 二维码未能及时生成（等待超时）")
         return None
@@ -147,39 +219,41 @@ class BilibiliLoginAdapter(BaseLoginAdapter):
         """执行登录流程"""
         session = self.service.get_session(session_id)
         if not session:
-            self.logger.error("[登录管理] 会话不存在: %s", session_id)
+            self.logger.error(f"[登录管理] 会话不存在: {session_id}")
             return
 
         login_obj: Optional[BilibiliLogin] = session.metadata.get("login_obj")
         if not login_obj:
-            self.logger.error("[登录管理] 会话缺少登录对象: %s", session_id)
+            self.logger.error(f"[登录管理] 会话缺少登录对象: {session_id}")
+            return
+
+        if session.login_type == "qrcode":
+            # 二维码登录不再由服务端主动拉起，改为前端轮询触发
             return
 
         try:
-            if session.login_type == "qrcode":
-                session.status = "waiting"
-                session.message = "等待扫描二维码..."
-            else:
-                session.status = "processing"
-                session.message = "正在尝试登录..."
+            session.status = "processing"
+            session.message = "正在尝试登录..."
 
             await login_obj.begin()
 
             session.status = "success"
             session.message = "登录成功"
-            self.logger.info("[登录管理] Bilibili 登录成功: session_id=%s", session_id)
+            self.logger.info(f"[登录管理] Bilibili 登录成功: session_id={session_id}")
 
             await self.service.refresh_platform_state(session.platform, force=True)
         except Exception as exc:
             session.status = "failed"
             session.message = f"登录失败: {exc}"
             session.metadata["error"] = str(exc)
-            self.logger.error("[登录管理] Bilibili 登录失败: session_id=%s, error=%s", session_id, exc)
+            self.logger.error(
+                f"[登录管理] Bilibili 登录失败: session_id={session_id}, error={exc}"
+            )
         finally:
             await asyncio.sleep(3)
             await self.service.cleanup_session(session_id, remove_resources=True)
 
-    async def fetch_login_state(self) -> PlatformLoginState:
+    async def fetch_login_state(self) -> PlatformLoginState | None:
         """检查登录状态"""
         state = PlatformLoginState(platform=self.platform)
         data_dir = self.user_data_dir
@@ -204,7 +278,7 @@ class BilibiliLoginAdapter(BaseLoginAdapter):
             await page.goto("https://www.bilibili.com")
 
             cookies = await browser_context.cookies()
-            cookie_str = "; ".join([f"{c['name']}={c['value']}" for c in cookies])
+            cookie_str = "; ".join(f"{c['name']}={c['value']}" for c in cookies)
             cookie_dict = {c["name"]: c["value"] for c in cookies}
 
             bili_client = BilibiliClient(
@@ -241,7 +315,7 @@ class BilibiliLoginAdapter(BaseLoginAdapter):
                 state.last_success_at = state.last_checked_at
             return state
         except Exception as exc:
-            self.logger.error("[登录管理] 检查 Bilibili 登录状态失败: %s", exc)
+            self.logger.error(f"[登录管理] 检查 Bilibili 登录状态失败: {exc}")
             state.message = f"状态检查失败: {exc}"
             state.last_checked_at = time.time()
             return state
@@ -265,7 +339,7 @@ class BilibiliLoginAdapter(BaseLoginAdapter):
             try:
                 await asyncio.to_thread(shutil.rmtree, data_dir)
             except Exception as exc:
-                self.logger.warning("[登录管理] 清理浏览器数据目录失败: %s", exc)
+                self.logger.warning(f"[登录管理] 清理浏览器数据目录失败: {exc}")
 
         qr_parent = Path("browser_data")
         if qr_parent.exists():

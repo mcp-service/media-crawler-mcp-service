@@ -37,17 +37,12 @@ class LoginEndpoint(BaseEndpoint):
                 platforms = self.service.get_supported_platforms()
                 return JSONResponse(content=platforms)
             except Exception as exc:
-                self.logger.error("获取平台列表失败: %s", exc)
+                self.logger.error(f"获取平台列表失败: {exc}")
                 return JSONResponse(content={"detail": str(exc)}, status_code=500)
 
         async def start_login_handler(request):
             try:
-                payload = await request.json()
-            except Exception:
-                payload = {}
-
-            try:
-                request_model = StartLoginRequest.model_validate(payload)
+                request_model = StartLoginRequest.model_validate(await request.json())
             except ValidationError as exc:
                 return JSONResponse(content={"detail": exc.errors()}, status_code=400)
 
@@ -58,10 +53,10 @@ class LoginEndpoint(BaseEndpoint):
             except LoginServiceError as exc:
                 return JSONResponse(content={"detail": str(exc)}, status_code=400)
             except ValidationError as exc:
-                self.logger.error("启动登录响应验证失败: %s", exc)
+                self.logger.error(f"启动登录响应验证失败: {exc}")
                 return JSONResponse(content={"detail": "响应数据格式错误"}, status_code=500)
             except Exception as exc:
-                self.logger.error("启动登录失败: %s", exc)
+                self.logger.error(f"启动登录失败: {exc}")
                 return JSONResponse(content={"detail": "启动登录失败"}, status_code=500)
 
         async def get_login_status_handler(request):
@@ -73,10 +68,10 @@ class LoginEndpoint(BaseEndpoint):
             except LoginServiceError as exc:
                 return JSONResponse(content={"detail": str(exc)}, status_code=400)
             except ValidationError as exc:
-                self.logger.error("登录状态响应验证失败: %s", exc)
+                self.logger.error(f"登录状态响应验证失败: {exc}")
                 return JSONResponse(content={"detail": "响应数据格式错误"}, status_code=500)
             except Exception as exc:
-                self.logger.error("获取登录状态失败: %s", exc)
+                self.logger.error(f"获取登录状态失败: {exc}")
                 return JSONResponse(content={"detail": "获取登录状态失败"}, status_code=500)
 
         async def logout_handler(request):
@@ -88,10 +83,10 @@ class LoginEndpoint(BaseEndpoint):
             except LoginServiceError as exc:
                 return JSONResponse(content={"detail": str(exc)}, status_code=400)
             except ValidationError as exc:
-                self.logger.error("退出登录响应验证失败: %s", exc)
+                self.logger.error(f"退出登录响应验证失败: {exc}")
                 return JSONResponse(content={"detail": "响应数据格式错误"}, status_code=500)
             except Exception as exc:
-                self.logger.error("退出登录失败: %s", exc)
+                self.logger.error(f"退出登录失败: {exc}")
                 return JSONResponse(content={"detail": "退出登录失败"}, status_code=500)
 
         async def get_session_status_handler(request):
@@ -103,10 +98,10 @@ class LoginEndpoint(BaseEndpoint):
             except LoginServiceError as exc:
                 return JSONResponse(content={"detail": str(exc)}, status_code=404)
             except ValidationError as exc:
-                self.logger.error("会话状态响应验证失败: %s", exc)
+                self.logger.error(f"会话状态响应验证失败: {exc}")
                 return JSONResponse(content={"detail": "响应数据格式错误"}, status_code=500)
             except Exception as exc:
-                self.logger.error("获取会话状态失败: %s", exc)
+                self.logger.error(f"获取会话状态失败: {exc}")
                 return JSONResponse(content={"detail": "获取会话状态失败"}, status_code=500)
 
         async def list_sessions_handler(request):
@@ -115,10 +110,10 @@ class LoginEndpoint(BaseEndpoint):
                 response_models = [PlatformSessionInfo.model_validate(item) for item in result]
                 return JSONResponse(content=[model.model_dump() for model in response_models])
             except ValidationError as exc:
-                self.logger.error("会话列表响应验证失败: %s", exc)
+                self.logger.error(f"会话列表响应验证失败: {exc}")
                 return JSONResponse(content={"detail": "响应数据格式错误"}, status_code=500)
             except Exception as exc:
-                self.logger.error("获取会话列表失败: %s", exc)
+                self.logger.error(f"获取会话列表失败: {exc}")
                 return JSONResponse(content={"detail": "获取会话列表失败"}, status_code=500)
 
         return [
