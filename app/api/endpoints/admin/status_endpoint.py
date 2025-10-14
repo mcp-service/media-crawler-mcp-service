@@ -11,7 +11,7 @@ from datetime import datetime
 
 from app.api.endpoints.base import BaseEndpoint
 from app.providers.logger import get_logger
-from app.config.settings import global_settings
+from app.config.settings import global_settings, Platform
 
 
 class StatusEndpoint(BaseEndpoint):
@@ -200,7 +200,7 @@ class StatusEndpoint(BaseEndpoint):
                     },
                     "platforms": {
                         "enabled": enabled_platforms,
-                        "total": len(global_settings.platforms.ALL_PLATFORMS)
+                        "total": len(list(Platform))
                     },
                     "data": {
                         "total_files": data_status["total_files"],

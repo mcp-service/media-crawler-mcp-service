@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 from fastmcp import FastMCP
 from app.providers.logger import get_logger
+from app.config.settings import global_settings
 
 
 def register_resources(app: FastMCP) -> None:
@@ -101,10 +102,19 @@ def register_resources(app: FastMCP) -> None:
         import json
         from app.config.settings import global_settings
 
-        enabled = global_settings.platforms.list_enabled_platforms()
+        enabled = [p.value if hasattr(p, 'value') else str(p) for p in global_settings.platform.enabled_platforms]
+        platform_names = {
+            "bili": "哔哩哔哩",
+            "xhs": "小红书",
+            "dy": "抖音",
+            "ks": "快手",
+            "wb": "微博",
+            "tieba": "贴吧",
+            "zhihu": "知乎"
+        }
         all_platforms = [
-            {"code": code, "name": global_settings.platforms.PLATFORM_NAMES[code]}
-            for code in global_settings.platforms.ALL_PLATFORMS
+            {"code": code, "name": platform_names.get(code, code)}
+            for code in [p.value for p in global_settings.platform.enabled_platforms]
         ]
 
         return json.dumps({
@@ -122,9 +132,9 @@ def register_resources(app: FastMCP) -> None:
         """
         import json
 
-        db_host = os.getenv("DB_HOST", "localhost")
-        db_port = os.getenv("DB_PORT", "5432")
-        db_name = os.getenv("DB_NAME", "mcp_tools_db")
+        db_host = global_settings.database.host
+        db_port = str(global_settings.database.port)
+        db_name = global_settings.database.database
 
         return json.dumps({
             "type": "PostgreSQL",
@@ -162,7 +172,7 @@ def register_resources(app: FastMCP) -> None:
         获取所有可用的API端点文档
         """
         import json
-        from app.api.endpoints.base import BaseEndpoint
+        from app.api.endpoints.base import endpoint_registry
 
         endpoints_info = []
         for endpoint in endpoint_registry.get_all_endpoints():
@@ -179,7 +189,7 @@ def register_resources(app: FastMCP) -> None:
             })
 
         return json.dumps({
-            "base_url": f"http://localhost:{os.getenv('APP_PORT', '9090')}",
+            "base_url": f"http://localhost:{global_settings.app.port}",
             "endpoints": endpoints_info
         }, ensure_ascii=False, indent=2)
 

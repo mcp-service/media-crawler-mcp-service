@@ -44,12 +44,21 @@ class ConfigEndpoint(BaseEndpoint):
         async def get_platform_config_handler(request):
             """获取平台配置"""
             try:
-                enabled = global_settings.platform.get_enabled_platforms()
+                enabled_codes = [p.value if hasattr(p, 'value') else str(p) for p in global_settings.platform.enabled_platforms]
+                platform_names = {
+                    "bili": "哔哩哔哩",
+                    "xhs": "小红书",
+                    "dy": "抖音",
+                    "ks": "快手",
+                    "wb": "微博",
+                    "tieba": "贴吧",
+                    "zhihu": "知乎"
+                }
 
                 data = {
-                    "enabled_platforms": list(enabled),
-                    "all_platforms": list(Platform),
-                    "platform_names": global_settings.platforms.PLATFORM_NAMES
+                    "enabled_platforms": enabled_codes,
+                    "all_platforms": [p.value for p in Platform],
+                    "platform_names": platform_names
                 }
                 return JSONResponse(content=data)
 
@@ -68,14 +77,14 @@ class ConfigEndpoint(BaseEndpoint):
                 config = PlatformConfigUpdate(**body)
 
                 # 验证平台代码
-                invalid_platforms = set(config.enabled_platforms) - set(Platform)
+                invalid_platforms = set(config.enabled_platforms) - set([p.value for p in Platform])
                 if invalid_platforms:
                     return JSONResponse(
                         content={"detail": f"无效的平台代码: {invalid_platforms}"},
                         status_code=400
                     )
 
-                # 更新.env文件
+                # 更新 .env 文件（嵌套结构）
                 env_file = ".env"
                 enabled_str = ",".join(config.enabled_platforms) if config.enabled_platforms else "all"
 
@@ -85,19 +94,19 @@ class ConfigEndpoint(BaseEndpoint):
                     with open(env_file, "r", encoding="utf-8") as f:
                         env_lines = f.readlines()
 
-                # 更新ENABLED_PLATFORMS配置
+                # 更新 PLATFORM__ENABLED_PLATFORMS 配置
                 updated = False
                 new_lines = []
                 for line in env_lines:
-                    if line.startswith("ENABLED_PLATFORMS="):
-                        new_lines.append(f"ENABLED_PLATFORMS={enabled_str}\n")
+                    if line.startswith("PLATFORM__ENABLED_PLATFORMS="):
+                        new_lines.append(f"PLATFORM__ENABLED_PLATFORMS={enabled_str}\n")
                         updated = True
                     else:
                         new_lines.append(line)
 
                 # 如果没找到配置行，添加它
                 if not updated:
-                    new_lines.append(f"\nENABLED_PLATFORMS={enabled_str}\n")
+                    new_lines.append(f"\nPLATFORM__ENABLED_PLATFORMS={enabled_str}\n")
 
                 # 写回文件
                 with open(env_file, "w", encoding="utf-8") as f:
@@ -119,14 +128,13 @@ class ConfigEndpoint(BaseEndpoint):
         async def get_crawler_config_handler(request):
             """获取爬虫配置"""
             try:
-                platform_config = global_settings.platforms
                 data = {
-                    "max_notes": int(os.getenv("MEDIA_CRAWLER_MAX_NOTES", str(platform_config.max_notes_per_request))),
-                    "enable_comments": os.getenv("MEDIA_CRAWLER_ENABLE_COMMENTS", "true").lower() == "true",
-                    "max_comments_per_note": int(os.getenv("MEDIA_CRAWLER_MAX_COMMENTS_PER_NOTE", str(platform_config.max_comments_per_note))),
-                    "headless": os.getenv("MEDIA_CRAWLER_HEADLESS", str(platform_config.default_headless)).lower() == "true",
-                    "save_data_option": os.getenv("MEDIA_CRAWLER_SAVE_DATA_OPTION", platform_config.default_save_format),
-                    "default_login_type": os.getenv("DEFAULT_LOGIN_TYPE", platform_config.default_login_type)
+                    "max_notes": int(global_settings.crawl.max_notes_count),
+                    "enable_comments": bool(global_settings.crawl.enable_get_comments),
+                    "max_comments_per_note": int(global_settings.crawl.max_comments_per_note),
+                    "headless": bool(global_settings.browser.headless),
+                    "save_data_option": str(global_settings.store.save_format),
+                    "default_login_type": str(global_settings.platform.default_login_type)
                 }
                 return JSONResponse(content=data)
 
@@ -151,13 +159,14 @@ class ConfigEndpoint(BaseEndpoint):
                     with open(env_file, "r", encoding="utf-8") as f:
                         env_lines = f.readlines()
 
-                # 配置项映射
+                # 配置项映射（嵌套结构）
                 config_map = {
-                    "MEDIA_CRAWLER_MAX_NOTES": str(config.max_notes),
-                    "MEDIA_CRAWLER_ENABLE_COMMENTS": str(config.enable_comments).lower(),
-                    "MEDIA_CRAWLER_MAX_COMMENTS_PER_NOTE": str(config.max_comments_per_note),
-                    "MEDIA_CRAWLER_HEADLESS": str(config.headless).lower(),
-                    "MEDIA_CRAWLER_SAVE_DATA_OPTION": config.save_data_option
+                    "CRAWL__MAX_NOTES_COUNT": str(config.max_notes),
+                    "CRAWL__ENABLE_GET_COMMENTS": str(config.enable_comments).lower(),
+                    "CRAWL__MAX_COMMENTS_PER_NOTE": str(config.max_comments_per_note),
+                    "BROWSER__HEADLESS": str(config.headless).lower(),
+                    "STORE__SAVE_FORMAT": config.save_data_option,
+                    "PLATFORM__DEFAULT_LOGIN_TYPE": config.default_login_type
                 }
 
                 # 更新配置
@@ -200,10 +209,10 @@ class ConfigEndpoint(BaseEndpoint):
                 db_config = global_settings.database
                 data = {
                     "type": "PostgreSQL",
-                    "host": os.getenv("DB_HOST", db_config.host),
-                    "port": os.getenv("DB_PORT", str(db_config.port)),
-                    "database": os.getenv("DB_NAME", db_config.database),
-                    "user": os.getenv("DB_USER", db_config.user),
+                    "host": db_config.host,
+                    "port": str(db_config.port),
+                    "database": db_config.database,
+                    "user": db_config.user,
                     "password": "******"  # 隐藏密码
                 }
                 return JSONResponse(content=data)

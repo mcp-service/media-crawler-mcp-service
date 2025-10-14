@@ -5,18 +5,21 @@ Bilibili 爬虫服务层
 提供简化的 Bilibili 爬虫调用接口
 """
 
-from typing import Dict, List, Optional, Any
+from typing import Any, Dict, List, Optional
+
 from app.providers.logger import get_logger
 
 from app.config.settings import (
     CrawlerConfig,
-    Platform,
     CrawlerType,
     LoginType,
-    create_search_config,
+    Platform,
+    create_creator_config,
     create_detail_config,
-    create_creator_config
+    create_search_config,
+    global_settings,
 )
+from app.core.login import login_service
 from .crawler import BilibiliCrawler
 
 logger = get_logger()
@@ -35,7 +38,7 @@ class BilibiliCrawlerService:
         enable_comments: bool = True,
         max_comments_per_note: int = 10,
         login_cookie: Optional[str] = None,
-        headless: bool = False,
+        headless: Optional[bool] = None,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -55,16 +58,20 @@ class BilibiliCrawlerService:
         """
         logger.info(f"[BilibiliCrawlerService.search] Searching Bilibili with keywords: {keywords}")
 
-        # 创建配置
+        cookie = login_cookie or await login_service.get_cookie(Platform.BILIBILI.value)
+        effective_headless = (
+            headless if headless is not None else getattr(global_settings.browser, "headless", False)
+        )
+
         config = create_search_config(
             platform=Platform.BILIBILI,
             keywords=keywords,
             max_notes=max_notes,
             enable_comments=enable_comments,
             max_comments_per_note=max_comments_per_note,
-            login_type=LoginType.COOKIE if login_cookie else LoginType.QRCODE,
-            cookie_str=login_cookie,
-            headless=headless,
+            login_type=LoginType.COOKIE if cookie else LoginType.QRCODE,
+            cookie_str=cookie,
+            headless=effective_headless,
             **kwargs
         )
 
@@ -82,7 +89,7 @@ class BilibiliCrawlerService:
         enable_comments: bool = True,
         max_comments_per_note: int = 10,
         login_cookie: Optional[str] = None,
-        headless: bool = False,
+        headless: Optional[bool] = None,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -101,15 +108,19 @@ class BilibiliCrawlerService:
         """
         logger.info(f"[BilibiliCrawlerService.get_detail] Getting details for {len(video_ids)} videos")
 
-        # 创建配置
+        cookie = login_cookie or await login_service.get_cookie(Platform.BILIBILI.value)
+        effective_headless = (
+            headless if headless is not None else getattr(global_settings.browser, "headless", False)
+        )
+
         config = create_detail_config(
             platform=Platform.BILIBILI,
             note_ids=video_ids,
             enable_comments=enable_comments,
             max_comments_per_note=max_comments_per_note,
-            login_type=LoginType.COOKIE if login_cookie else LoginType.QRCODE,
-            cookie_str=login_cookie,
-            headless=headless,
+            login_type=LoginType.COOKIE if cookie else LoginType.QRCODE,
+            cookie_str=cookie,
+            headless=effective_headless,
             **kwargs
         )
 
@@ -128,7 +139,7 @@ class BilibiliCrawlerService:
         max_comments_per_note: int = 10,
         creator_mode: bool = True,
         login_cookie: Optional[str] = None,
-        headless: bool = False,
+        headless: Optional[bool] = None,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -148,7 +159,11 @@ class BilibiliCrawlerService:
         """
         logger.info(f"[BilibiliCrawlerService.get_creator] Getting content for {len(creator_ids)} creators")
 
-        # 创建配置
+        cookie = login_cookie or await login_service.get_cookie(Platform.BILIBILI.value)
+        effective_headless = (
+            headless if headless is not None else getattr(global_settings.browser, "headless", False)
+        )
+
         extra = kwargs.copy()
         extra['creator_mode'] = creator_mode
 
@@ -157,9 +172,9 @@ class BilibiliCrawlerService:
             creator_ids=creator_ids,
             enable_comments=enable_comments,
             max_comments_per_note=max_comments_per_note,
-            login_type=LoginType.COOKIE if login_cookie else LoginType.QRCODE,
-            cookie_str=login_cookie,
-            headless=headless,
+            login_type=LoginType.COOKIE if cookie else LoginType.QRCODE,
+            cookie_str=cookie,
+            headless=effective_headless,
             **extra
         )
 
@@ -182,7 +197,7 @@ class BilibiliCrawlerService:
         enable_comments: bool = True,
         max_comments_per_note: int = 10,
         login_cookie: Optional[str] = None,
-        headless: bool = False,
+        headless: Optional[bool] = None,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -206,7 +221,11 @@ class BilibiliCrawlerService:
         """
         logger.info(f"[BilibiliCrawlerService.search_with_time_range] Searching from {start_day} to {end_day}")
 
-        # 创建配置
+        cookie = login_cookie or await login_service.get_cookie(Platform.BILIBILI.value)
+        effective_headless = (
+            headless if headless is not None else getattr(global_settings.browser, "headless", False)
+        )
+
         extra = kwargs.copy()
         extra['search_mode'] = 'daily_limit_in_time_range' if daily_limit else 'all_in_time_range'
 
@@ -216,9 +235,9 @@ class BilibiliCrawlerService:
             max_notes=max_notes,
             enable_comments=enable_comments,
             max_comments_per_note=max_comments_per_note,
-            login_type=LoginType.COOKIE if login_cookie else LoginType.QRCODE,
-            cookie_str=login_cookie,
-            headless=headless,
+            login_type=LoginType.COOKIE if cookie else LoginType.QRCODE,
+            cookie_str=cookie,
+            headless=effective_headless,
             **extra
         )
 

@@ -127,7 +127,8 @@ def auto_discover_endpoints():
 
         # 获取启用的平台
         enabled_platforms = global_settings.platform.enabled_platforms
-        get_logger().info(f"✅ 启用的平台: {', '.join(sorted(enabled_platforms))}")
+        enabled_codes = sorted([(p.value if hasattr(p, 'value') else str(p)) for p in enabled_platforms])
+        get_logger().info(f"✅ 启用的平台: {', '.join(enabled_codes)}")
 
         # 注册社交媒体平台端点
         from app.api.endpoints.mcp import (
@@ -152,7 +153,7 @@ def auto_discover_endpoints():
         # 只注册启用的平台
         registered_count = 0
         for platform_code, endpoint_class in platform_endpoints.items():
-            if platform_code in enabled_platforms:
+            if platform_code in set(enabled_codes):
                 endpoint_registry.register(endpoint_class())
                 registered_count += 1
                 get_logger().info(f"  ✅ 已注册{platform_code}")

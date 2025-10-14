@@ -15,7 +15,7 @@
 
 from typing import List, Dict
 
-from app.config.settingss import global_settings
+from app.config.settings import global_settings
 from app.providers.logger import get_logger
 from app.crawler.tools.time_util import get_current_timestamp
 
@@ -49,8 +49,10 @@ class BiliStoreFactory:
 
     @staticmethod
     def create_store() -> AbstractStore:
-        # 从全局配置获取存储选项
-        save_option = global_settings.platforms.default_save_format
+        # 从全局配置获取存储选项（json/csv/db/sqlite）
+        save_option = (global_settings.store.save_format.value
+                       if hasattr(global_settings.store.save_format, 'value')
+                       else str(global_settings.store.save_format))
         store_class = BiliStoreFactory.STORES.get(save_option)
         if not store_class:
             raise ValueError(f"[BiliStoreFactory.create_store] Invalid save option '{save_option}'. Only supported: csv, db, json, sqlite")

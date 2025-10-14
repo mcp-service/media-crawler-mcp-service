@@ -85,6 +85,12 @@ crawler_b = BilibiliCrawler(config_b)  # 独立配置
 4. **📦 模块化设计**: Service 层 + Endpoint 层，代码清晰可维护
 5. **🔌 标准协议**: MCP 协议，与任何 AI 助手无缝集成
 
+### 📌 项目定位与非目标
+
+- 定位：面向个人效率的单用户工具，优先易用性与清晰架构。
+- 非目标：不做多账号/账号池管理、不做多租户控制台、不做分布式集群。
+- 取舍：尽量保持代码可读可扩展，提供 Service/Endpoint/Config 等扩展点，方便他人自行加功能。
+
 ## 🏗️ 全新架构设计
 
 ### 架构概览
@@ -304,51 +310,65 @@ class BilibiliEndpoint(BaseEndpoint):
 **本地开发方式：**
 
 ```bash
-# 1. 克隆项目（不含子模块，我们已经重构了）
+# 1. 克隆项目（不含子模块）
 git clone <repository-url>
 cd media-crawler-mcp-service
 
 # 2. 安装依赖
 poetry install
 
-# 3. 配置环境变量（可选）
+# 3. 配置环境变量（推荐）
 cp .env.example .env
 
-# 4. 启动服务
+# 4. 安装浏览器（首次）
+poetry run playwright install chromium
+
+# 5. 启动服务
 python main.py --transport both
 ```
 
 启动成功后访问：
-- **MCP SSE 服务**: http://localhost:9090/sse
-- **健康检查**: http://localhost:9090/health
+- MCP SSE: http://localhost:9090/sse
+- 管理页面: http://localhost:9090/admin
+- 状态概览: http://localhost:9090/admin/api/status/summary
 
 ### 💻 环境要求
 
 - **Python 3.11+** & **Poetry 2.0+**
 - **Playwright** (自动安装)
-- PostgreSQL 12+ & Redis 6+ (可选)
+- PostgreSQL 12+ & Redis 6+（可选，用于扩展功能）
 
-### 📝 配置说明
+### 📝 配置说明（Pydantic Settings）
 
-**环境变量（.env 文件）：**
+本项目使用 Pydantic Settings，并启用嵌套环境变量（通过 `__` 分隔）。你可以直接在 `.env` 中配置：
 
 ```bash
-# === 应用基础配置 ===
-APP_ENV=dev              # 环境：dev 或 prod
-APP_PORT=9090            # MCP 服务端口
-APP_DEBUG=true           # 调试模式
+# 应用基础
+APP__ENV=dev
+APP__DEBUG=true
+APP__PORT=9090
 
-# === 平台选择 ===
-ENABLED_PLATFORMS=all    # all 或指定：xhs,dy,bili
+# 平台选择（all 或逗号分隔：xhs,dy,ks,bili,wb,tieba,zhihu）
+PLATFORM__ENABLED_PLATFORMS=all
 
-# === 爬虫默认配置 ===
-DEFAULT_HEADLESS=false              # 无头模式（开发时建议false查看浏览器）
-DEFAULT_LOGIN_TYPE=qrcode           # 登录方式：cookie, qrcode, phone
-DEFAULT_SAVE_FORMAT=json            # 数据存储：json, csv, db, sqlite
-DEFAULT_MAX_NOTES=15                # 每次爬取最大数量
-DEFAULT_ENABLE_COMMENTS=true        # 是否爬取评论
-DEFAULT_MAX_COMMENTS_PER_NOTE=10    # 每条内容最大评论数
+# 浏览器默认配置
+BROWSER__HEADLESS=false
+
+# 爬取默认配置
+CRAWL__MAX_NOTES_COUNT=15
+CRAWL__MAX_COMMENTS_PER_NOTE=10
+CRAWL__ENABLE_GET_COMMENTS=true
+
+# 存储默认配置
+STORE__SAVE_FORMAT=json   # json,csv,db,sqlite
+STORE__OUTPUT_DIR=./data
+
+# 日志
+LOGGER__LEVEL=INFO
 ```
+
+说明：
+- 也可以在调用 MCP 工具时通过参数覆盖默认配置，例如 `headless`、`login_cookie`、`max_notes` 等。
 
 ### 🌐 启动服务
 
@@ -385,6 +405,7 @@ python main.py --transport stdio
 ```
 
 重启 Claude Desktop，即可看到 **21 个爬虫工具**！
+提示：当前代码库已实现 Bilibili 平台的 4 个工具，其它平台为规划中（见下文 TODO）。
 
 ### 🎆 第一次使用
 
@@ -405,7 +426,9 @@ python main.py --transport stdio
 3. 登录状态会自动保存到 `browser_data/` 目录
 4. 下次爬取会自动复用登录态
 
-**提示**：如果想跳过登录，可以传入 `login_cookie` 参数：
+通过管理页面「登录管理」可开启扫码登录流程；也可在 CLI/AI 调用时传入 Cookie 完成登录。
+
+通过工具参数传入 Cookie：
 
 ```plaintext
 使用 bili_search 工具搜索"AI"，并传入我的B站Cookie：
@@ -424,9 +447,9 @@ ls -lh data/bili/
 cat data/bili/videos_*.json | jq '.[0]'
 ```
 
-## 🔧 MCP 工具列表（21+ 智能爬虫工具）
+## 🔧 MCP 工具列表（当前已实现 + 规划）
 
-### 📺 B站 (bili) - 已完成重构
+### 📺 B站 (bili) - 已完成重构（4）
 
 - **`bili_search`** - B站视频搜索爬取
   ```plaintext
@@ -448,43 +471,43 @@ cat data/bili/videos_*.json | jq '.[0]'
   使用 bili_search_time_range 搜索2024-01-01到2024-01-31期间的"AI"相关视频
   ```
 
-### 💝 小红书 (xhs) - 待重构
+### 💝 小红书 (xhs) - 规划中
 
 - **`xhs_search`** - 关键词搜索爬取
 - **`xhs_detail`** - 指定笔记详情爬取
 - **`xhs_creator`** - 创作者主页和作品爬取
 
-### 🎨 抖音 (dy) - 待重构
+### 🎨 抖音 (dy) - 规划中
 
 - **`dy_search`** - 视频关键词搜索爬取
 - **`dy_detail`** - 指定视频详情爬取
 - **`dy_creator`** - 创作者主页和视频爬取
 
-### ⚡ 快手 (ks) - 待重构
+### ⚡ 快手 (ks) - 规划中
 
 - **`ks_search`** - 快手视频搜索爬取
 - **`ks_detail`** - 指定视频详情爬取
 - **`ks_creator`** - 创作者主页爬取
 
-### 📱 微博 (wb) - 待重构
+### 📱 微博 (wb) - 规划中
 
 - **`wb_search`** - 微博关键词搜索爬取
 - **`wb_detail`** - 指定微博详情爬取
 - **`wb_creator`** - 博主主页和微博爬取
 
-### 💬 贴吧 (tieba) - 待重构
+### 💬 贴吧 (tieba) - 规划中
 
 - **`tieba_search`** - 贴吧关键词搜索爬取
 - **`tieba_detail`** - 指定帖子详情爬取
 
-### 🧮 知乎 (zhihu) - 待重构
+### 🧮 知乎 (zhihu) - 规划中
 
 - **`zhihu_search`** - 知乎内容搜索爬取
 - **`zhihu_detail`** - 指定内容详情爬取
 
-## 📊 数据存储
+## 📊 数据与会话
 
-数据默认保存在 `data/` 目录：
+数据默认保存在 `data/` 目录；平台会话/登录状态保存在 `browser_data/` 下，对应平台会复用登录态：
 
 ```
 data/
@@ -495,6 +518,9 @@ data/
 ├── dy/                  # 抖音数据
 └── ...                  # 其他平台
 ```
+
+browser_data/
+└── bili/                # B站浏览器会话目录（持久化登录态）
 
 **支持存储格式：**
 - **JSON** - 文件存储（默认，AI 友好）
@@ -526,12 +552,46 @@ poetry update
 ### 启动服务
 
 ```bash
-# 启动 MCP 服务（推荐）
+# 启动 MCP 服务（SSE + STDIO双模式）
 python main.py --transport both
 
-# 启动管理界面（可选）
-python admin_main.py --port 9091
+# 仅启动 SSE 模式（Web连接）
+python main.py --transport sse
+
+# 仅启动 STDIO 模式（本地CLI）
+python main.py --transport stdio
 ```
+
+### 管理页面与状态接口
+
+Web 管理页面：
+
+- 管理页面: `http://localhost:9090/admin`（默认本地开发环境不启用鉴权，公开部署请自行加）
+
+状态/统计 API：
+
+- 系统资源: `GET /admin/api/status/system`
+- 数据统计: `GET /admin/api/status/data`
+- 服务状态: `GET /admin/api/status/services`
+- 平台状态: `GET /admin/api/status/platforms`
+- 概览汇总: `GET /admin/api/status/summary`
+
+登录管理 API：
+
+- 启动登录: `POST /admin/api/login/start`
+- 登录状态: `GET /admin/api/login/status/{platform}`
+- 会话状态: `GET /admin/api/login/session/{session_id}`
+- 退出登录: `POST /admin/api/login/logout/{platform}`
+- 会话列表: `GET /admin/api/login/sessions`
+
+### 服务内置工具（通用）
+
+通过 MCP 工具可以查询服务状态与工具列表：
+
+- `service_info` - 服务信息
+- `service_health` - 健康检查
+- `list_tools` - 工具列表
+- `tool_info` - 指定工具信息
 
 ## 🚀 使用场景
 
@@ -667,14 +727,52 @@ poetry run playwright install chromium  # 安装浏览器
 5. 创建 Pull Request
 
 **重构进度**:
-- ✅ **B站 (bili)**: 完成参数化重构，提供4个MCP工具
-- 🔄 **小红书 (xhs)**: 重构中...
-- ⏳ **抖音、快手、微博、贴吧、知乎**: 待重构
+- ✅ B站 (bili): 完成参数化重构，提供 4 个 MCP 工具（搜索/详情/UP主/时间范围搜索）
+- ⏳ 小红书/抖音/快手/微博/贴吧/知乎: 平台端点与服务逐步迁移中
+
+## ✅ TODO（里程碑）
+
+平台与功能
+- [ ] 小红书（xhs）服务层与端点重构（search/detail/creator）
+- [ ] 抖音（dy）服务层与端点重构（search/detail/creator）
+- [ ] 快手、微博、贴吧、知乎 平台适配
+- [ ] 统一评论抓取策略与阈值（跨平台）
+
+稳定性与性能
+- [ ] Playwright 浏览器上下文复用与池化策略
+- [ ] 限速与退避策略（按域名/平台）
+- [ ] 并发调度与队列隔离（按任务/平台）
+
+可观测性与运维
+- [ ] 统一结构化日志与 trace-id 贯穿
+- [ ] 指标上报（采集耗时、成功率、队列长度）
+- [ ] 管理页面补充运行时统计与任务面板
+
+配置与存储
+- [ ] 环境变量与默认值核对（.env.example 同步至代码）
+- [ ] 数据持久化：SQLite/PostgreSQL 写入适配层
+- [ ] 数据校验与脱敏（导出前处理）
+
+API/MCP 与体验
+- [ ] 服务内置工具补充文档示例（service_info/list_tools）
+- [ ] 增加错误码与统一异常响应（MCP 与 HTTP）
+- [ ] 示例 Prompt 与使用范式完善
+
+测试与发布
+- [ ] 单元测试与集成测试覆盖关键路径（Bili 完整用例）
+- [ ] Docker 本地运行与 CI 构建流程
+- [ ] 版本化变更日志（CHANGELOG）
+
+安全
+- [ ] Cookie/会话安全存储与清理策略
+- [ ] Admin UI 基础鉴权（可选 JWT/Basic）
+
+注：欢迎根据以上 TODO 提交 Issue/PR，一起完善平台适配与稳定性。
 
 ## 📄 许可证 & 联系
 
 - **许可证**: MIT License
-- **问题反馈**: [GitHub Issues](https://github.com/your-repo/issues)
+- **问题反馈**: GitHub Issues（请在仓库创建 Issue）
 - **邮箱支持**: yancyyu.ok@gmail.com
 
 ---

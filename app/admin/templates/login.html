@@ -16,14 +16,8 @@
                         <label for="platform" class="form-label">选择平台</label>
                         <select name="platform" id="platform" class="form-control" required>
                             <option value="">请选择平台</option>
-                            <option value="xhs">小红书</option>
-                            <option value="dy">抖音</option>
-                            <option value="ks">快手</option>
-                            <option value="bili">哔哩哔哩</option>
-                            <option value="wb">微博</option>
-                            <option value="tieba">贴吧</option>
-                            <option value="zhihu">知乎</option>
                         </select>
+                        <small class="form-text text-muted" id="platform-tip">正在加载可用平台...</small>
                     </div>
                 </div>
                 <div class="col">
@@ -51,14 +45,17 @@
             <div class="form-group">
                 <button type="submit" id="login-submit-btn" class="btn btn-primary">开始登录</button>
                 <button type="button" class="btn btn-secondary" onclick="refreshLoginStatus()">刷新状态</button>
+                <button type="button" class="btn btn-outline-secondary d-none" id="refresh-qr-btn">刷新二维码</button>
             </div>
         </form>
 
         <!-- 登录状态显示 -->
-        <div id="login-status" class="mb-3 text-center"></div>
+        <div id="login-status" class="mb-3 text-center status"></div>
 
         <!-- 二维码容器 -->
-        <div id="qr-code-container" class="d-none"></div>
+        <div id="qr-code-container" class="d-none">
+            <div id="qr-countdown" class="text-center text-muted small mb-2"></div>
+        </div>
     </div>
 </div>
 
@@ -77,136 +74,4 @@
 </div>
 {% endblock %}
 
-{% block scripts %}
-<script>
-function toggleLoginFields() {
-    const loginType = document.getElementById('login_type').value;
-    const phoneField = document.getElementById('phone-field');
-    const cookieField = document.getElementById('cookie-field');
-    
-    // 隐藏所有字段
-    phoneField.classList.add('d-none');
-    cookieField.classList.add('d-none');
-    
-    // 根据选择显示对应字段
-    if (loginType === 'phone') {
-        phoneField.classList.remove('d-none');
-    } else if (loginType === 'cookie') {
-        cookieField.classList.remove('d-none');
-    }
-}
-
-async function refreshLoginStatus() {
-    try {
-        showMessage('正在刷新登录状态...', 'info');
-
-        const response = await apiRequest('/login/sessions');
-        const sessions = response || [];
-
-        // 检查当前选中的平台是否已登录，禁用/启用登录按钮
-        updateLoginButtonState(sessions);
-
-        const container = document.getElementById('platform-sessions');
-        if (sessions.length === 0) {
-            container.innerHTML = '<div class="text-center"><p style="color: #6c757d;">暂无登录会话</p></div>';
-        } else {
-            container.innerHTML = sessions.map(session => `
-                <div class="platform-item ${session.is_logged_in ? 'enabled' : 'disabled'}">
-                    <h4>${session.platform_name || session.platform}</h4>
-                    <div class="status ${session.is_logged_in ? 'status-success' : 'status-info'}" style="margin-top: 0.5rem;">
-                        ${session.is_logged_in ? '已登录' : '未登录'}
-                    </div>
-                    <div style="margin-top: 0.5rem; font-size: 0.875rem; color: #6c757d;">
-                        ${session.last_login || '从未登录'}
-                    </div>
-                    <button class="btn btn-sm ${session.is_logged_in ? 'btn-danger' : 'btn-primary'}"
-                            onclick="${session.is_logged_in ? `logoutPlatform('${session.platform}')` : `quickLogin('${session.platform}')`}"
-                            style="margin-top: 0.5rem; width: 100%;">
-                        ${session.is_logged_in ? '退出登录' : '开始登录'}
-                    </button>
-                </div>
-            `).join('');
-        }
-
-        showSuccess('登录状态已刷新');
-    } catch (error) {
-        showError('刷新失败: ' + error.message);
-    }
-}
-
-function updateLoginButtonState(sessions) {
-    const platformSelect = document.getElementById('platform');
-    const submitBtn = document.getElementById('login-submit-btn');
-    const selectedPlatform = platformSelect.value;
-
-    if (!selectedPlatform || !submitBtn) {
-        return;
-    }
-
-    // 查找选中平台的登录状态
-    const platformSession = sessions.find(s => s.platform === selectedPlatform);
-
-    if (platformSession && platformSession.is_logged_in) {
-        // 已登录，禁用登录按钮
-        submitBtn.disabled = true;
-        submitBtn.textContent = '已登录';
-        submitBtn.classList.remove('btn-primary');
-        submitBtn.classList.add('btn-secondary');
-    } else {
-        // 未登录，启用登录按钮
-        submitBtn.disabled = false;
-        submitBtn.textContent = '开始登录';
-        submitBtn.classList.remove('btn-secondary');
-        submitBtn.classList.add('btn-primary');
-    }
-}
-
-async function logoutPlatform(platform) {
-    if (!confirm(`确定要退出 ${platform} 的登录吗？`)) {
-        return;
-    }
-
-    try {
-        showMessage('正在退出登录...', 'info');
-        await apiRequest(`/login/logout/${platform}`, {
-            method: 'POST'
-        });
-        showSuccess('退出登录成功');
-        refreshLoginStatus();
-    } catch (error) {
-        showError('退出登录失败: ' + error.message);
-    }
-}
-
-function quickLogin(platform) {
-    document.getElementById('platform').value = platform;
-    document.getElementById('login_type').value = 'qrcode';
-    toggleLoginFields();
-    
-    // 滚动到表单
-    document.getElementById('login-form').scrollIntoView({ behavior: 'smooth' });
-}
-
-// 页面加载时初始化
-document.addEventListener('DOMContentLoaded', function() {
-    refreshLoginStatus();
-
-    // 监听平台选择变化，更新登录按钮状态
-    const platformSelect = document.getElementById('platform');
-    if (platformSelect) {
-        platformSelect.addEventListener('change', async function() {
-            try {
-                const response = await apiRequest('/login/sessions');
-                const sessions = response || [];
-                updateLoginButtonState(sessions);
-            } catch (error) {
-                console.error('更新按钮状态失败:', error);
-            }
-        });
-    }
-
-    // 每30秒自动刷新登录状态
-    setInterval(refreshLoginStatus, 30000);
-});
-</script>
-{% endblock %}
+{% block scripts %}{% endblock %}

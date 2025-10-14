@@ -7,7 +7,7 @@ from decimal import Decimal
 from typing import AsyncGenerator, Dict, Any, Optional
 from fastapi.responses import JSONResponse, StreamingResponse
 from app.providers.logger import get_logger
-from app.api.scheme.errors import error_codes
+from app.api.scheme import error_codes
 
 
 # 统一 JSON 返回

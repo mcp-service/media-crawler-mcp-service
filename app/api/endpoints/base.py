@@ -55,7 +55,7 @@ class BaseEndpoint(ABC):
     
     def _create_json_response(self, data: Any, status_code: int = 200) -> JSONResponse:
         """创建 JSON 响应"""
-        from app.api.scheme.base_responses import jsonify_response
+        from app.api.scheme import jsonify_response
         
         if status_code == 200:
             response_data = jsonify_response(data=data)
