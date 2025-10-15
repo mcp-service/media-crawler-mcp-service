@@ -63,6 +63,7 @@ class BilibiliLoginAdapter(BaseLoginAdapter):
         self.logger.info(
             f"[登录管理] 启动 Bilibili 登录: platform={payload.platform}, type={payload.login_type}"
         )
+        await self.service.persist_session(session)
 
         qr_dir = self._qr_code_dir(payload.login_type)
         if qr_dir.exists():
@@ -97,7 +98,7 @@ class BilibiliLoginAdapter(BaseLoginAdapter):
         session.browser_context = browser_context
         session.context_page = context_page
         session.playwright = playwright
-        session.metadata["login_obj"] = login_obj
+        session.runtime["login_obj"] = login_obj
 
         if payload.login_type == "qrcode":
             session.status = "started"
@@ -108,6 +109,7 @@ class BilibiliLoginAdapter(BaseLoginAdapter):
             if qr_path is None:
                 session.status = "failed"
                 session.message = "二维码生成失败，请稍后重试"
+                await self.service.persist_session(session)
                 await self.service.cleanup_session(session.id, remove_resources=True)
             else:
                 qr_code_base64 = await self._wait_for_qrcode(payload.login_type)
@@ -116,17 +118,20 @@ class BilibiliLoginAdapter(BaseLoginAdapter):
                     session.status = "waiting"
                     session.message = "二维码已生成，等待扫码..."
                     poll_task = asyncio.create_task(self._poll_qrcode_session(session.id))
-                    session.metadata["task"] = poll_task
+                    session.runtime["task"] = poll_task
+                    await self.service.persist_session(session)
                 else:
                     session.status = "failed"
                     session.message = "二维码生成超时，请重新开始登录"
+                    await self.service.persist_session(session)
                     await self.service.cleanup_session(session.id, remove_resources=True)
         else:
             session.status = "processing"
             session.message = "正在尝试登录..."
             session.qrcode_timestamp = 0.0
             login_task = asyncio.create_task(self._execute_login(session.id))
-            session.metadata["task"] = login_task
+            session.runtime["task"] = login_task
+            await self.service.persist_session(session)
 
         response = {
             "status": session.status,
@@ -137,6 +142,7 @@ class BilibiliLoginAdapter(BaseLoginAdapter):
             "qr_code_base64": session.qr_code_base64,
             "qrcode_timestamp": session.qrcode_timestamp,
         }
+        await self.service.persist_session(session)
         return response
 
     async def _poll_qrcode_session(self, session_id: str) -> None:
@@ -145,7 +151,7 @@ class BilibiliLoginAdapter(BaseLoginAdapter):
         if not session:
             return
 
-        login_obj: Optional[BilibiliLogin] = session.metadata.get("login_obj")
+        login_obj: Optional[BilibiliLogin] = session.runtime.get("login_obj")
         if not login_obj:
             self.logger.error(f"[登录管理] 会话缺少登录对象: {session_id}")
             return
@@ -169,6 +175,7 @@ class BilibiliLoginAdapter(BaseLoginAdapter):
                     self.logger.info(
                         f"[登录管理] Bilibili 登录成功: session_id={session_id}"
                     )
+                    await self.service.persist_session(session)
                     await self.service.refresh_platform_state(session.platform, force=True)
                     break
 
@@ -178,6 +185,7 @@ class BilibiliLoginAdapter(BaseLoginAdapter):
                     self.logger.warning(
                         f"[登录管理] Bilibili 登录超时: session_id={session_id}"
                     )
+                    await self.service.persist_session(session)
                     break
 
                 await asyncio.sleep(poll_interval)
@@ -191,7 +199,8 @@ class BilibiliLoginAdapter(BaseLoginAdapter):
                 f"[登录管理] Bilibili 登录轮询失败: session_id={session_id}, error={exc}"
             )
         finally:
-            session.metadata.pop("task", None)
+            session.runtime.pop("task", None)
+            await self.service.persist_session(session)
             await asyncio.sleep(2)
             await self.service.cleanup_session(session_id, remove_resources=True)
 
@@ -222,7 +231,7 @@ class BilibiliLoginAdapter(BaseLoginAdapter):
             self.logger.error(f"[登录管理] 会话不存在: {session_id}")
             return
 
-        login_obj: Optional[BilibiliLogin] = session.metadata.get("login_obj")
+        login_obj: Optional[BilibiliLogin] = session.runtime.get("login_obj")
         if not login_obj:
             self.logger.error(f"[登录管理] 会话缺少登录对象: {session_id}")
             return
@@ -234,13 +243,14 @@ class BilibiliLoginAdapter(BaseLoginAdapter):
         try:
             session.status = "processing"
             session.message = "正在尝试登录..."
+            await self.service.persist_session(session)
 
             await login_obj.begin()
 
             session.status = "success"
             session.message = "登录成功"
             self.logger.info(f"[登录管理] Bilibili 登录成功: session_id={session_id}")
-
+            await self.service.persist_session(session)
             await self.service.refresh_platform_state(session.platform, force=True)
         except Exception as exc:
             session.status = "failed"
@@ -249,6 +259,7 @@ class BilibiliLoginAdapter(BaseLoginAdapter):
             self.logger.error(
                 f"[登录管理] Bilibili 登录失败: session_id={session_id}, error={exc}"
             )
+            await self.service.persist_session(session)
         finally:
             await asyncio.sleep(3)
             await self.service.cleanup_session(session_id, remove_resources=True)
@@ -348,4 +359,3 @@ class BilibiliLoginAdapter(BaseLoginAdapter):
                     await asyncio.to_thread(shutil.rmtree, qr_dir)
                 except Exception:
                     pass
-

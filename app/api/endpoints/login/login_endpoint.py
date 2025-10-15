@@ -4,6 +4,8 @@
 """
 from __future__ import annotations
 
+import uuid
+
 from pydantic import ValidationError
 
 from app.api.endpoints.base import BaseEndpoint
@@ -42,7 +44,12 @@ class LoginEndpoint(BaseEndpoint):
 
         async def start_login_handler(request):
             try:
-                request_model = StartLoginRequest.model_validate(await request.json())
+                payload = await request.json()
+            except Exception:
+                payload = {}
+
+            try:
+                request_model = StartLoginRequest.model_validate(payload)
             except ValidationError as exc:
                 return JSONResponse(content={"detail": exc.errors()}, status_code=400)
 
@@ -90,7 +97,15 @@ class LoginEndpoint(BaseEndpoint):
                 return JSONResponse(content={"detail": "退出登录失败"}, status_code=500)
 
         async def get_session_status_handler(request):
+            import uuid
+
             session_id = request.path_params.get("session_id", "")
+
+            try:
+                uuid.UUID(str(session_id))
+            except (ValueError, TypeError):
+                return JSONResponse(content={"detail": "无效的会话ID"}, status_code=400)
+
             try:
                 result = await self.service.get_session_status(session_id)
                 response_model = SessionStatusResponse.model_validate(result)
