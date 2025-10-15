@@ -15,6 +15,7 @@ const PLATFORM_LABELS = {
 let platformNames = {};
 let availablePlatformCodes = [];
 let loginSessionsCache = [];
+const optimisticLoggedPlatforms = new Set();
 
 // 工具函数
 function showMessage(message, type = 'info') {
@@ -22,7 +23,7 @@ function showMessage(message, type = 'info') {
     if (!messageDiv) {
         return;
     }
-    messageDiv.className = `status status-${type}`;
+    messageDiv.className = `toast status status-${type}`;
     messageDiv.textContent = message;
     messageDiv.style.display = 'block';
 
@@ -41,6 +42,45 @@ function showSuccess(message) {
 
 function showWarning(message) {
     showMessage(message, 'warning');
+}
+
+function renderPlatformSessions(sessions = []) {
+    const container = document.getElementById('platform-sessions');
+    if (!container) {
+        return;
+    }
+
+    if (!sessions.length) {
+        container.innerHTML = '<div class="platform-empty">暂无登录会话</div>';
+        return;
+    }
+
+    container.innerHTML = sessions.map((session) => {
+        const displayName = session.platform_name || getPlatformDisplayName(session.platform) || session.platform;
+        const lastLogin = session.last_login || (session.is_logged_in ? '最近登录' : '从未登录');
+        const buttonAction = session.is_logged_in
+            ? `logoutPlatform('${session.platform}')`
+            : `quickLogin('${session.platform}')`;
+        const buttonClass = session.is_logged_in ? 'btn-danger' : 'btn-primary';
+        const buttonLabel = session.is_logged_in ? '退出登录' : '开始登录';
+
+        return `
+            <div class="platform-item ${session.is_logged_in ? 'enabled' : 'disabled'}">
+                <h4>${displayName}</h4>
+                <div class="status ${session.is_logged_in ? 'status-success' : 'status-info'}" style="margin-top: 0.5rem;">
+                    ${session.is_logged_in ? '已登录' : '未登录'}
+                </div>
+                <div class="platform-item__meta">
+                    ${lastLogin}
+                </div>
+                <button class="btn btn-sm ${buttonClass}"
+                        onclick="${buttonAction}"
+                        style="margin-top: 0.5rem; width: 100%;">
+                    ${buttonLabel}
+                </button>
+            </div>
+        `;
+    }).join('');
 }
 
 // HTTP 请求封装
@@ -212,6 +252,63 @@ class LoginManager {
         }
     }
 
+    setSubmitButtonLoggedInState(platform) {
+        if (!platform) {
+            return;
+        }
+        const platformSelect = document.getElementById('platform');
+        const submitBtn = document.getElementById('login-submit-btn');
+        if (!submitBtn) {
+            return;
+        }
+        if (!submitBtn.dataset.defaultLabel) {
+            submitBtn.dataset.defaultLabel = submitBtn.textContent || '开始登录';
+        }
+        if (platformSelect && platformSelect.value && platformSelect.value !== platform) {
+            return;
+        }
+        submitBtn.disabled = true;
+        submitBtn.textContent = '已登录';
+        submitBtn.classList.remove('btn-primary');
+        submitBtn.classList.add('btn-secondary');
+    }
+
+    markPlatformSessionLoggedIn(platform) {
+        if (!platform) {
+            return;
+        }
+        const displayName = getPlatformDisplayName(platform) || PLATFORM_LABELS[platform] || platform;
+        platformNames[platform] = displayName;
+        optimisticLoggedPlatforms.add(platform);
+
+        let hasExisting = false;
+        loginSessionsCache = loginSessionsCache.map((session) => {
+            if (session.platform === platform) {
+                hasExisting = true;
+                return {
+                    ...session,
+                    platform,
+                    platform_name: displayName,
+                    is_logged_in: true,
+                    last_login: session.last_login || new Date().toLocaleString()
+                };
+            }
+            return session;
+        });
+
+        if (!hasExisting) {
+            loginSessionsCache.push({
+                platform,
+                platform_name: displayName,
+                is_logged_in: true,
+                last_login: new Date().toLocaleString()
+            });
+        }
+
+        renderPlatformSessions(loginSessionsCache);
+        updateLoginButtonState(loginSessionsCache);
+    }
+
     toggleRefreshQrButton(visible) {
         const refreshBtn = document.getElementById('refresh-qr-btn');
         if (!refreshBtn) {
@@ -357,10 +454,13 @@ class LoginManager {
             }
 
             if (response.status === 'success') {
+                const platform = this.currentSessionPlatform;
                 showSuccess('登录成功！');
                 this.stopPolling();
                 this.resetQRCode();
                 this.toggleRefreshQrButton(false);
+                this.setSubmitButtonLoggedInState(platform);
+                this.markPlatformSessionLoggedIn(platform);
                 this.currentSession = null;
                 this.currentSessionPlatform = null;
                 await refreshLoginStatus(false);
@@ -412,8 +512,7 @@ async function refreshLoginStatus(silent = false) {
 
     try {
         const response = await apiRequest('/login/sessions');
-        const sessions = Array.isArray(response) ? response : [];
-        loginSessionsCache = sessions;
+        let sessions = Array.isArray(response) ? response : [];
 
         sessions.forEach((session) => {
             if (session.platform && session.platform_name) {
@@ -421,37 +520,34 @@ async function refreshLoginStatus(silent = false) {
             }
         });
 
+        sessions = sessions.map((session) => {
+            if (!session.platform) {
+                return session;
+            }
+            if (optimisticLoggedPlatforms.has(session.platform) && !session.is_logged_in) {
+                return {
+                    ...session,
+                    is_logged_in: true,
+                    last_login: session.last_login || new Date().toLocaleString()
+                };
+            }
+            if (session.is_logged_in) {
+                optimisticLoggedPlatforms.delete(session.platform);
+            }
+            return session;
+        });
+
+        loginSessionsCache = sessions;
+
         const platformCodes = sessions.map((session) => session.platform).filter(Boolean);
         if (!availablePlatformCodes.length && platformCodes.length) {
             availablePlatformCodes = platformCodes;
         }
         populatePlatformSelectOptions(availablePlatformCodes.length ? availablePlatformCodes : platformCodes);
 
-        const container = document.getElementById('platform-sessions');
-        if (container) {
-            if (!sessions.length) {
-                container.innerHTML = '<div class="text-center"><p style="color: #6c757d;">暂无登录会话</p></div>';
-            } else {
-                container.innerHTML = sessions.map((session) => `
-                    <div class="platform-item ${session.is_logged_in ? 'enabled' : 'disabled'}">
-                        <h4>${getPlatformDisplayName(session.platform)}</h4>
-                        <div class="status ${session.is_logged_in ? 'status-success' : 'status-info'}" style="margin-top: 0.5rem;">
-                            ${session.is_logged_in ? '已登录' : '未登录'}
-                        </div>
-                        <div style="margin-top: 0.5rem; font-size: 0.875rem; color: #6c757d;">
-                            ${session.last_login || (session.is_logged_in ? '最近登录' : '从未登录')}
-                        </div>
-                        <button class="btn btn-sm ${session.is_logged_in ? 'btn-danger' : 'btn-primary'}"
-                                onclick="${session.is_logged_in ? `logoutPlatform('${session.platform}')` : `quickLogin('${session.platform}')`}"
-                                style="margin-top: 0.5rem; width: 100%;">
-                            ${session.is_logged_in ? '退出登录' : '开始登录'}
-                        </button>
-                    </div>
-                `).join('');
-            }
-        }
+        renderPlatformSessions(loginSessionsCache);
 
-        updateLoginButtonState(sessions);
+        updateLoginButtonState(loginSessionsCache);
         if (!silent) {
             showSuccess('登录状态已刷新');
         }
@@ -517,6 +613,7 @@ async function logoutPlatform(platform) {
         await apiRequest(`/login/logout/${platform}`, { method: 'POST' });
         showSuccess('退出登录成功');
         loginManager.resetQRCode();
+        optimisticLoggedPlatforms.delete(platform);
         await refreshLoginStatus(false);
     } catch (error) {
         showError('退出登录失败: ' + error.message);
@@ -629,17 +726,24 @@ class StatusMonitor {
     }
 
     formatStatus(status) {
+        const serviceStatus = status.service_healthy ? '运行正常' : '服务异常';
+        const serviceClass = status.service_healthy ? 'status-success' : 'status-error';
+        const activeConnections = status.active_connections || 0;
+        const pendingTasks = status.pending_tasks ?? '—';
+
         return `
-            <div class="row">
-                <div class="col">
-                    <h5>服务状态</h5>
-                    <p class="status ${status.service_healthy ? 'status-success' : 'status-error'}">
-                        ${status.service_healthy ? '运行正常' : '服务异常'}
-                    </p>
+            <div class="status-strip">
+                <div class="status-strip__item">
+                    <span class="status-strip__label">服务状态</span>
+                    <span class="status ${serviceClass}">${serviceStatus}</span>
                 </div>
-                <div class="col">
-                    <h5>活跃连接</h5>
-                    <p>${status.active_connections || 0}</p>
+                <div class="status-strip__item">
+                    <span class="status-strip__label">活跃连接</span>
+                    <span class="status-strip__value">${activeConnections}</span>
+                </div>
+                <div class="status-strip__item">
+                    <span class="status-strip__label">排队任务</span>
+                    <span class="status-strip__value">${pendingTasks}</span>
                 </div>
             </div>
         `;

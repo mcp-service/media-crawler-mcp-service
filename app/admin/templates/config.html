@@ -3,161 +3,152 @@
 {% block title %}配置管理 - MCP Tools{% endblock %}
 
 {% block content %}
-<!-- 平台配置 -->
-<div class="card">
-    <div class="card-header">
-        <h2>⚙️ 平台配置</h2>
-    </div>
-    <div class="card-body">
-        <form id="platform-config-form">
-            <div class="form-group">
-                <label class="form-label">启用的平台</label>
-                <div class="platform-list" id="platform-checkboxes">
-                    <!-- 平台选择将由JavaScript生成 -->
-                </div>
-            </div>
-            <button type="submit" class="btn btn-primary">保存平台配置</button>
-        </form>
-    </div>
-</div>
-
-<!-- 爬虫配置 -->
-<div class="card">
-    <div class="card-header">
-        <h2>🕷️ 爬虫配置</h2>
-    </div>
-    <div class="card-body">
-        <form id="crawler-config-form">
-            <div class="row">
-                <div class="col">
-                    <div class="form-group">
-                        <label for="max_notes" class="form-label">最大爬取数量</label>
-                        <input type="number" id="max_notes" name="max_notes" class="form-control" min="1" max="1000" value="15">
-                    </div>
-                </div>
-                <div class="col">
-                    <div class="form-group">
-                        <label for="max_comments_per_note" class="form-label">每帖最大评论数</label>
-                        <input type="number" id="max_comments_per_note" name="max_comments_per_note" class="form-control" min="0" max="100" value="10">
-                    </div>
-                </div>
-            </div>
-
-            <div class="row">
-                <div class="col">
-                    <div class="form-group">
-                        <label>
-                            <input type="checkbox" id="enable_comments" name="enable_comments" checked>
-                            启用评论爬取
-                        </label>
-                    </div>
-                </div>
-                <div class="col">
-                    <div class="form-group">
-                        <label>
-                            <input type="checkbox" id="headless" name="headless">
-                            无头模式（无浏览器界面）
-                        </label>
-                    </div>
-                </div>
-            </div>
-
-            <div class="form-group">
-                <label for="save_data_option" class="form-label">数据保存方式</label>
-                <select id="save_data_option" name="save_data_option" class="form-control">
-                    <option value="json">JSON文件</option>
-                    <option value="csv">CSV文件</option>
-                    <option value="sqlite">SQLite数据库</option>
-                    <option value="db">MySQL/PostgreSQL数据库</option>
-                </select>
-            </div>
-
-            <div class="form-group">
-                <label for="default_login_type" class="form-label">默认登录方式</label>
-                <select id="default_login_type" name="default_login_type" class="form-control">
-                    <option value="qrcode">二维码扫码</option>
-                    <option value="cookie">Cookie登录</option>
-                    <option value="phone">手机号登录</option>
-                </select>
-            </div>
-
-            <button type="submit" class="btn btn-success">保存爬虫配置</button>
-        </form>
-    </div>
-</div>
-
-<!-- 边车服务配置 -->
-<div class="card">
-    <div class="card-header">
-        <h2>🚗 边车服务配置</h2>
-    </div>
-    <div class="card-body">
-        <form id="sidecar-config-form">
-            <div class="row">
-                <div class="col">
-                    <div class="form-group">
-                        <label for="sidecar_url" class="form-label">边车服务地址</label>
-                        <input type="url" id="sidecar_url" name="sidecar_url" class="form-control" 
-                               value="http://localhost:8001" placeholder="http://localhost:8001">
-                    </div>
-                </div>
-                <div class="col">
-                    <div class="form-group">
-                        <label for="browser_pool_size" class="form-label">浏览器池大小</label>
-                        <input type="number" id="browser_pool_size" name="browser_pool_size" 
-                               class="form-control" min="1" max="10" value="3">
-                    </div>
-                </div>
-            </div>
-
-            <div class="row">
-                <div class="col">
-                    <div class="form-group">
-                        <label for="sidecar_timeout" class="form-label">请求超时时间（秒）</label>
-                        <input type="number" id="sidecar_timeout" name="sidecar_timeout" 
-                               class="form-control" min="30" max="600" value="300">
-                    </div>
-                </div>
-                <div class="col">
-                    <div class="form-group">
-                        <label for="session_timeout" class="form-label">会话超时时间（秒）</label>
-                        <input type="number" id="session_timeout" name="session_timeout" 
-                               class="form-control" min="600" max="86400" value="3600">
-                    </div>
-                </div>
-            </div>
-
-            <button type="submit" class="btn btn-warning">保存边车配置</button>
-        </form>
-    </div>
-</div>
-
-<!-- 当前配置显示 -->
-<div class="card">
-    <div class="card-header">
-        <h2>📋 当前配置</h2>
-    </div>
-    <div class="card-body">
-        <button class="btn btn-info mb-3" onclick="loadCurrentConfig()">刷新配置</button>
-        <div id="config-display" style="background: #f8f9fa; padding: 1rem; border-radius: 4px; font-family: monospace; white-space: pre-wrap;">
-            点击"刷新配置"查看当前配置
+<section class="config-page">
+    <header class="config-hero">
+        <div>
+            <span class="hero-pill">配置中心</span>
+            <h2 class="hero-title">平台与爬虫策略管理</h2>
+            <p class="hero-subtitle">
+                动态启用数据源、调校爬虫行为、维护边车服务。所有变更实时保存，并在需要时提示重启后端服务。
+            </p>
         </div>
-    </div>
-</div>
-
-<!-- 重启提醒 -->
-<div id="restart-warning" class="d-none" style="position: fixed; top: 20px; right: 20px; z-index: 1000;">
-    <div class="card" style="background: #fff3cd; border: 1px solid #ffeaa7;">
-        <div class="card-body">
-            <div style="display: flex; align-items: center;">
-                <span style="font-size: 1.5rem; margin-right: 0.5rem;">⚠️</span>
-                <div>
-                    <strong>需要重启服务</strong>
-                    <p style="margin: 0; font-size: 0.875rem;">配置已更新，需要重启服务使配置生效</p>
-                </div>
-                <button onclick="hideRestartWarning()" style="margin-left: 1rem; background: none; border: none; font-size: 1.25rem;">×</button>
-            </div>
+        <div class="hero-actions">
+            <button class="btn btn-secondary" type="button" onclick="loadCurrentConfig()">刷新当前配置</button>
         </div>
+    </header>
+
+    <section class="config-grid">
+        <article class="card config-card">
+            <div class="card-header">
+                <div class="card-eyebrow">平台控制</div>
+                <h2>启用平台</h2>
+                <p class="card-subtitle">勾选后即可在登录中心与 MCP 工具中启用对应平台。</p>
+            </div>
+            <div class="card-body">
+                <form id="platform-config-form" class="config-form">
+                    <div id="platform-checkboxes" class="platform-checkbox-grid">
+                        <div class="status-placeholder">正在加载平台列表...</div>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary">保存平台配置</button>
+                    </div>
+                </form>
+            </div>
+        </article>
+
+        <article class="card config-card">
+            <div class="card-header">
+                <div class="card-eyebrow">爬虫策略</div>
+                <h2>核心参数</h2>
+                <p class="card-subtitle">配置爬虫规模、评论抓取、默认登录策略与数据落盘格式。</p>
+            </div>
+            <div class="card-body">
+                <form id="crawler-config-form" class="config-form">
+                    <div class="config-field-grid">
+                        <div class="form-group">
+                            <label for="max_notes" class="form-label">最大爬取数量</label>
+                            <input type="number" id="max_notes" name="max_notes" class="form-control" min="1" max="1000" value="15">
+                        </div>
+                        <div class="form-group">
+                            <label for="max_comments_per_note" class="form-label">每帖最大评论数</label>
+                            <input type="number" id="max_comments_per_note" name="max_comments_per_note" class="form-control" min="0" max="100" value="10">
+                        </div>
+                        <div class="form-group checkbox-field">
+                            <label class="checkbox-pill">
+                                <input type="checkbox" id="enable_comments" name="enable_comments" checked>
+                                <span>启用评论爬取</span>
+                            </label>
+                        </div>
+                        <div class="form-group checkbox-field">
+                            <label class="checkbox-pill">
+                                <input type="checkbox" id="headless" name="headless">
+                                <span>无头模式（无浏览器界面）</span>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="config-field-grid">
+                        <div class="form-group">
+                            <label for="save_data_option" class="form-label">数据保存方式</label>
+                            <select id="save_data_option" name="save_data_option" class="form-control">
+                                <option value="json">JSON 文件</option>
+                                <option value="csv">CSV 文件</option>
+                                <option value="sqlite">SQLite 数据库</option>
+                                <option value="db">MySQL / PostgreSQL 数据库</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="default_login_type" class="form-label">默认登录方式</label>
+                            <select id="default_login_type" name="default_login_type" class="form-control">
+                                <option value="qrcode">二维码扫码</option>
+                                <option value="cookie">Cookie 登录</option>
+                                <option value="phone">手机号登录</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-success">保存爬虫配置</button>
+                    </div>
+                </form>
+            </div>
+        </article>
+
+        <article class="card config-card">
+            <div class="card-header">
+                <div class="card-eyebrow">边车服务</div>
+                <h2>浏览器池设置</h2>
+                <p class="card-subtitle">用于调度远程 Playwright 浏览器与会话池的服务参数。</p>
+            </div>
+            <div class="card-body">
+                <form id="sidecar-config-form" class="config-form">
+                    <div class="config-field-grid">
+                        <div class="form-group">
+                            <label for="sidecar_url" class="form-label">边车服务地址</label>
+                            <input type="url" id="sidecar_url" name="sidecar_url" class="form-control" value="http://localhost:8001" placeholder="http://localhost:8001">
+                        </div>
+                        <div class="form-group">
+                            <label for="browser_pool_size" class="form-label">浏览器池大小</label>
+                            <input type="number" id="browser_pool_size" name="browser_pool_size" class="form-control" min="1" max="10" value="3">
+                        </div>
+                        <div class="form-group">
+                            <label for="sidecar_timeout" class="form-label">请求超时时间（秒）</label>
+                            <input type="number" id="sidecar_timeout" name="sidecar_timeout" class="form-control" min="30" max="600" value="300">
+                        </div>
+                        <div class="form-group">
+                            <label for="session_timeout" class="form-label">会话超时时间（秒）</label>
+                            <input type="number" id="session_timeout" name="session_timeout" class="form-control" min="600" max="86400" value="3600">
+                        </div>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-warning">保存边车配置</button>
+                    </div>
+                </form>
+            </div>
+        </article>
+
+        <article class="card config-card">
+            <div class="card-header">
+                <div class="card-eyebrow">实时快照</div>
+                <h2>当前配置 JSON</h2>
+                <p class="card-subtitle">对比当前配置与修改项，确认变更影响范围。</p>
+            </div>
+            <div class="card-body">
+                <div class="form-actions">
+                    <button class="btn btn-secondary" type="button" onclick="loadCurrentConfig()">刷新配置</button>
+                </div>
+                <div id="config-display" class="config-display">点击“刷新配置”查看当前配置</div>
+            </div>
+        </article>
+    </section>
+</section>
+
+<div id="restart-warning" class="restart-toast d-none">
+    <div class="restart-card">
+        <div class="restart-icon">⚠️</div>
+        <div class="restart-content">
+            <h4>需要重启服务</h4>
+            <p>配置已更新，请重启服务以确保新配置生效。</p>
+        </div>
+        <button class="restart-close" type="button" onclick="hideRestartWarning()">×</button>
     </div>
 </div>
 {% endblock %}
@@ -166,52 +157,58 @@
 <script>
 let configData = {};
 
-// 加载平台选择
 async function loadPlatformConfig() {
     try {
         const response = await apiRequest('/config/platforms');
         const platformContainer = document.getElementById('platform-checkboxes');
-        
+
         const platforms = response.all_platforms || [];
         const enabledPlatforms = response.enabled_platforms || [];
         const platformNames = response.platform_names || {};
-        
-        platformContainer.innerHTML = platforms.map(platform => `
-            <label style="display: flex; align-items: center; padding: 0.5rem; border: 1px solid #ddd; border-radius: 4px; margin: 0.25rem; cursor: pointer;">
-                <input type="checkbox" name="platforms" value="${platform}" ${enabledPlatforms.includes(platform) ? 'checked' : ''} style="margin-right: 0.5rem;">
-                <span>${platformNames[platform] || platform}</span>
+
+        if (!platforms.length) {
+            platformContainer.innerHTML = '<div class="status-placeholder">暂无可配置的平台</div>';
+            return;
+        }
+
+        platformContainer.innerHTML = platforms.map((platform) => `
+            <label class="platform-checkbox ${enabledPlatforms.includes(platform) ? 'is-active' : ''}">
+                <input type="checkbox" name="platforms" value="${platform}" ${enabledPlatforms.includes(platform) ? 'checked' : ''}>
+                <span class="platform-checkbox__label">${platformNames[platform] || platform}</span>
             </label>
         `).join('');
-        
+
+        platformContainer.querySelectorAll('input[name="platforms"]').forEach((input) => {
+            input.addEventListener('change', () => {
+                input.parentElement.classList.toggle('is-active', input.checked);
+            });
+        });
     } catch (error) {
         showError('加载平台配置失败: ' + error.message);
     }
 }
 
-// 加载当前配置
 async function loadCurrentConfig() {
     try {
         showMessage('正在加载配置...', 'info');
-        
+
         const [crawlerConfig, sidecarConfig, platformConfig] = await Promise.all([
             apiRequest('/config/crawler'),
             apiRequest('/config/sidecar'),
             apiRequest('/config/platforms')
         ]);
-        
+
         configData = {
             crawler: crawlerConfig,
             sidecar: sidecarConfig,
             platform: platformConfig
         };
-        
-        // 填充表单
+
         fillCrawlerForm(crawlerConfig);
         fillSidecarForm(sidecarConfig);
-        
-        // 显示完整配置
-        document.getElementById('config-display').textContent = JSON.stringify(configData, null, 2);
-        
+
+        document.getElementById('config-display').innerHTML = `<pre>${JSON.stringify(configData, null, 2)}</pre>`;
+
         showSuccess('配置已加载');
     } catch (error) {
         showError('加载配置失败: ' + error.message);
@@ -234,20 +231,19 @@ function fillSidecarForm(config) {
     document.getElementById('session_timeout').value = config.session_timeout || 3600;
 }
 
-// 保存配置
-async function savePlatformConfig(formData) {
+async function savePlatformConfig() {
     try {
         const platforms = Array.from(document.querySelectorAll('input[name="platforms"]:checked'))
-                               .map(cb => cb.value);
-        
+            .map((cb) => cb.value);
+
         const response = await apiRequest('/config/platforms', {
             method: 'PUT',
             body: JSON.stringify({ enabled_platforms: platforms })
         });
-        
+
         showSuccess('平台配置保存成功');
         if (response.need_restart) showRestartWarning();
-        
+        loadPlatformConfig();
     } catch (error) {
         showError('保存平台配置失败: ' + error.message);
     }
@@ -256,22 +252,21 @@ async function savePlatformConfig(formData) {
 async function saveCrawlerConfig(formData) {
     try {
         const config = {
-            max_notes: parseInt(formData.get('max_notes')),
-            max_comments_per_note: parseInt(formData.get('max_comments_per_note')),
+            max_notes: parseInt(formData.get('max_notes'), 10),
+            max_comments_per_note: parseInt(formData.get('max_comments_per_note'), 10),
             enable_comments: formData.get('enable_comments') === 'on',
             headless: formData.get('headless') === 'on',
             save_data_option: formData.get('save_data_option'),
             default_login_type: formData.get('default_login_type')
         };
-        
+
         const response = await apiRequest('/config/crawler', {
             method: 'PUT',
             body: JSON.stringify(config)
         });
-        
+
         showSuccess('爬虫配置保存成功');
         if (response.need_restart) showRestartWarning();
-        
     } catch (error) {
         showError('保存爬虫配置失败: ' + error.message);
     }
@@ -281,19 +276,18 @@ async function saveSidecarConfig(formData) {
     try {
         const config = {
             url: formData.get('sidecar_url'),
-            browser_pool_size: parseInt(formData.get('browser_pool_size')),
-            timeout: parseInt(formData.get('sidecar_timeout')),
-            session_timeout: parseInt(formData.get('session_timeout'))
+            browser_pool_size: parseInt(formData.get('browser_pool_size'), 10),
+            timeout: parseInt(formData.get('sidecar_timeout'), 10),
+            session_timeout: parseInt(formData.get('session_timeout'), 10)
         };
-        
+
         const response = await apiRequest('/config/sidecar', {
-            method: 'PUT', 
+            method: 'PUT',
             body: JSON.stringify(config)
         });
-        
+
         showSuccess('边车配置保存成功');
         if (response.need_restart) showRestartWarning();
-        
     } catch (error) {
         showError('保存边车配置失败: ' + error.message);
     }
@@ -307,27 +301,23 @@ function hideRestartWarning() {
     document.getElementById('restart-warning').classList.add('d-none');
 }
 
-// 表单事件绑定
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', () => {
     loadPlatformConfig();
     loadCurrentConfig();
-    
-    // 平台配置表单
-    document.getElementById('platform-config-form').addEventListener('submit', function(e) {
-        e.preventDefault();
-        savePlatformConfig(new FormData(this));
+
+    document.getElementById('platform-config-form').addEventListener('submit', (event) => {
+        event.preventDefault();
+        savePlatformConfig();
     });
-    
-    // 爬虫配置表单
-    document.getElementById('crawler-config-form').addEventListener('submit', function(e) {
-        e.preventDefault();
-        saveCrawlerConfig(new FormData(this));
+
+    document.getElementById('crawler-config-form').addEventListener('submit', (event) => {
+        event.preventDefault();
+        saveCrawlerConfig(new FormData(event.target));
     });
-    
-    // 边车配置表单
-    document.getElementById('sidecar-config-form').addEventListener('submit', function(e) {
-        e.preventDefault();
-        saveSidecarConfig(new FormData(this));
+
+    document.getElementById('sidecar-config-form').addEventListener('submit', (event) => {
+        event.preventDefault();
+        saveSidecarConfig(new FormData(event.target));
     });
 });
 </script>

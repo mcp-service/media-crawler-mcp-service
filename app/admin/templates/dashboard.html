@@ -1,149 +1,152 @@
 {% extends "layout.html" %}
 
-{% block title %}仪表板 - MCP Tools{% endblock %}
+{% block title %}状态监控 - MCP Tools{% endblock %}
 
 {% block content %}
-<div id="status-display">
-    <!-- 系统状态概览 -->
-    <div class="card">
-        <div class="card-header">
-            <h2>📊 系统状态概览</h2>
+<section class="dashboard-page">
+    <header class="dashboard-hero">
+        <div>
+            <span class="hero-pill">运行概况</span>
+            <h2 class="hero-title">实时状态监控中心</h2>
+            <p class="hero-subtitle">
+                聚合后台服务、浏览器会话与数据落盘状况，30 秒自动刷新，提供一目了然的可观测性面板。
+            </p>
         </div>
-        <div class="card-body">
-            <div class="row">
-                <div class="col">
-                    <div class="text-center">
-                        <div style="font-size: 2rem; color: #007bff; margin-bottom: 0.5rem;">💻</div>
-                        <div style="font-size: 0.875rem; color: #6c757d;">CPU使用率</div>
-                        <div style="font-size: 1.5rem; font-weight: bold;" id="cpu-percent">--%</div>
-                    </div>
-                </div>
-                <div class="col">
-                    <div class="text-center">
-                        <div style="font-size: 2rem; color: #28a745; margin-bottom: 0.5rem;">🧠</div>
-                        <div style="font-size: 0.875rem; color: #6c757d;">内存使用率</div>
-                        <div style="font-size: 1.5rem; font-weight: bold;" id="memory-percent">--%</div>
-                    </div>
-                </div>
-                <div class="col">
-                    <div class="text-center">
-                        <div style="font-size: 2rem; color: #ffc107; margin-bottom: 0.5rem;">💾</div>
-                        <div style="font-size: 0.875rem; color: #6c757d;">磁盘使用率</div>
-                        <div style="font-size: 1.5rem; font-weight: bold;" id="disk-percent">--%</div>
-                    </div>
-                </div>
-                <div class="col">
-                    <div class="text-center">
-                        <div style="font-size: 2rem; color: #6f42c1; margin-bottom: 0.5rem;">📈</div>
-                        <div style="font-size: 0.875rem; color: #6c757d;">数据文件</div>
-                        <div style="font-size: 1.5rem; font-weight: bold;" id="total-files">--</div>
-                    </div>
-                </div>
-            </div>
+        <div class="hero-actions">
+            <a href="/admin/login" class="btn btn-primary">前往登录中心</a>
+            <button class="btn btn-secondary" type="button" onclick="refreshAllData()">立即刷新</button>
         </div>
+    </header>
+
+    <div id="status-display" class="dashboard-status-strip">
+        <div class="status-placeholder">正在获取服务状态...</div>
     </div>
 
-    <!-- 服务状态 -->
-    <div class="card">
-        <div class="card-header">
-            <h2>🔧 服务状态</h2>
-        </div>
-        <div class="card-body">
-            <div class="row" id="services-status">
-                <div class="col">
-                    <h4>MCP 服务</h4>
-                    <p class="status" id="mcp-service-status">检查中...</p>
-                    <small>端口: 9090</small>
-                </div>
-                <div class="col">
-                    <h4>管理界面</h4>
-                    <p class="status status-success">运行中</p>
-                    <small>路径: /admin</small>
-                </div>
-                <div class="col">
-                    <h4>数据库</h4>
-                    <p class="status" id="database-status">检查中...</p>
-                    <small>PostgreSQL</small>
-                </div>
-                <div class="col">
-                    <h4>Redis缓存</h4>
-                    <p class="status" id="redis-status">检查中...</p>
-                    <small>Redis</small>
-                </div>
-            </div>
-        </div>
-    </div>
+    <section class="metric-grid">
+        <article class="metric-card">
+            <span class="metric-icon">💻</span>
+            <span class="metric-label">CPU 使用率</span>
+            <span class="metric-value" id="cpu-percent">--%</span>
+        </article>
+        <article class="metric-card">
+            <span class="metric-icon">🧠</span>
+            <span class="metric-label">内存使用率</span>
+            <span class="metric-value" id="memory-percent">--%</span>
+        </article>
+        <article class="metric-card">
+            <span class="metric-icon">💾</span>
+            <span class="metric-label">磁盘使用率</span>
+            <span class="metric-value" id="disk-percent">--%</span>
+        </article>
+        <article class="metric-card">
+            <span class="metric-icon">📂</span>
+            <span class="metric-label">累计数据文件</span>
+            <span class="metric-value" id="total-files">--</span>
+        </article>
+    </section>
 
-    <!-- 平台状态 -->
-    <div class="card">
-        <div class="card-header">
-            <h2>📱 平台状态</h2>
-        </div>
-        <div class="card-body">
-            <div class="platform-list" id="platforms-status">
-                <!-- 平台状态将由JavaScript动态加载 -->
+    <section class="dashboard-grid">
+        <article class="card dashboard-card">
+            <div class="card-header">
+                <div class="card-eyebrow">服务健康</div>
+                <h2>核心服务状态</h2>
             </div>
-        </div>
-    </div>
-
-    <!-- 爬取数据统计 -->
-    <div class="card">
-        <div class="card-header">
-            <h2>📈 数据统计</h2>
-        </div>
-        <div class="card-body">
-            <div class="row">
-                <div class="col">
-                    <div><strong>总文件数:</strong> <span id="data-total-files">--</span></div>
-                    <div><strong>总数据大小:</strong> <span id="data-total-size">--</span></div>
-                    <div><strong>数据路径:</strong> <span id="data-path">--</span></div>
+            <div class="card-body">
+                <div class="service-grid" id="services-status">
+                    <div class="service-item">
+                        <span class="service-title">MCP 服务</span>
+                        <span class="status" id="mcp-service-status">检查中...</span>
+                        <span class="service-meta">端口 9090</span>
+                    </div>
+                    <div class="service-item">
+                        <span class="service-title">管理界面</span>
+                        <span class="status status-success">运行中</span>
+                        <span class="service-meta">路径 /admin</span>
+                    </div>
+                    <div class="service-item">
+                        <span class="service-title">数据库</span>
+                        <span class="status" id="database-status">检查中...</span>
+                        <span class="service-meta">PostgreSQL</span>
+                    </div>
+                    <div class="service-item">
+                        <span class="service-title">Redis 缓存</span>
+                        <span class="status" id="redis-status">检查中...</span>
+                        <span class="service-meta">Redis</span>
+                    </div>
                 </div>
             </div>
-            
-            <div class="mt-4">
-                <h4>各平台数据</h4>
-                <div id="platform-data-stats">
-                    <p class="text-center" style="color: #6c757d; padding: 2rem;">暂无爬取数据</p>
+        </article>
+
+        <article class="card dashboard-card">
+            <div class="card-header">
+                <div class="card-eyebrow">登录态总览</div>
+                <h2>平台会话面板</h2>
+            </div>
+            <div class="card-body">
+                <div class="platform-list" id="platforms-status">
+                    <div class="platform-empty">正在加载平台状态...</div>
                 </div>
             </div>
-        </div>
-    </div>
+        </article>
 
-    <!-- 快捷操作 -->
-    <div class="card">
-        <div class="card-header">
-            <h2>⚡ 快捷操作</h2>
-        </div>
-        <div class="card-body">
-            <div class="row">
-                <div class="col text-center">
-                    <a href="/admin/login" class="btn btn-primary" style="text-decoration: none; display: block; padding: 1rem;">
-                        <div style="font-size: 2rem; margin-bottom: 0.5rem;">🔐</div>
-                        <div>登录管理</div>
+        <article class="card dashboard-card">
+            <div class="card-header">
+                <div class="card-eyebrow">落盘监控</div>
+                <h2>数据持久化概览</h2>
+            </div>
+            <div class="card-body">
+                <div class="data-overview">
+                    <div class="data-overview__item">
+                        <span class="data-overview__label">文件总数</span>
+                        <span class="data-overview__value" id="data-total-files">--</span>
+                    </div>
+                    <div class="data-overview__item">
+                        <span class="data-overview__label">数据容量</span>
+                        <span class="data-overview__value" id="data-total-size">-- MB</span>
+                    </div>
+                    <div class="data-overview__item data-overview__item--full">
+                        <span class="data-overview__label">数据目录</span>
+                        <span class="data-overview__value" id="data-path">--</span>
+                    </div>
+                </div>
+                <div class="platform-data-grid" id="platform-data-stats">
+                    <div class="status-placeholder">暂无爬取数据</div>
+                </div>
+            </div>
+        </article>
+
+        <article class="card dashboard-card">
+            <div class="card-header">
+                <div class="card-eyebrow">快捷入口</div>
+                <h2>高频操作</h2>
+            </div>
+            <div class="card-body">
+                <div class="quick-action-grid">
+                    <a href="/admin/login" class="quick-action-card">
+                        <span class="quick-action-icon">🔐</span>
+                        <span class="quick-action-title">登录管理</span>
+                        <span class="quick-action-desc">查看扫码、Cookie、手机号登录态</span>
                     </a>
-                </div>
-                <div class="col text-center">
-                    <a href="/admin/config" class="btn btn-primary" style="text-decoration: none; display: block; padding: 1rem;">
-                        <div style="font-size: 2rem; margin-bottom: 0.5rem;">⚙️</div>
-                        <div>配置管理</div>
+                    <a href="/admin/config" class="quick-action-card">
+                        <span class="quick-action-icon">⚙️</span>
+                        <span class="quick-action-title">配置管理</span>
+                        <span class="quick-action-desc">维护平台开关与爬虫参数</span>
                     </a>
-                </div>
-                <div class="col text-center">
-                    <button class="btn btn-primary" onclick="refreshAllData()" style="display: block; width: 100%; padding: 1rem;">
-                        <div style="font-size: 2rem; margin-bottom: 0.5rem;">🔄</div>
-                        <div>刷新数据</div>
+                    <button type="button" class="quick-action-card" onclick="refreshAllData()">
+                        <span class="quick-action-icon">🔄</span>
+                        <span class="quick-action-title">刷新面板</span>
+                        <span class="quick-action-desc">同步最新的服务与数据状态</span>
                     </button>
-                </div>
-                <div class="col text-center">
-                    <a href="http://localhost:9090/sse" target="_blank" class="btn btn-primary" style="text-decoration: none; display: block; padding: 1rem;">
-                        <div style="font-size: 2rem; margin-bottom: 0.5rem;">🔌</div>
-                        <div>MCP服务</div>
+                    <a href="http://localhost:9090/sse" target="_blank" rel="noopener" class="quick-action-card">
+                        <span class="quick-action-icon">🔌</span>
+                        <span class="quick-action-title">SSE 终端</span>
+                        <span class="quick-action-desc">打开 MCP SSE 流式输出</span>
                     </a>
                 </div>
             </div>
-        </div>
-    </div>
-</div>
+        </article>
+    </section>
+</section>
 {% endblock %}
 
 {% block scripts %}
@@ -152,9 +155,9 @@
 async function loadSystemStatus() {
     try {
         const response = await apiRequest('/status/system');
-        document.getElementById('cpu-percent').textContent = response.cpu_percent + '%';
-        document.getElementById('memory-percent').textContent = response.memory_percent + '%';
-        document.getElementById('disk-percent').textContent = response.disk_usage_percent + '%';
+        document.getElementById('cpu-percent').textContent = `${response.cpu_percent || 0}%`;
+        document.getElementById('memory-percent').textContent = `${response.memory_percent || 0}%`;
+        document.getElementById('disk-percent').textContent = `${response.disk_usage_percent || 0}%`;
     } catch (error) {
         console.error('加载系统状态失败:', error);
     }
@@ -164,7 +167,6 @@ async function loadServicesStatus() {
     try {
         const response = await apiRequest('/status/services');
 
-        // 更新各服务状态
         updateServiceStatus('mcp-service-status', response.mcp_service);
         updateServiceStatus('database-status', response.database);
         updateServiceStatus('redis-status', response.redis);
@@ -185,21 +187,34 @@ async function loadPlatformsStatus() {
     try {
         const platforms = await apiRequest('/status/platforms');
         const container = document.getElementById('platforms-status');
-        
-        container.innerHTML = platforms.map(platform => `
-            <div class="platform-item ${platform.enabled ? 'enabled' : 'disabled'}">
-                <h4>${platform.name}</h4>
-                <div style="margin-top: 0.5rem;">
-                    <div style="font-size: 0.875rem;">
-                        ${platform.has_session ? '✅' : '❌'} 登录状态
-                    </div>
-                    <div style="font-size: 0.875rem;">
-                        ${platform.tools_available ? '✅' : '❌'} 工具可用
-                    </div>
+
+        if (!platforms.length) {
+            container.innerHTML = '<div class="platform-empty">暂无平台状态信息</div>';
+            return;
+        }
+
+        container.innerHTML = platforms.map((platform) => `
+            <div class="platform-status-card ${platform.enabled ? 'is-enabled' : 'is-disabled'}">
+                <div class="platform-status-header">
+                    <span class="platform-status-name">${platform.name}</span>
+                    <span class="status ${platform.enabled ? 'status-success' : 'status-info'}">
+                        ${platform.enabled ? '已启用' : '未启用'}
+                    </span>
                 </div>
-                <div class="status ${platform.enabled ? 'status-success' : 'status-info'}" style="margin-top: 0.5rem;">
-                    ${platform.enabled ? '已启用' : '未启用'}
-                </div>
+                <dl class="platform-status-meta">
+                    <div>
+                        <dt>登录状态</dt>
+                        <dd>${platform.has_session ? '✅ 已登录' : '❌ 未登录'}</dd>
+                    </div>
+                    <div>
+                        <dt>工具可用</dt>
+                        <dd>${platform.tools_available ? '✅ 可用' : '❌ 暂不可用'}</dd>
+                    </div>
+                    <div>
+                        <dt>最近活动</dt>
+                        <dd>${platform.last_activity || '暂无数据'}</dd>
+                    </div>
+                </dl>
             </div>
         `).join('');
     } catch (error) {
@@ -210,30 +225,28 @@ async function loadPlatformsStatus() {
 async function loadDataStatus() {
     try {
         const response = await apiRequest('/status/data');
-        
+
         document.getElementById('data-total-files').textContent = response.total_files || 0;
-        document.getElementById('data-total-size').textContent = (response.total_size_mb || 0) + ' MB';
+        document.getElementById('data-total-size').textContent = `${response.total_size_mb || 0} MB`;
         document.getElementById('data-path').textContent = response.data_path || '--';
         document.getElementById('total-files').textContent = response.total_files || 0;
-        
-        // 更新平台数据统计
+
         const platformDataContainer = document.getElementById('platform-data-stats');
         if (response.platforms && Object.keys(response.platforms).length > 0) {
             platformDataContainer.innerHTML = Object.entries(response.platforms).map(([platform, stats]) => `
-                <div class="card" style="margin-bottom: 1rem;">
-                    <div class="card-body">
-                        <div style="display: flex; justify-content: space-between; align-items: center;">
-                            <strong>${platform}</strong>
-                            <span style="color: #6c757d;">${stats.files_count} 个文件</span>
-                        </div>
-                        <div style="margin-top: 0.5rem; font-size: 0.875rem; color: #6c757d;">
-                            大小: ${stats.total_size_mb} MB | 最新: ${stats.latest_file}
-                        </div>
+                <div class="data-card">
+                    <div class="data-card__header">
+                        <span class="data-card__title">${platform}</span>
+                        <span class="data-card__files">${stats.files_count} 个文件</span>
+                    </div>
+                    <div class="data-card__meta">
+                        <span>容量 ${stats.total_size_mb} MB</span>
+                        <span>最新 ${stats.latest_file || '未知'}</span>
                     </div>
                 </div>
             `).join('');
         } else {
-            platformDataContainer.innerHTML = '<p class="text-center" style="color: #6c757d; padding: 2rem;">暂无爬取数据</p>';
+            platformDataContainer.innerHTML = '<div class="status-placeholder">暂无爬取数据</div>';
         }
     } catch (error) {
         console.error('加载数据状态失败:', error);
@@ -242,22 +255,20 @@ async function loadDataStatus() {
 
 async function refreshAllData() {
     showMessage('正在刷新数据...', 'info');
-    
+
     await Promise.all([
         loadSystemStatus(),
-        loadServicesStatus(), 
+        loadServicesStatus(),
         loadPlatformsStatus(),
         loadDataStatus()
     ]);
-    
+
     showSuccess('数据已刷新');
 }
 
-// 页面加载完成后自动加载数据
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', () => {
     refreshAllData();
-    
-    // 每30秒自动刷新一次
+
     setInterval(refreshAllData, 30000);
 });
 </script>

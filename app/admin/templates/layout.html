@@ -3,37 +3,39 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}MCP Tools 管理后台{% endblock %}</title>
-    <link href="{{ url_for('static', path='/css/admin.css') }}?v=2" rel="stylesheet">
-    <style>
-        .d-none { display: none !important; }
-        .row { display: flex; flex-wrap: wrap; margin: -0.5rem; }
-        .col { flex: 1; padding: 0.5rem; }
-    </style>
+    <title>{% block title %}MCP Tools 控制台{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='/css/admin.css') }}?v=3">
 </head>
-<body>
-    <header class="header">
-        <div class="container">
-            <h1>🤖 MCP Tools 管理后台</h1>
-            <nav style="margin-top: 1rem;">
-                <a href="/admin" class="btn btn-sm" style="margin-right: 0.5rem; background: rgba(255,255,255,0.2); color: white; text-decoration: none;">仪表板</a>
-                <a href="/admin/login" class="btn btn-sm" style="margin-right: 0.5rem; background: rgba(255,255,255,0.2); color: white; text-decoration: none;">登录管理</a>
-                <a href="/admin/config" class="btn btn-sm" style="background: rgba(255,255,255,0.2); color: white; text-decoration: none;">配置管理</a>
+<body class="admin-body">
+    <div class="admin-shell">
+        <header class="admin-header">
+            <div class="admin-brand">
+                <div class="brand-logo">MC</div>
+                <div class="brand-text">
+                    <h1 class="brand-title">MCP Tools 控制台</h1>
+                    <p class="brand-subtitle">媒体登录 · 状态监控 · 配置管理</p>
+                </div>
+            </div>
+            <nav class="admin-nav">
+                {% set current_path = request.url.path %}
+                <a href="/admin" class="admin-nav__link {{ 'is-active' if current_path in ['/admin', '/admin/', '/admin/dashboard'] else '' }}">状态监控</a>
+                <a href="/admin/login" class="admin-nav__link {{ 'is-active' if current_path.startswith('/admin/login') else '' }}">登录管理</a>
+                <a href="/admin/config" class="admin-nav__link {{ 'is-active' if current_path.startswith('/admin/config') else '' }}">配置管理</a>
             </nav>
-        </div>
-    </header>
+        </header>
 
-    <main class="container">
-        <div id="message" class="d-none" style="margin-bottom: 1rem;"></div>
-        {% block content %}{% endblock %}
-    </main>
+        <main class="admin-content">
+            <div id="message" class="toast status status-info" style="display: none;"></div>
+            {% block content %}{% endblock %}
+        </main>
 
-    <footer style="text-align: center; padding: 2rem; color: #6c757d; border-top: 1px solid #e9ecef; margin-top: 3rem;">
-        <p>MCP Tools Admin v1.0.0 | 社交媒体爬虫管理系统</p>
-        <p style="font-size: 0.875rem; margin-top: 0.5rem;">MCP端口: 9090 | 管理界面: /admin</p>
-    </footer>
+        <footer class="admin-footer">
+            <p>MCP Tools Admin · MediaCrawler 控制台</p>
+            <p class="admin-footer__meta">MCP 端口 9090 · 管理入口 /admin</p>
+        </footer>
+    </div>
 
-    <script src="{{ url_for('static', path='/js/admin.js') }}?v=2"></script>
+    <script src="{{ url_for('static', path='/js/admin.js') }}?v=3"></script>
     {% block scripts %}{% endblock %}
 </body>
 </html>

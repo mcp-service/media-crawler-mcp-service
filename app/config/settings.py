@@ -90,6 +90,7 @@ class RedisConfig(BaseModel):
     host: str = 'localhost'
     port: int = 6379
     db: int = 0
+    user: str = ''
     password: Optional[str] = None
 
 
