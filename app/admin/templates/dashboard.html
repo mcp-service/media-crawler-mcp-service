@@ -83,7 +83,7 @@
                 <h2>平台会话面板</h2>
             </div>
             <div class="card-body">
-                <div class="platform-list" id="platforms-status">
+                <div class="platform-groups" id="platforms-status">
                     <div class="platform-empty">正在加载平台状态...</div>
                 </div>
             </div>
@@ -193,30 +193,45 @@ async function loadPlatformsStatus() {
             return;
         }
 
-        container.innerHTML = platforms.map((platform) => `
-            <div class="platform-status-card ${platform.enabled ? 'is-enabled' : 'is-disabled'}">
-                <div class="platform-status-header">
-                    <span class="platform-status-name">${platform.name}</span>
-                    <span class="status ${platform.enabled ? 'status-success' : 'status-info'}">
-                        ${platform.enabled ? '已启用' : '未启用'}
-                    </span>
-                </div>
-                <dl class="platform-status-meta">
-                    <div>
-                        <dt>登录状态</dt>
-                        <dd>${platform.has_session ? '✅ 已登录' : '❌ 未登录'}</dd>
+        const groups = [
+            { title: '已登录', filter: (p) => p.has_session, statusLabel: '在线' },
+            { title: '未登录', filter: (p) => !p.has_session, statusLabel: '离线' }
+        ];
+
+        container.innerHTML = groups.map((group) => {
+            const groupItems = platforms.filter(group.filter);
+            const groupContent = groupItems.length
+                ? groupItems.map((platform) => {
+                    const metaParts = [];
+                    metaParts.push(platform.enabled ? '已启用' : '停用');
+                    metaParts.push(platform.tools_available ? '工具可用' : '工具受限');
+                    if (platform.last_activity) {
+                        metaParts.push(platform.last_activity);
+                    }
+                    return `
+                        <div class="platform-chip ${platform.has_session ? 'is-active' : ''}">
+                            <div class="platform-chip__details">
+                                <span class="platform-chip__name">${platform.name}</span>
+                                <span class="platform-chip__meta">${metaParts.join(' · ')}</span>
+                            </div>
+                            <span class="platform-chip__status">${group.statusLabel}</span>
+                        </div>
+                    `;
+                }).join('')
+                : '<div class="platform-group__empty">暂无平台</div>';
+
+            return `
+                <section class="platform-group">
+                    <header class="platform-group__header">
+                        <span class="platform-group__title">${group.title}</span>
+                        <span class="platform-group__count">${groupItems.length}</span>
+                    </header>
+                    <div class="platform-group__list">
+                        ${groupContent}
                     </div>
-                    <div>
-                        <dt>工具可用</dt>
-                        <dd>${platform.tools_available ? '✅ 可用' : '❌ 暂不可用'}</dd>
-                    </div>
-                    <div>
-                        <dt>最近活动</dt>
-                        <dd>${platform.last_activity || '暂无数据'}</dd>
-                    </div>
-                </dl>
-            </div>
-        `).join('');
+                </section>
+            `;
+        }).join('');
     } catch (error) {
         console.error('加载平台状态失败:', error);
     }

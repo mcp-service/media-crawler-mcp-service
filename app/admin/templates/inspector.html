@@ -1,0 +1,68 @@
+{% extends "layout.html" %}
+
+{% block title %}MCP 调试台 - MCP Tools Inspector{% endblock %}
+
+{% block content %}
+<section class="dashboard-page" id="mcp-inspector">
+    <header class="dashboard-hero">
+        <div>
+            <span class="hero-pill">工具调试</span>
+            <h2 class="hero-title">MCP Tools Inspector</h2>
+            <p class="hero-subtitle">
+                浏览并调试已注册的 MCP 工具，直接向对应 HTTP 接口提交请求，实时查看返回数据。
+            </p>
+        </div>
+        <div class="hero-actions">
+            <button class="btn btn-secondary" type="button" id="refresh-tools">刷新工具列表</button>
+        </div>
+    </header>
+
+    <section class="inspector-grid">
+        <aside class="inspector-sidebar" id="tool-list">
+            <div class="status-placeholder">加载工具列表...</div>
+        </aside>
+
+        <article class="card inspector-panel">
+            <div class="card-header">
+                <div class="card-eyebrow">工具详情</div>
+                <h2 id="tool-name">请选择工具</h2>
+                <p class="card-subtitle" id="tool-description">从左侧列表中选择一个工具进行调试。</p>
+            </div>
+            <div class="card-body">
+                <div class="inspector-meta" id="tool-meta">
+                    <div>
+                        <span class="meta-label">HTTP 路由</span>
+                        <code class="meta-value" id="tool-path">-</code>
+                    </div>
+                    <div>
+                        <span class="meta-label">请求方法</span>
+                        <code class="meta-value" id="tool-methods">-</code>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label" for="tool-request-body">请求体（JSON）</label>
+                    <textarea id="tool-request-body" class="form-control inspector-textarea" rows="10" placeholder="{}"></textarea>
+                </div>
+
+                <div class="form-actions">
+                    <button class="btn btn-primary" type="button" id="execute-tool" disabled>执行请求</button>
+                    <button class="btn btn-secondary" type="button" id="reset-body" disabled>恢复默认</button>
+                </div>
+
+                <section class="inspector-result">
+                    <header class="inspector-result__header">
+                        <span class="meta-label">响应结果</span>
+                        <span class="inspector-status" id="response-status">尚未执行</span>
+                    </header>
+                    <pre class="inspector-result__body" id="response-body">{}</pre>
+                </section>
+            </div>
+        </article>
+    </section>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', path='/js/mcp_inspector.js') }}?v=1"></script>
+{% endblock %}

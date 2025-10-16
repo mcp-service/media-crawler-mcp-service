@@ -65,6 +65,12 @@ def _patch_fastmcp_sse(app: FastMCP):
             """修改后的SSE异步运行方法"""
             sse = SseServerTransport("/messages/")
 
+            cors_headers = {
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type,Authorization",
+            }
+
             async def handle_sse(request):
                 """处理SSE连接"""
                 async with sse.connect_sse(
@@ -77,8 +83,18 @@ def _patch_fastmcp_sse(app: FastMCP):
                     )
                 # SSE连接由 connect_sse 管理，不需要返回值
                 from starlette.responses import Response
-                return Response()
-            
+                return Response(status_code=200, headers=cors_headers)
+
+            async def handle_sse_options(request):
+                from starlette.responses import Response
+
+                return Response(status_code=204, headers=cors_headers)
+
+            async def handle_messages(request):
+                if request.method == "OPTIONS":
+                    return await handle_sse_options(request)
+                return await handle_sse(request)
+
             # 收集所有端点的路由
             api_routes = []
             for endpoint in endpoint_registry.get_all_endpoints():
@@ -90,8 +106,8 @@ def _patch_fastmcp_sse(app: FastMCP):
 
             # 创建Starlette应用，集成MCP SSE和HTTP API路由
             routes = [
-                Route("/sse", endpoint=handle_sse),
-                Mount("/messages/", app=sse.handle_post_message),
+                Route("/messages/", endpoint=handle_messages, methods=["GET", "OPTIONS"]),
+                Mount("/messages", app=sse.handle_post_message),
             ] + api_routes
 
             get_logger().info(f"[路由注册] Starlette 应用总路由数: {len(routes)}")
@@ -137,7 +153,12 @@ def auto_discover_endpoints():
         
         # 注册管理类端点
         from app.api.endpoints.login import LoginEndpoint
-        from app.api.endpoints.admin import ConfigEndpoint, StatusEndpoint, AdminPageEndpoint
+        from app.api.endpoints.admin import (
+            ConfigEndpoint,
+            StatusEndpoint,
+            AdminPageEndpoint,
+            McpInspectorEndpoint,
+        )
 
         # 平台端点映射
         platform_endpoints = {
@@ -163,13 +184,15 @@ def auto_discover_endpoints():
         endpoint_registry.register(ConfigEndpoint())
         endpoint_registry.register(StatusEndpoint())
         endpoint_registry.register(AdminPageEndpoint())
-        registered_count += 4
-        get_logger().info(f"  ✅ 已注册 登录管理端点")
-        get_logger().info(f"  ✅ 已注册 配置管理端点")
-        get_logger().info(f"  ✅ 已注册 状态监控端点")
-        get_logger().info(f"  ✅ 已注册 管理界面端点")
+        endpoint_registry.register(McpInspectorEndpoint())
+        registered_count += 5
+        get_logger().info("  ✅ 已注册 登录管理端点")
+        get_logger().info("  ✅ 已注册 配置管理端点")
+        get_logger().info("  ✅ 已注册 状态监控端点")
+        get_logger().info("  ✅ 已注册 管理界面端点")
+        get_logger().info("  ✅ 已注册 MCP 工具调试端点")
 
-        get_logger().info(f"✅ 所有端点自动发现完成 ({registered_count} 个端点：{registered_count-4} 个平台 + 4 个管理服务）")
+        get_logger().info(f"✅ 所有端点自动发现完成 ({registered_count} 个端点：{registered_count-5} 个平台 + 5 个管理服务）")
 
     except Exception as e:
         get_logger().error(f"❌ 端点自动发现失败: {e}")

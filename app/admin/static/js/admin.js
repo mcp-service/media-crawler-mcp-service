@@ -55,30 +55,59 @@ function renderPlatformSessions(sessions = []) {
         return;
     }
 
-    container.innerHTML = sessions.map((session) => {
-        const displayName = session.platform_name || getPlatformDisplayName(session.platform) || session.platform;
-        const lastLogin = session.last_login || (session.is_logged_in ? '最近登录' : '从未登录');
-        const buttonAction = session.is_logged_in
-            ? `logoutPlatform('${session.platform}')`
-            : `quickLogin('${session.platform}')`;
-        const buttonClass = session.is_logged_in ? 'btn-danger' : 'btn-primary';
-        const buttonLabel = session.is_logged_in ? '退出登录' : '开始登录';
+    const groups = [
+        {
+            title: '已登录',
+            filter: (session) => session.is_logged_in,
+            statusLabel: '在线',
+            actionLabel: '退出',
+            actionClass: 'platform-action platform-action--danger',
+            actionHandler: (platform) => `logoutPlatform('${platform}')`
+        },
+        {
+            title: '未登录',
+            filter: (session) => !session.is_logged_in,
+            statusLabel: '离线',
+            actionLabel: '登录',
+            actionClass: 'platform-action platform-action--highlight',
+            actionHandler: (platform) => `quickLogin('${platform}')`
+        }
+    ];
+
+    container.innerHTML = groups.map((group) => {
+        const groupSessions = sessions.filter(group.filter);
+        const groupContent = groupSessions.length
+            ? groupSessions.map((session) => {
+                const displayName = session.platform_name || getPlatformDisplayName(session.platform) || session.platform;
+                const lastLogin = session.last_login || (session.is_logged_in ? '最近登录' : '从未登录');
+
+                return `
+                    <div class="platform-chip ${session.is_logged_in ? 'is-active' : ''}">
+                        <div class="platform-chip__details">
+                            <span class="platform-chip__name">${displayName}</span>
+                            <span class="platform-chip__meta">${lastLogin}</span>
+                        </div>
+                        <div class="platform-chip__actions">
+                            <span class="platform-chip__status">${group.statusLabel}</span>
+                            <button class="${group.actionClass}" onclick="${group.actionHandler(session.platform)}">
+                                ${group.actionLabel}
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }).join('')
+            : '<div class="platform-group__empty">暂无平台</div>';
 
         return `
-            <div class="platform-item ${session.is_logged_in ? 'enabled' : 'disabled'}">
-                <h4>${displayName}</h4>
-                <div class="status ${session.is_logged_in ? 'status-success' : 'status-info'}" style="margin-top: 0.5rem;">
-                    ${session.is_logged_in ? '已登录' : '未登录'}
+            <section class="platform-group">
+                <header class="platform-group__header">
+                    <span class="platform-group__title">${group.title}</span>
+                    <span class="platform-group__count">${groupSessions.length}</span>
+                </header>
+                <div class="platform-group__list">
+                    ${groupContent}
                 </div>
-                <div class="platform-item__meta">
-                    ${lastLogin}
-                </div>
-                <button class="btn btn-sm ${buttonClass}"
-                        onclick="${buttonAction}"
-                        style="margin-top: 0.5rem; width: 100%;">
-                    ${buttonLabel}
-                </button>
-            </div>
+            </section>
         `;
     }).join('');
 }

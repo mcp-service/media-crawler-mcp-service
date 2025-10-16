@@ -28,6 +28,7 @@ class BaseEndpoint(ABC):
         self.tags = tags or []
         self.routes = []
         self._tools_info = []
+        self._http_routes: List[Dict[str, Any]] = []
         
     @abstractmethod
     def register_routes(self) -> List[Route]:
@@ -67,13 +68,17 @@ class BaseEndpoint(ABC):
             status_code=status_code
         )
     
-    def _create_route(self, path: str, endpoint: Callable, methods: List[str] = None) -> Route:
+    def _create_route(self, path: str, endpoint: Callable, methods: List[str] = None, meta: Optional[Dict[str, Any]] = None) -> Route:
         """创建 Starlette 路由"""
         if methods is None:
             methods = ["GET"]
         
         full_path = f"{self.prefix}{path}"
-        return Route(full_path, endpoint=endpoint, methods=methods)
+        route = Route(full_path, endpoint=endpoint, methods=methods)
+        meta_info = meta.copy() if meta else {}
+        meta_info.update({"path": full_path, "methods": methods})
+        self._http_routes.append(meta_info)
+        return route
     
     def register_tools_to_mcp(self, app: FastMCP):
         """注册工具到 FastMCP 应用"""
@@ -93,12 +98,26 @@ class BaseEndpoint(ABC):
             "tags": self.tags
         }
     
-    def _add_tool_info(self, name: str, description: str):
+    def _add_tool_info(
+        self,
+        name: str,
+        description: str,
+        http_path: Optional[str] = None,
+        http_methods: Optional[List[str]] = None,
+    ):
         """添加工具信息（内部方法）"""
-        self._tools_info.append({
+        info = {
             "name": name,
             "description": description
-        })
+        }
+        if http_path:
+            info["http_path"] = http_path
+            info["http_methods"] = http_methods or []
+        self._tools_info.append(info)
+
+    def get_http_routes(self) -> List[Dict[str, Any]]:
+        """获取HTTP路由信息"""
+        return self._http_routes
 
 
 class EndpointRegistry:

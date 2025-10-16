@@ -14,8 +14,8 @@ from typing import Any, Dict, Optional
 from playwright.async_api import BrowserContext, async_playwright
 
 from app.config.settings import Platform, global_settings
-from app.crawler.platforms.bilibili.client import BilibiliClient
-from app.crawler.platforms.bilibili.login import BilibiliLogin
+from app.core.crawler.platforms.bilibili.client import BilibiliClient
+from app.core.crawler.platforms.bilibili.login import BilibiliLogin
 
 from ..base import BaseLoginAdapter
 from ..models import LoginSession, LoginStartPayload, PlatformLoginState

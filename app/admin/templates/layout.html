@@ -21,6 +21,7 @@
                 <a href="/admin" class="admin-nav__link {{ 'is-active' if current_path in ['/admin', '/admin/', '/admin/dashboard'] else '' }}">状态监控</a>
                 <a href="/admin/login" class="admin-nav__link {{ 'is-active' if current_path.startswith('/admin/login') else '' }}">登录管理</a>
                 <a href="/admin/config" class="admin-nav__link {{ 'is-active' if current_path.startswith('/admin/config') else '' }}">配置管理</a>
+                <a href="/admin/inspector" class="admin-nav__link {{ 'is-active' if current_path.startswith('/admin/inspector') else '' }}">MCP 调试</a>
             </nav>
         </header>
 

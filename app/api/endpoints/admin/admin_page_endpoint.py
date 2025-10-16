@@ -59,6 +59,17 @@ class AdminPageEndpoint(BaseEndpoint):
                 self.logger.error(f"[管理界面] 渲染登录页面失败: {e}")
                 return HTMLResponse(content=f"<h1>Error</h1><p>{e}</p>", status_code=500)
 
+        async def inspector_page(request):
+            """MCP 工具调试页面"""
+            try:
+                return self.templates.TemplateResponse("inspector.html", {
+                    "request": request,
+                    "title": "MCP Tools Inspector"
+                })
+            except Exception as e:
+                self.logger.error(f"[管理界面] 渲染 MCP 调试页面失败: {e}")
+                return HTMLResponse(content=f"<h1>Error</h1><p>{e}</p>", status_code=500)
+
         # 静态文件路由
         static_files = StaticFiles(directory=str(self.admin_dir / "static"))
 
@@ -68,6 +79,7 @@ class AdminPageEndpoint(BaseEndpoint):
             Route(f"{self.prefix}/dashboard", index, methods=["GET"]),
             Route(f"{self.prefix}/config", config_page, methods=["GET"]),
             Route(f"{self.prefix}/login", login_page, methods=["GET"]),
+            Route(f"{self.prefix}/inspector", inspector_page, methods=["GET"]),
             Mount(f"{self.prefix}/static", static_files, name="static"),
         ]
 

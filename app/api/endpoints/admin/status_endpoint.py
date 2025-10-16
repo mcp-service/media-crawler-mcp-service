@@ -49,18 +49,23 @@ class StatusEndpoint(BaseEndpoint):
             try:
                 data_path = Path("data")
 
-                if not data_path.exists():
-                    return JSONResponse(content={
-                        "status": "empty",
-                        "message": "数据目录不存在",
-                        "platforms": {}
-                    })
-
-                # 统计各平台数据
                 platform_stats = {}
                 total_files = 0
                 total_size = 0
 
+                if not data_path.exists():
+                    data = {
+                        "status": "empty",
+                        "message": "数据目录不存在",
+                        "platforms": platform_stats,
+                        "total_files": total_files,
+                        "total_size_mb": 0,
+                        "data_path": str(data_path.absolute()),
+                        "updated_at": datetime.now().isoformat()
+                    }
+                    return JSONResponse(content=data)
+
+                # 统计各平台数据
                 for platform_dir in data_path.iterdir():
                     if platform_dir.is_dir():
                         files = list(platform_dir.glob("*.json")) + list(platform_dir.glob("*.csv"))
@@ -203,8 +208,8 @@ class StatusEndpoint(BaseEndpoint):
                         "total": len(list(Platform))
                     },
                     "data": {
-                        "total_files": data_status["total_files"],
-                        "total_size_mb": data_status["total_size_mb"]
+                        "total_files": data_status.get("total_files", 0),
+                        "total_size_mb": data_status.get("total_size_mb", 0)
                     }
                 }
                 return JSONResponse(content=summary)
