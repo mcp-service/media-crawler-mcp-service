@@ -361,6 +361,20 @@ select.form-control {
   color: var(--admin-text-secondary);
 }
 
+.page-title {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.page-status {
+  margin-left: 0.25rem;
+}
+
+.page-status:not(.is-visible) {
+  display: none;
+}
+
 .platform-groups {
   display: flex;
   flex-direction: column;

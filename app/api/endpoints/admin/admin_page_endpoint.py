@@ -1,88 +1,81 @@
 # -*- coding: utf-8 -*-
-"""
-管理界面端点 - 提供 Web UI
-"""
+"""管理界面端点 - 提供 Web UI"""
+
 from pathlib import Path
-from starlette.routing import Route, Mount
+
+from starlette.responses import HTMLResponse
 from starlette.staticfiles import StaticFiles
 from starlette.templating import Jinja2Templates
-from starlette.responses import HTMLResponse, RedirectResponse
 
-from app.api.endpoints.base import BaseEndpoint
+from app.api.endpoints.base import MCPBlueprint
 from app.providers.logger import get_logger
 
 
-class AdminPageEndpoint(BaseEndpoint):
-    """管理界面端点"""
+logger = get_logger()
+bp = MCPBlueprint(prefix="/admin", name="admin_page", tags=["管理界面"], category="admin")
 
-    def __init__(self):
-        super().__init__(prefix="/admin", tags=["管理界面"])
-        self.logger = get_logger()
+_admin_dir = Path(__file__).parent.parent.parent.parent / "admin"
+_templates = Jinja2Templates(directory=str(_admin_dir / "templates"))
 
-        # 获取admin目录路径
-        self.admin_dir = Path(__file__).parent.parent.parent.parent / "admin"
-        self.templates = Jinja2Templates(directory=str(self.admin_dir / "templates"))
 
-    def register_routes(self):
-        """注册路由"""
+@bp.route("", methods=["GET"])
+@bp.route("/", methods=["GET"])
+@bp.route("/dashboard", methods=["GET"])
+async def admin_dashboard(request):
+    """管理首页 - 仪表板"""
+    try:
+        return _templates.TemplateResponse(
+            request,
+            "dashboard.html",
+            {"title": "MediaCrawler MCP Service"},
+        )
+    except Exception as exc:
+        logger.error(f"[管理界面] 渲染 dashboard 失败: {exc}")
+        return HTMLResponse(content=f"<h1>Error</h1><p>{exc}</p>", status_code=500)
 
-        async def index(request):
-            """管理首页 - 仪表板"""
-            try:
-                return self.templates.TemplateResponse("dashboard.html", {
-                    "request": request,
-                    "title": "MediaCrawler MCP Service"
-                })
-            except Exception as e:
-                self.logger.error(f"[管理界面] 渲染页面失败: {e}")
-                return HTMLResponse(content=f"<h1>Error</h1><p>{e}</p>", status_code=500)
 
-        async def config_page(request):
-            """配置管理页面"""
-            try:
-                return self.templates.TemplateResponse("config.html", {
-                    "request": request,
-                    "title": "配置管理"
-                })
-            except Exception as e:
-                self.logger.error(f"[管理界面] 渲染配置页面失败: {e}")
-                return HTMLResponse(content=f"<h1>Error</h1><p>{e}</p>", status_code=500)
+@bp.route("/config", methods=["GET"])
+async def admin_config_page(request):
+    """配置管理页面"""
+    try:
+        return _templates.TemplateResponse(
+            request,
+            "config.html",
+            {"title": "配置管理"},
+        )
+    except Exception as exc:
+        logger.error(f"[管理界面] 渲染 config 失败: {exc}")
+        return HTMLResponse(content=f"<h1>Error</h1><p>{exc}</p>", status_code=500)
 
-        async def login_page(request):
-            """登录管理页面"""
-            try:
-                return self.templates.TemplateResponse("login.html", {
-                    "request": request,
-                    "title": "登录管理"
-                })
-            except Exception as e:
-                self.logger.error(f"[管理界面] 渲染登录页面失败: {e}")
-                return HTMLResponse(content=f"<h1>Error</h1><p>{e}</p>", status_code=500)
 
-        async def inspector_page(request):
-            """MCP 工具调试页面"""
-            try:
-                return self.templates.TemplateResponse("inspector.html", {
-                    "request": request,
-                    "title": "MCP Tools Inspector"
-                })
-            except Exception as e:
-                self.logger.error(f"[管理界面] 渲染 MCP 调试页面失败: {e}")
-                return HTMLResponse(content=f"<h1>Error</h1><p>{e}</p>", status_code=500)
+@bp.route("/login", methods=["GET"])
+async def admin_login_page(request):
+    """登录管理页面"""
+    try:
+        return _templates.TemplateResponse(
+            request,
+            "login.html",
+            {"title": "登录管理"},
+        )
+    except Exception as exc:
+        logger.error(f"[管理界面] 渲染 login 失败: {exc}")
+        return HTMLResponse(content=f"<h1>Error</h1><p>{exc}</p>", status_code=500)
 
-        # 静态文件路由
-        static_files = StaticFiles(directory=str(self.admin_dir / "static"))
 
-        return [
-            Route(f"{self.prefix}", index, methods=["GET"]),
-            Route(f"{self.prefix}/", index, methods=["GET"]),
-            Route(f"{self.prefix}/dashboard", index, methods=["GET"]),
-            Route(f"{self.prefix}/config", config_page, methods=["GET"]),
-            Route(f"{self.prefix}/login", login_page, methods=["GET"]),
-            Route(f"{self.prefix}/inspector", inspector_page, methods=["GET"]),
-            Mount(f"{self.prefix}/static", static_files, name="static"),
-        ]
+@bp.route("/inspector", methods=["GET"])
+async def admin_inspector_page(request):
+    """MCP 工具调试页面"""
+    try:
+        return _templates.TemplateResponse(
+            request,
+            "inspector.html",
+            {"title": "MCP Tools Inspector"},
+        )
+    except Exception as exc:
+        logger.error(f"[管理界面] 渲染 inspector 失败: {exc}")
+        return HTMLResponse(content=f"<h1>Error</h1><p>{exc}</p>", status_code=500)
 
-    def register_mcp_tools(self, app):
-        """不注册MCP工具，只提供HTTP API"""
-        pass
+
+bp.mount("/static", StaticFiles(directory=str(_admin_dir / "static")), name="static")
+
+__all__ = ["bp"]

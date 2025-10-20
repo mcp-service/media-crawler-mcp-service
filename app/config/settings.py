@@ -3,8 +3,8 @@
 简化的配置管理模块
 """
 from typing import Optional, Dict, Any, Set, List
-from pydantic import BaseModel, Field
-from pydantic_settings import BaseSettings
+from pydantic import BaseModel, Field, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from enum import Enum
 
 
@@ -16,6 +16,23 @@ def safe_print(message: str):
         # Fallback: remove emojis or use safe encoding
         safe_message = message.encode('ascii', 'ignore').decode('ascii')
         print(safe_message, flush=True)
+
+
+def _safe_json_loads(value: Any) -> Any:
+    """Gracefully fallback to raw value when JSON decoding fails."""
+    if value is None or isinstance(value, (dict, list)):
+        return value
+    if isinstance(value, (bytes, bytearray)):
+        value = value.decode("utf-8")
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return stripped
+        try:
+            return json.loads(stripped)
+        except json.JSONDecodeError:
+            return stripped
+    return value
 
 
 # === 枚举类型 ===
@@ -140,13 +157,22 @@ class StoreConfig(BaseModel):
 
 class PlatformConfig(BaseModel):
     """平台配置"""
-    enabled_platforms: List[Platform] = Field(
-        default_factory=lambda: list(Platform),
+    enabled_platforms: List[Platform] | str = Field(
+        default="all",
         description="启用的平台列表，默认全部启用"
     )
     default_login_type: LoginType = LoginType.COOKIE
     default_headless: bool = False
     default_save_format: SaveFormat = SaveFormat.JSON
+
+    @field_validator("enabled_platforms", mode="before")
+    @classmethod
+    def _normalize_platforms(cls, value: Any) -> List[Platform]:
+        if isinstance(value, str):
+            return cls.parse_enabled_platforms(value)
+        if isinstance(value, list):
+            return [Platform(item) if isinstance(item, str) else item for item in value]
+        return list(Platform)
 
     @classmethod
     def parse_enabled_platforms(cls, value: Any) -> List[Platform]:
@@ -176,9 +202,16 @@ class PlatformConfig(BaseModel):
 
     def model_post_init(self, __context: Any) -> None:
         """Pydantic v2 post init hook"""
-        # 如果从环境变量加载的是字符串，需要转换
-        if hasattr(self, 'enabled_platforms') and isinstance(self.enabled_platforms, str):
-            self.enabled_platforms = self.parse_enabled_platforms(self.enabled_platforms)
+        raw_value = getattr(self, "enabled_platforms", "all")
+        if isinstance(raw_value, str):
+            self.enabled_platforms = self.parse_enabled_platforms(raw_value)
+        elif isinstance(raw_value, list):
+            self.enabled_platforms = [
+                item if isinstance(item, Platform) else Platform(str(item))
+                for item in raw_value
+            ]
+        else:
+            self.enabled_platforms = list(Platform)
 class GlobalSettings(BaseSettings):
     """全局配置设置"""
     # 嵌套配置
@@ -195,14 +228,13 @@ class GlobalSettings(BaseSettings):
     platform: PlatformConfig = Field(default_factory=PlatformConfig)
 
 
-    class Config:
-        env_file = ".env"  # 默认从 .env 文件加载配置
-        env_file_encoding = 'utf-8'
-        case_sensitive = False
-        extra = "allow"
-        # 支持嵌套环境变量，使用双下划线分隔
-        env_nested_delimiter = '__'
-
+    model_config = SettingsConfigDict(
+        env_file=".env",  # 默认从 .env 文件加载配置
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="allow",
+        env_nested_delimiter="__",
+    )
 
 def load_config() -> GlobalSettings:
     """

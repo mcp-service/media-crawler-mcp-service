@@ -1,176 +1,181 @@
 # -*- coding: utf-8 -*-
-"""
-统一的端点基类，支持同时注册 Starlette 路由和 FastMCP 工具
-"""
+"""Decorator-friendly blueprint used by API endpoint modules."""
 
-import json
-from abc import ABC, abstractmethod
-from typing import Dict, List, Any, Optional, Callable
-from starlette.routing import Route, Mount
-from starlette.requests import Request
-from starlette.responses import JSONResponse
-from fastmcp import FastMCP
-from app.providers.logger import get_logger
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
+
+from starlette.routing import BaseRoute, Mount, Route
+
+RegisteredTool = Tuple[str, Callable]
+
+_blueprints: List["MCPBlueprint"] = []
 
 
-class BaseEndpoint(ABC):
-    """端点基类，提供统一的注册机制"""
-    
-    def __init__(self, prefix: str = "", tags: Optional[List[str]] = None):
-        """
-        初始化端点
-        
-        Args:
-            prefix: API路由前缀
-            tags: API标签列表
-        """
-        self.prefix = prefix
-        self.tags = tags or []
-        self.routes = []
-        self._tools_info = []
-        self._http_routes: List[Dict[str, Any]] = []
-        
-    @abstractmethod
-    def register_routes(self) -> List[Route]:
-        """注册 Starlette 路由（子类必须实现）"""
-        pass
-    
-    @abstractmethod
-    def register_mcp_tools(self, app: FastMCP):
-        """注册 FastMCP 工具（子类必须实现）"""
-        pass
-    
-    def get_routes(self) -> List[Route]:
-        """获取 Starlette 路由列表"""
-        if not self.routes:
-            self.routes = self.register_routes()
-        return self.routes
-    
-    async def _parse_json_body(self, request: Request) -> dict:
-        """解析JSON请求体"""
-        try:
-            body = await request.json()
-            return body if body else {}
-        except Exception:
-            return {}
-    
-    def _create_json_response(self, data: Any, status_code: int = 200) -> JSONResponse:
-        """创建 JSON 响应"""
-        from app.api.scheme import jsonify_response
-        
-        if status_code == 200:
-            response_data = jsonify_response(data=data)
-        else:
-            response_data = jsonify_response(success=False, message=str(data))
-        
-        return JSONResponse(
-            content=response_data,
-            status_code=status_code
-        )
-    
-    def _create_route(self, path: str, endpoint: Callable, methods: List[str] = None, meta: Optional[Dict[str, Any]] = None) -> Route:
-        """创建 Starlette 路由"""
-        if methods is None:
-            methods = ["GET"]
-        
-        full_path = f"{self.prefix}{path}"
-        route = Route(full_path, endpoint=endpoint, methods=methods)
-        meta_info = meta.copy() if meta else {}
-        meta_info.update({"path": full_path, "methods": methods})
-        self._http_routes.append(meta_info)
-        return route
-    
-    def register_tools_to_mcp(self, app: FastMCP):
-        """注册工具到 FastMCP 应用"""
-        try:
-            self.register_mcp_tools(app)
-            get_logger().info(f"✅ {self.__class__.__name__} MCP工具注册成功")
-        except Exception as e:
-            get_logger().error(f"❌ {self.__class__.__name__} MCP工具注册失败: {e}")
-            raise
-    
-    def get_tools_info(self) -> Dict[str, Any]:
-        """获取工具信息"""
-        return {
-            "category": self.__class__.__name__.replace("Endpoint", "").lower(),
-            "tools": self._tools_info,
-            "prefix": self.prefix,
-            "tags": self.tags
-        }
-    
-    def _add_tool_info(
+def get_registered_blueprints() -> Iterable["MCPBlueprint"]:
+    """Return the registered blueprints."""
+    return tuple(_blueprints)
+
+
+def get_tools_summary() -> Dict[str, Any]:
+    """Aggregate MCP tool information across all blueprints."""
+    categories: Dict[str, List[str]] = {}
+    total_tools = 0
+
+    for bp in _blueprints:
+        if not bp.tools_info:
+            continue
+        categories[bp.category] = [tool["name"] for tool in bp.tools_info]
+        total_tools += len(bp.tools_info)
+
+    return {
+        "categories": categories,
+        "total_tools": total_tools,
+        "blueprints_count": len(_blueprints),
+    }
+
+
+@dataclass
+class RouteInfo:
+    path: str
+    methods: Optional[List[str]]
+    name: str
+    kind: str = "route"  # route or mount
+
+
+@dataclass
+class ToolInfo:
+    name: str
+    description: Optional[str]
+    http_path: Optional[str]
+    http_methods: List[str]
+
+
+class MCPBlueprint:
+    """Collect HTTP routes and MCP tools via decorators."""
+
+    def __init__(
         self,
-        name: str,
-        description: str,
+        prefix: str = "",
+        *,
+        name: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        category: Optional[str] = None,
+    ) -> None:
+        normalized_prefix = prefix.rstrip("/")
+        if normalized_prefix and not normalized_prefix.startswith("/"):
+            normalized_prefix = f"/{normalized_prefix}"
+
+        self.prefix = normalized_prefix
+        self.name = name or (self.prefix.strip("/") or "root")
+        self.tags = tags or []
+        self.category = category or self.name
+        self._routes: List[BaseRoute] = []
+        self._routes_info: List[RouteInfo] = []
+        self._tools: List[RegisteredTool] = []
+        self._tools_info: List[ToolInfo] = []
+
+        if self not in _blueprints:
+            _blueprints.append(self)
+
+    @property
+    def routes(self) -> List[BaseRoute]:
+        return list(self._routes)
+
+    @property
+    def routes_info(self) -> List[RouteInfo]:
+        return list(self._routes_info)
+
+    @property
+    def tools(self) -> List[RegisteredTool]:
+        return list(self._tools)
+
+    @property
+    def tools_info(self) -> List[ToolInfo]:
+        return list(self._tools_info)
+
+    def route(
+        self,
+        path: str,
+        methods: Optional[List[str]] = None,
+        *,
+        name: Optional[str] = None,
+    ) -> Callable[[Callable], Callable]:
+        """Decorator registering a Starlette route."""
+        methods = methods or ["GET"]
+        route_name = name or ""
+
+        def deco(fn: Callable) -> Callable:
+            full_path = f"{self.prefix}{path}"
+            self._routes.append(Route(full_path, fn, methods=methods, name=route_name or None))
+            self._routes_info.append(
+                RouteInfo(path=full_path, methods=list(methods), name=route_name or fn.__name__)
+            )
+            return fn
+
+        return deco
+
+    def mount(self, path: str, app, *, name: Optional[str] = None) -> None:
+        """Register a Starlette Mount route."""
+        full_path = f"{self.prefix}{path}"
+        self._routes.append(Mount(full_path, app=app, name=name))
+        self._routes_info.append(RouteInfo(path=full_path, methods=None, name=name or app.__class__.__name__, kind="mount"))
+
+    def tool(
+        self,
+        name: Optional[str] = None,
+        *,
+        description: Optional[str] = None,
         http_path: Optional[str] = None,
         http_methods: Optional[List[str]] = None,
-    ):
-        """添加工具信息（内部方法）"""
-        info = {
-            "name": name,
-            "description": description
-        }
-        if http_path:
-            info["http_path"] = http_path
-            info["http_methods"] = http_methods or []
-        self._tools_info.append(info)
+    ) -> Callable[[Callable], Callable]:
+        """Decorator registering an MCP tool."""
 
-    def get_http_routes(self) -> List[Dict[str, Any]]:
-        """获取HTTP路由信息"""
-        return self._http_routes
+        def deco(fn: Callable) -> Callable:
+            tool_name = name or fn.__name__
+            self._tools.append((tool_name, fn))
+            self._tools_info.append(
+                ToolInfo(
+                    name=tool_name,
+                    description=description,
+                    http_path=f"{self.prefix}{http_path}" if http_path else None,
+                    http_methods=http_methods or [],
+                )
+            )
+            return fn
 
+        return deco
 
-class EndpointRegistry:
-    """端点注册器，管理所有端点"""
-    
-    def __init__(self):
-        self.endpoints: List[BaseEndpoint] = []
-    
-    def register(self, endpoint: BaseEndpoint):
-        """注册端点"""
-        self.endpoints.append(endpoint)
-        get_logger().info(f"📝 注册端点: {endpoint.__class__.__name__}")
-    
-    def get_all_routes(self) -> List[Route]:
-        """获取所有 Starlette 路由"""
-        all_routes = []
-        for endpoint in self.endpoints:
-            routes = endpoint.get_routes()
-            all_routes.extend(routes)
-        return all_routes
+    def install(self, mcp, asgi_app) -> None:
+        """Install collected routes and tools to the MCP/Starlette apps."""
+        for tool_name, fn in self._tools:
+            mcp.tool(name=tool_name)(fn)
 
-    def get_all_endpoints(self) -> List[BaseEndpoint]:
-        """获取所有注册的端点"""
-        return self.endpoints
-    
-    def register_all_mcp_tools(self, app: FastMCP):
-        """将所有端点的工具注册到 FastMCP 应用"""
-        total_tools = 0
-        for endpoint in self.endpoints:
-            endpoint.register_tools_to_mcp(app)
-            total_tools += len(endpoint.get_tools_info()["tools"])
-        
-        get_logger().info(f"✅ 所有MCP工具注册成功！共注册 {total_tools} 个工具")
-        return total_tools
-    
-    def get_tools_summary(self) -> Dict[str, Any]:
-        """获取所有工具的摘要信息"""
-        summary = {}
-        total_tools = 0
-        
-        for endpoint in self.endpoints:
-            info = endpoint.get_tools_info()
-            category = info["category"]
-            tools = info["tools"]
-            summary[category] = [tool["name"] for tool in tools]
-            total_tools += len(tools)
-        
+        asgi_app.router.routes.extend(self._routes)
+
+    def summary(self) -> Dict[str, Any]:
+        """Return metadata summary for this blueprint."""
         return {
-            "categories": summary,
-            "total_tools": total_tools,
-            "endpoints_count": len(self.endpoints)
+            "name": self.name,
+            "category": self.category,
+            "prefix": self.prefix,
+            "tags": self.tags,
+            "routes": [
+                {
+                    "path": info.path,
+                    "methods": info.methods or [],
+                    "kind": info.kind,
+                }
+                for info in self._routes_info
+            ],
+            "tools": [
+                {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "http_path": tool.http_path,
+                    "http_methods": tool.http_methods,
+                }
+                for tool in self._tools_info
+            ],
         }
-
-
-# 全局端点注册器实例
-endpoint_registry = EndpointRegistry()

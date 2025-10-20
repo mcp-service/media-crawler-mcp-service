@@ -66,7 +66,10 @@ class LoginService:
     async def persist_session(self, session: LoginSession):
         """持久化会话状态到 Redis"""
         session.touch()
-        await self._storage.save_session(session)
+        try:
+            await self._storage.save_session(session)
+        except Exception as exc:
+            logger.warning(f"[登录管理] 持久化会话失败: {exc}")
 
     # === 登录流程 ===
 
@@ -141,7 +144,11 @@ class LoginService:
 
     async def get_session_status(self, session_id: str) -> Dict[str, Any]:
         """获取登录会话状态"""
-        record = await self._storage.get_session(session_id)
+        try:
+            record = await self._storage.get_session(session_id)
+        except Exception as exc:
+            logger.error(f"[登录管理] 获取会话状态失败: {exc}")
+            raise LoginServiceError("会话状态暂不可用") from exc
         if not record:
             raise LoginServiceError("会话不存在")
 
@@ -164,7 +171,20 @@ class LoginService:
         results: List[Dict[str, Any]] = []
         for platform in self.get_supported_platforms():
             handler = self._get_handler(platform)
-            state = await self.refresh_platform_state(platform, force=False)
+            try:
+                state = await self.refresh_platform_state(platform, force=False)
+            except Exception as exc:
+                logger.warning(f"[登录管理] 刷新 {platform} 登录状态失败: {exc}")
+                results.append(
+                    {
+                        "platform": platform,
+                        "platform_name": handler.display_name,
+                        "is_logged_in": False,
+                        "last_login": "未知",
+                        "session_path": None,
+                    }
+                )
+                continue
             last_login = handler.format_last_login(state)
             if state.is_logged_in and not state.last_success_at:
                 last_login = "最近登录"
@@ -181,7 +201,11 @@ class LoginService:
 
     async def refresh_platform_state(self, platform: str, force: bool = False) -> PlatformLoginState:
         """刷新或获取平台登录状态（带缓存）"""
-        cached_state = await self._storage.get_platform_state(platform)
+        try:
+            cached_state = await self._storage.get_platform_state(platform)
+        except Exception as exc:
+            logger.warning(f"[登录管理] 读取 {platform} 登录状态缓存失败: {exc}")
+            cached_state = None
         if (
             not force
             and cached_state
@@ -196,7 +220,10 @@ class LoginService:
         if cached_state and state.is_logged_in and not state.last_success_at:
             state.last_success_at = cached_state.last_success_at or state.last_checked_at
 
-        await self._storage.save_platform_state(state)
+        try:
+            await self._storage.save_platform_state(state)
+        except Exception as exc:
+            logger.warning(f"[登录管理] 写入 {platform} 登录状态缓存失败: {exc}")
         return state
 
     async def get_cookie(self, platform: str) -> Optional[str]:

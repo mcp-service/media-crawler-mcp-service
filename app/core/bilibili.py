@@ -124,7 +124,7 @@ async def search(
     headless: Optional[bool] = None,
     **kwargs: Any,
 ) -> Dict[str, Any]:
-    logger.info("[bilibili.core.search] keywords=%s", keywords)
+    logger.info(f"[bilibili.core.search] keywords={keywords}")
 
     enable_save_media = kwargs.pop("enable_save_media", None)
     extra = dict(kwargs) if kwargs else {}
@@ -158,7 +158,7 @@ async def get_detail(
     headless: Optional[bool] = None,
     **kwargs: Any,
 ) -> Dict[str, Any]:
-    logger.info("[bilibili.core.get_detail] video_count=%s", len(video_ids))
+    logger.info(f"[bilibili.core.get_detail] video_count={len(video_ids)}")
 
     enable_save_media = kwargs.pop("enable_save_media", None)
     extra = dict(kwargs) if kwargs else {}
@@ -194,9 +194,8 @@ async def get_creator(
     **kwargs: Any,
 ) -> Dict[str, Any]:
     logger.info(
-        "[bilibili.core.get_creator] creator_count=%s creator_mode=%s",
-        len(creator_ids),
-        creator_mode,
+        f"[bilibili.core.get_creator] creator_count={len(creator_ids)} "
+        f"creator_mode={creator_mode}"
     )
 
     enable_save_media = kwargs.pop("enable_save_media", None)
@@ -238,11 +237,8 @@ async def search_with_time_range(
     **kwargs: Any,
 ) -> Dict[str, Any]:
     logger.info(
-        "[bilibili.core.search_with_time_range] keywords=%s start=%s end=%s limit=%s",
-        keywords,
-        start_day,
-        end_day,
-        daily_limit,
+        "[bilibili.core.search_with_time_range] "
+        f"keywords={keywords} start={start_day} end={end_day} limit={daily_limit}"
     )
 
     enable_save_media = kwargs.pop("enable_save_media", None)

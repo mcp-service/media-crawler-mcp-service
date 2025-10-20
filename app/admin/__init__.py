@@ -27,7 +27,7 @@ def create_admin_app() -> Starlette:
 
     async def index(request):
         """首页"""
-        return templates.TemplateResponse("index.html", {"request": request})
+        return templates.TemplateResponse(request, "index.html")
 
     async def health(request):
         """健康检查"""

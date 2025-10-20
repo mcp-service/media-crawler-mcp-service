@@ -2,7 +2,6 @@
 """
 MCP Resources - 提供可访问的资源
 """
-import os
 from pathlib import Path
 from fastmcp import FastMCP
 from app.providers.logger import get_logger
@@ -172,26 +171,36 @@ def register_resources(app: FastMCP) -> None:
         获取所有可用的API端点文档
         """
         import json
-        from app.api.endpoints.base import endpoint_registry
+        from app.api.endpoints.base import get_registered_blueprints
 
         endpoints_info = []
-        for endpoint in endpoint_registry.get_all_endpoints():
-            endpoints_info.append({
-                "prefix": endpoint.prefix,
-                "tags": endpoint.tags,
-                "routes": [
-                    {
-                        "path": f"{endpoint.prefix}{route.path}",
-                        "methods": route.methods
-                    }
-                    for route in endpoint.register_routes()
-                ]
-            })
+        for blueprint in get_registered_blueprints():
+            routes = [
+                {
+                    "path": route_info.path,
+                    "methods": route_info.methods or [],
+                    "kind": route_info.kind,
+                }
+                for route_info in blueprint.routes_info
+            ]
+            endpoints_info.append(
+                {
+                    "name": blueprint.name,
+                    "category": blueprint.category,
+                    "prefix": blueprint.prefix,
+                    "tags": blueprint.tags,
+                    "routes": routes,
+                }
+            )
 
-        return json.dumps({
-            "base_url": f"http://localhost:{global_settings.app.port}",
-            "endpoints": endpoints_info
-        }, ensure_ascii=False, indent=2)
+        return json.dumps(
+            {
+                "base_url": f"http://localhost:{global_settings.app.port}",
+                "endpoints": endpoints_info,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
 
     # 系统状态资源
     @app.resource("status://system")

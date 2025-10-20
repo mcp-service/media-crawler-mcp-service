@@ -1,6 +1,6 @@
 // MCP Tools Inspector
 
-const apiBase = '/admin/api/mcp';
+const apiBase = '/mcp';
 
 const defaultPayloads = {
     bili_search: { keywords: "示例关键词", max_notes: 5 },

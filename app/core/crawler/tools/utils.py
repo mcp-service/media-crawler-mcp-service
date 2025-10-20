@@ -22,6 +22,7 @@ def get_unix_time_from_time_str(time_str: str, fmt: str = "%Y-%m-%d %H:%M:%S") -
     try:
         return int(datetime.strptime(time_str, fmt).timestamp())
     except Exception:
-        logger.warning("[utils.get_unix_time_from_time_str] invalid time string: %s", time_str)
+        logger.warning(
+            f"[utils.get_unix_time_from_time_str] invalid time string: {time_str}"
+        )
         return get_unix_timestamp()
-

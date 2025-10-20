@@ -1,7 +1,7 @@
 // Admin Interface JavaScript
 
 // 全局配置
-const API_BASE = '/admin/api';
+const API_BASE = '/api';
 const PLATFORM_LABELS = {
     bili: '哔哩哔哩',
     xhs: '小红书',
@@ -16,20 +16,35 @@ let platformNames = {};
 let availablePlatformCodes = [];
 let loginSessionsCache = [];
 const optimisticLoggedPlatforms = new Set();
+let statusClearTimer = null;
 
 // 工具函数
 function showMessage(message, type = 'info') {
-    const messageDiv = document.getElementById('message');
-    if (!messageDiv) {
+    const statusEl = document.getElementById('page-status');
+    if (!statusEl) {
+        if (type === 'error') {
+            console.error(message);
+        } else {
+            console.log(message);
+        }
         return;
     }
-    messageDiv.className = `toast status status-${type}`;
-    messageDiv.textContent = message;
-    messageDiv.style.display = 'block';
 
-    setTimeout(() => {
-        messageDiv.style.display = 'none';
-    }, 3000);
+    if (statusClearTimer) {
+        clearTimeout(statusClearTimer);
+        statusClearTimer = null;
+    }
+
+    statusEl.textContent = message;
+    statusEl.title = message;
+    statusEl.className = `page-status status status-${type} is-visible`;
+
+    statusClearTimer = window.setTimeout(() => {
+        statusEl.textContent = '';
+        statusEl.title = '';
+        statusEl.className = 'page-status';
+        statusClearTimer = null;
+    }, 3200);
 }
 
 function showError(message) {

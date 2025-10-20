@@ -6,16 +6,19 @@
 <section class="login-page">
     <div class="login-headline">
         <span class="login-pill">登录控制</span>
-        <h2 class="login-title">多平台登录中心</h2>
+        <h2 class="login-title page-title">
+            多平台登录中心
+            <span id="page-status" class="page-status"></span>
+        </h2>
         <p class="login-description">
             支持扫码、Cookie、手机号等方式触发登录，并通过同一面板查看状态、刷新二维码或重新发起流程。
         </p>
         <div class="login-endpoints">
-            <span class="endpoint-chip">GET /admin/api/login/platforms</span>
-            <span class="endpoint-chip">POST /admin/api/login/start</span>
-            <span class="endpoint-chip">GET /admin/api/login/session/&lt;id&gt;</span>
-            <span class="endpoint-chip">GET /admin/api/login/status/&lt;platform&gt;</span>
-            <span class="endpoint-chip">POST /admin/api/login/logout/&lt;platform&gt;</span>
+            <span class="endpoint-chip">GET /api/login/platforms</span>
+            <span class="endpoint-chip">POST /api/login/start</span>
+            <span class="endpoint-chip">GET /api/login/session/&lt;id&gt;</span>
+            <span class="endpoint-chip">GET /api/login/status/&lt;platform&gt;</span>
+            <span class="endpoint-chip">POST /api/login/logout/&lt;platform&gt;</span>
         </div>
     </div>
     <div class="login-grid">

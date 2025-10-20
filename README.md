@@ -5,7 +5,7 @@
 ## 当前进展
 
 - ✅ B 站（bili）平台已完成服务化重构，提供 `bili_search`、`bili_detail`、`bili_creator`、`bili_search_time_range` 四个 MCP 工具。
-- ♻️ B 站登录体系焕新：`login/start` 立即返回二维码 + 会话 ID，后台原生轮询同一个浏览器上下文，`login/status` 为前端提供准实时状态。
+- ♻️ B 站登录体系焕新：`/api/login/start` 立即返回二维码 + 会话 ID，后台原生轮询同一个浏览器上下文，`/api/login/status` 为前端提供准实时状态。
 - 🚧 小红书、抖音、快手、微博、贴吧、知乎等平台正在迁移到统一 Service/Endpoint 架构，欢迎认领。
 
 ## 项目定位与非目标
@@ -17,7 +17,7 @@
 ## 前端改造规则（登录页起点）
 
 - 管理端 UI 改造默认采用 `react-bits` 提供的 Base 设计体系（配色、排版、组件语义保持一致）。
-- 登录交互仅依赖现有 `/admin/api/login/{platforms|start|session/{id}|status/{platform}|logout/{platform}|sessions}` 路由，不新增或改写后端接口。
+- 登录交互仅依赖现有 `/api/login/{platforms|start|session/{id}|status/{platform}|logout/{platform}|sessions}` 路由，不新增或改写后端接口。
 - 所有登录类型（二维码 / Cookie / 手机号）必须在同一界面内提供顺畅的切换体验，并保持清晰的状态提示与加载反馈。
 - 表单与按钮需兼顾可访问性（语义化标签、键盘操作、可见的聚焦状态），并覆盖移动/桌面双端布局。
 - 页面脚本在捕获异常时应给出可执行的修复建议，避免静默失败或无提示的错误状态。
@@ -63,9 +63,9 @@
 
 ## 登录流程概览
 
-1. `POST /admin/api/login/start`  
+1. `POST /api/login/start`  
    建立 Playwright 持久化上下文，生成并返回二维码（base64）与 `session_id`，同时启动后台协程轮询登录状态。
-2. `GET /admin/api/login/session/{session_id}`  
+2. `GET /api/login/session/{session_id}`  
    前端根据 `status`、`message` 与 `qr_code_base64` 判断展示二维码、提示超时或登录成功。
 3. 登陆成功后，同步刷新平台登录态缓存（基于同一浏览器实例写入的 user-data-dir），后端自动回收浏览器资源。
 
@@ -93,7 +93,7 @@ python main.py --transport both
 # 访问入口
 # MCP SSE:      http://localhost:9090/sse
 # 管理页面:     http://localhost:9090/admin
-# 状态概要 API: http://localhost:9090/admin/api/status/summary
+# 状态概要 API: http://localhost:9090/api/status/summary
 ```
 
 常用环境变量示例：
@@ -121,8 +121,8 @@ STORE__OUTPUT_DIR=./data
 ## 管理与状态接口
 
 - 管理页：`http://localhost:9090/admin`
-- 登录接口：`/admin/api/login/start`、`/admin/api/login/session/{session_id}`、`/admin/api/login/status/{platform}`、`/admin/api/login/logout/{platform}`
-- 系统状态：`/admin/api/status/{system|data|services|platforms|summary}`
+- 登录接口：`/api/login/start`、`/api/login/session/{session_id}`、`/api/login/status/{platform}`、`/api/login/logout/{platform}`
+- 系统状态：`/api/status/{system|data|services|platforms|summary}`
 
 ## 协作提示
 

@@ -10,9 +10,9 @@ from .base_model import BaseModel
 class BilibiliVideo(BaseModel):
     """B站视频模型"""
 
-    video_id = fields.BigIntField(unique=True, index=True, description="视频ID")
+    video_id = fields.BigIntField(unique=True, db_index=True, description="视频ID")
     video_url = fields.TextField(description="视频URL")
-    user_id = fields.BigIntField(index=True, description="UP主用户ID")
+    user_id = fields.BigIntField(db_index=True, description="UP主用户ID")
     nickname = fields.TextField(null=True, description="UP主昵称")
     avatar = fields.TextField(null=True, description="UP主头像URL")
     liked_count = fields.IntField(default=0, description="点赞数")
@@ -21,7 +21,7 @@ class BilibiliVideo(BaseModel):
     video_type = fields.TextField(null=True, description="视频类型")
     title = fields.TextField(null=True, description="视频标题")
     desc = fields.TextField(null=True, description="视频简介")
-    create_time = fields.BigIntField(index=True, description="视频发布时间戳")
+    create_time = fields.BigIntField(db_index=True, description="视频发布时间戳")
     disliked_count = fields.TextField(null=True, description="踩数")
     video_play_count = fields.TextField(null=True, description="播放量")
     video_favorite_count = fields.TextField(null=True, description="收藏数")
@@ -54,8 +54,8 @@ class BilibiliVideoComment(BaseModel):
     avatar = fields.TextField(null=True, description="用户头像URL")
     add_ts = fields.BigIntField(description="添加时间戳")
     last_modify_ts = fields.BigIntField(description="最后修改时间戳")
-    comment_id = fields.BigIntField(index=True, description="评论ID")
-    video_id = fields.BigIntField(index=True, description="所属视频ID")
+    comment_id = fields.BigIntField(db_index=True, description="评论ID")
+    video_id = fields.BigIntField(db_index=True, description="所属视频ID")
     content = fields.TextField(null=True, description="评论内容")
     create_time = fields.BigIntField(description="评论发布时间戳")
     sub_comment_count = fields.TextField(null=True, description="子评论数")
@@ -76,7 +76,7 @@ class BilibiliVideoComment(BaseModel):
 class BilibiliUpInfo(BaseModel):
     """B站UP主信息模型"""
 
-    user_id = fields.BigIntField(index=True, description="UP主用户ID")
+    user_id = fields.BigIntField(db_index=True, description="UP主用户ID")
     nickname = fields.TextField(null=True, description="UP主昵称")
     sex = fields.TextField(null=True, description="UP主性别")
     sign = fields.TextField(null=True, description="UP主签名")
@@ -101,8 +101,8 @@ class BilibiliUpInfo(BaseModel):
 class BilibiliContactInfo(BaseModel):
     """B站联系人信息模型（UP主和粉丝关系）"""
 
-    up_id = fields.BigIntField(index=True, description="UP主用户ID")
-    fan_id = fields.BigIntField(index=True, description="粉丝用户ID")
+    up_id = fields.BigIntField(db_index=True, description="UP主用户ID")
+    fan_id = fields.BigIntField(db_index=True, description="粉丝用户ID")
     up_name = fields.TextField(null=True, description="UP主昵称")
     fan_name = fields.TextField(null=True, description="粉丝昵称")
     up_sign = fields.TextField(null=True, description="UP主签名")
@@ -127,7 +127,7 @@ class BilibiliContactInfo(BaseModel):
 class BilibiliUpDynamic(BaseModel):
     """B站UP主动态模型"""
 
-    dynamic_id = fields.BigIntField(index=True, description="动态ID")
+    dynamic_id = fields.BigIntField(db_index=True, description="动态ID")
     user_id = fields.CharField(max_length=255, description="UP主用户ID")
     user_name = fields.TextField(null=True, description="UP主昵称")
     text = fields.TextField(null=True, description="动态文本内容")
