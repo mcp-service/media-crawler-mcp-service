@@ -9,7 +9,7 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional
 
-from app.config.settings import Platform, global_settings
+from app.config.settings import Platform, LoginType, global_settings
 from app.providers.logger import get_logger
 
 from .base import BaseLoginAdapter
@@ -39,10 +39,10 @@ class LoginService:
 
     def get_supported_platforms(self) -> List[str]:
         """获取支持的登录平台"""
-        enabled = {
-            (p.value if hasattr(p, "value") else str(p))
+        enabled = [
+            p.value
             for p in global_settings.platform.enabled_platforms
-        }
+        ]
         return [platform for platform in self._handlers if platform in enabled]
 
     def get_session(self, session_id: str) -> Optional[LoginSession]:
@@ -77,6 +77,28 @@ class LoginService:
         """启动登录流程"""
         platform = payload.platform
         handler = self._get_handler(platform)
+
+        # 如果不是 cookie 登录，先检查当前状态是否已登录，或可用缓存 Cookie
+        if payload.login_type != LoginType.COOKIE.value:
+            try:
+                current_state = await self.refresh_platform_state(platform, force=True)
+            except Exception as exc:
+                logger.warning(f"[登录管理] 刷新 {platform} 登录状态失败，继续登录流程: {exc}")
+                current_state = None
+            else:
+                if current_state and current_state.is_logged_in:
+                    return {
+                        "status": "success",
+                        "platform": platform,
+                        "login_type": payload.login_type,
+                        "message": "已检测到登录状态，无需重新登录",
+                        "session_id": None,
+                        "qr_code_base64": None,
+                        "qrcode_timestamp": 0.0,
+                    }
+                if current_state and current_state.cookie_str and not payload.cookie:
+                    payload.cookie = current_state.cookie_str
+                    payload.login_type = LoginType.COOKIE.value
 
         session_id = str(uuid.uuid4())
         session = LoginSession(id=session_id, platform=platform, login_type=payload.login_type)
@@ -168,35 +190,34 @@ class LoginService:
 
     async def list_sessions(self) -> List[Dict[str, Any]]:
         """列出所有平台的登录状态"""
-        results: List[Dict[str, Any]] = []
-        for platform in self.get_supported_platforms():
+        async def _collect(platform: str) -> Dict[str, Any]:
             handler = self._get_handler(platform)
             try:
                 state = await self.refresh_platform_state(platform, force=False)
             except Exception as exc:
                 logger.warning(f"[登录管理] 刷新 {platform} 登录状态失败: {exc}")
-                results.append(
-                    {
-                        "platform": platform,
-                        "platform_name": handler.display_name,
-                        "is_logged_in": False,
-                        "last_login": "未知",
-                        "session_path": None,
-                    }
-                )
-                continue
-            last_login = handler.format_last_login(state)
-            if state.is_logged_in and not state.last_success_at:
-                last_login = "最近登录"
-            results.append(
                 {
                     "platform": platform,
                     "platform_name": handler.display_name,
-                    "is_logged_in": state.is_logged_in,
-                    "last_login": last_login,
-                    "session_path": str(handler.user_data_dir) if state.is_logged_in else None,
+                    "is_logged_in": False,
+                    "last_login": "未知",
+                    "session_path": None,
                 }
-            )
+            last_login = handler.format_last_login(state)
+            if state.is_logged_in and not state.last_success_at:
+                last_login = "最近登录"
+            return {
+                "platform": platform,
+                "platform_name": handler.display_name,
+                "is_logged_in": state.is_logged_in,
+                "last_login": last_login,
+                "session_path": str(handler.user_data_dir) if state.is_logged_in else None,
+            }
+
+        tasks = [asyncio.create_task(_collect(platform)) for platform in self.get_supported_platforms()]
+        if not tasks:
+            return []
+        results: List[Dict[str, Any]] = await asyncio.gather(*tasks)
         return results
 
     async def refresh_platform_state(self, platform: str, force: bool = False) -> PlatformLoginState:

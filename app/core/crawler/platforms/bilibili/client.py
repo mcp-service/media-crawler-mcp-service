@@ -32,10 +32,46 @@ class BilibiliClient:  # 移除 AbstractApiClient 继承
     ):
         self.proxy = proxy
         self.timeout = timeout
-        self.headers = headers
+        self.headers = self._normalize_headers(self._with_default_headers(headers))
         self._host = "https://api.bilibili.com"
         self.playwright_page = playwright_page
         self.cookie_dict = cookie_dict
+
+    def _with_default_headers(self, headers: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """Merge caller headers with browser-like defaults."""
+        defaults: Dict[str, Any] = {
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "zh-CN,zh;q=0.9",
+            "Connection": "keep-alive",
+            "Origin": "https://www.bilibili.com",
+            "Referer": "https://www.bilibili.com",
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-site",
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            ),
+        }
+        merged: Dict[str, Any] = defaults.copy()
+        if headers:
+            merged.update(headers)
+        return merged
+
+    def _normalize_headers(self, headers: Optional[Dict[str, Any]]) -> Dict[str, Union[str, bytes]]:
+        """Filter out None values and coerce headers into httpx-supported types."""
+        if not headers:
+            return {}
+        normalized: Dict[str, Union[str, bytes]] = {}
+        for key, value in headers.items():
+            if value is None:
+                continue
+            if isinstance(value, bytes):
+                normalized[key] = value
+                continue
+            normalized[key] = str(value)
+        return normalized
 
     async def request(self, method, url, **kwargs) -> Any:
         async with httpx.AsyncClient(proxy=self.proxy) as client:

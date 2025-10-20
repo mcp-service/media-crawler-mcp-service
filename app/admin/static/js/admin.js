@@ -94,13 +94,11 @@ function renderPlatformSessions(sessions = []) {
         const groupContent = groupSessions.length
             ? groupSessions.map((session) => {
                 const displayName = session.platform_name || getPlatformDisplayName(session.platform) || session.platform;
-                const lastLogin = session.last_login || (session.is_logged_in ? '最近登录' : '从未登录');
 
                 return `
                     <div class="platform-chip ${session.is_logged_in ? 'is-active' : ''}">
                         <div class="platform-chip__details">
                             <span class="platform-chip__name">${displayName}</span>
-                            <span class="platform-chip__meta">${lastLogin}</span>
                         </div>
                         <div class="platform-chip__actions">
                             <span class="platform-chip__status">${group.statusLabel}</span>

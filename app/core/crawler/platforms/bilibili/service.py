@@ -60,7 +60,9 @@ def _build_common_context(
     viewport_height = options.pop("viewport_height", browser_defaults.viewport_height)
     max_concurrency = options.pop("max_concurrency", crawl_defaults.max_concurrency)
     crawl_interval = options.pop("crawl_interval", crawl_defaults.crawl_interval)
-    enable_sub_comments = options.pop("enable_sub_comments", crawl_defaults.enable_sub_comments)
+    enable_get_sub_comments = options.pop(
+        "enable_get_sub_comments", crawl_defaults.enable_get_sub_comments
+    )
     extra_payload = options
 
     browser = BrowserOptions(
@@ -78,7 +80,7 @@ def _build_common_context(
         max_notes_count=max_notes,
         max_comments_per_note=max_comments_per_note,
         enable_get_comments=enable_comments,
-        enable_sub_comments=enable_sub_comments,
+        enable_get_sub_comments=enable_get_sub_comments,
         enable_save_media=enable_save_media
         if enable_save_media is not None
         else getattr(store_defaults, "enable_save_media", False),
@@ -121,7 +123,6 @@ async def search(
     max_notes: int = 15,
     enable_comments: bool = True,
     max_comments_per_note: int = 10,
-    headless: Optional[bool] = None,
     **kwargs: Any,
 ) -> Dict[str, Any]:
     logger.info(f"[bilibili.core.search] keywords={keywords}")
@@ -134,7 +135,6 @@ async def search(
     context = _build_common_context(
         crawler_type=CrawlerType.SEARCH,
         keywords=keywords,
-        headless=headless,
         enable_comments=enable_comments,
         max_notes=max_notes,
         max_comments_per_note=max_comments_per_note,
@@ -233,7 +233,6 @@ async def search_with_time_range(
     daily_limit: bool = False,
     enable_comments: bool = True,
     max_comments_per_note: int = 10,
-    headless: Optional[bool] = None,
     **kwargs: Any,
 ) -> Dict[str, Any]:
     logger.info(
@@ -252,7 +251,6 @@ async def search_with_time_range(
     context = _build_common_context(
         crawler_type=CrawlerType.SEARCH,
         keywords=keywords,
-        headless=headless,
         enable_comments=enable_comments,
         max_notes=max_notes,
         max_comments_per_note=max_comments_per_note,

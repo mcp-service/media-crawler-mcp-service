@@ -162,7 +162,6 @@ class PlatformConfig(BaseModel):
         description="启用的平台列表，默认全部启用"
     )
     default_login_type: LoginType = LoginType.COOKIE
-    default_headless: bool = False
     default_save_format: SaveFormat = SaveFormat.JSON
 
     @field_validator("enabled_platforms", mode="before")
@@ -200,18 +199,7 @@ class PlatformConfig(BaseModel):
             return [Platform(p) if isinstance(p, str) else p for p in value]
         return list(Platform)
 
-    def model_post_init(self, __context: Any) -> None:
-        """Pydantic v2 post init hook"""
-        raw_value = getattr(self, "enabled_platforms", "all")
-        if isinstance(raw_value, str):
-            self.enabled_platforms = self.parse_enabled_platforms(raw_value)
-        elif isinstance(raw_value, list):
-            self.enabled_platforms = [
-                item if isinstance(item, Platform) else Platform(str(item))
-                for item in raw_value
-            ]
-        else:
-            self.enabled_platforms = list(Platform)
+
 class GlobalSettings(BaseSettings):
     """全局配置设置"""
     # 嵌套配置

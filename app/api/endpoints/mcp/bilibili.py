@@ -18,7 +18,7 @@ from app.api.scheme.bilibili_scheme import (
     BiliSearchTimeRangeRequest,
 )
 from app.config.settings import Platform
-from app.core.tools import bilibili as bili_tools
+from app.core.mcp_tools import bilibili as bili_tools
 from app.providers.logger import get_logger
 
 

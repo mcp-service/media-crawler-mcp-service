@@ -18,6 +18,7 @@ from app.config.settings import Platform, LoginType
 from app.core.crawler.platforms.base import AbstractLogin
 from app.providers.logger import get_logger
 
+from .client import BilibiliClient
 
 logger = get_logger()
 
@@ -88,11 +89,113 @@ class BilibiliLogin(AbstractLogin):
             logger.error(f"[BilibiliLogin.generate_qrcode] Failed to capture QR code: {exc}")
             return None
 
+    async def _build_api_client(self) -> Optional[BilibiliClient]:
+        """Create a lightweight Bilibili client based on current browser context."""
+        current_cookie = await self.browser_context.cookies()
+        if not current_cookie:
+            return None
+
+        cookie_dict = {cookie["name"]: cookie["value"] for cookie in current_cookie}
+        if not (cookie_dict.get("SESSDATA") or cookie_dict.get("DedeUserID")):
+            return None
+
+        cookie_str = "; ".join(f"{cookie['name']}={cookie['value']}" for cookie in current_cookie)
+        try:
+            user_agent = await self.context_page.evaluate("() => navigator.userAgent")
+        except Exception:
+            user_agent = "Mozilla/5.0"
+
+        client = BilibiliClient(
+            proxy=None,
+            headers={
+                "User-Agent": user_agent,
+                "Cookie": cookie_str,
+                "Origin": "https://www.bilibili.com",
+                "Referer": "https://www.bilibili.com",
+            },
+            playwright_page=self.context_page,
+            cookie_dict=cookie_dict,
+        )
+        return client
+
+    async def _check_login_via_page(self) -> bool:
+        """Fallback login detection using in-page fetch (avoids httpx风控)."""
+        try:
+            result = await self.context_page.evaluate(
+                """
+                async () => {
+                    try {
+                        const resp = await fetch("https://api.bilibili.com/x/web-interface/nav", {
+                            credentials: "include"
+                        });
+                        const status = resp.status;
+                        const text = await resp.text();
+                        let parsed = null;
+                        try { parsed = JSON.parse(text); } catch (err) { parsed = null; }
+                        return { status, body: parsed };
+                    } catch (error) {
+                        return { status: 0, error: String(error) };
+                    }
+                }
+                """
+            )
+        except Exception as exc:
+            logger.info(f"[BilibiliLogin._check_login_via_page] Evaluate failed: {exc}")
+            return False
+
+        if not isinstance(result, dict):
+            logger.info(f"[BilibiliLogin._check_login_via_page] Unexpected result type: {result}")
+            return False
+
+        body = result.get("body")
+        if isinstance(body, dict):
+            # Standard nav response: {"code": 0, "data": {..., "isLogin": true}}
+            if body.get("code") == 0:
+                payload = body.get("data") or {}
+                if isinstance(payload, dict) and payload.get("isLogin"):
+                    return True
+            # Some responses may inline isLogin at top-level
+            if body.get("isLogin"):
+                return True
+            logger.info(f"[BilibiliLogin._check_login_via_page] Response body without login flag: {body}")
+        else:
+            logger.info(f"[BilibiliLogin._check_login_via_page] Raw evaluate result: {result}")
+        return False
+
     async def has_valid_cookie(self) -> bool:
         """检测当前上下文是否已登录"""
-        current_cookie = await self.browser_context.cookies()
-        cookie_dict = {cookie["name"]: cookie["value"] for cookie in current_cookie}
-        return bool(cookie_dict.get("SESSDATA") or cookie_dict.get("DedeUserID"))
+        client = await self._build_api_client()
+        if not client:
+            return False
+        cookie_present = bool(client.cookie_dict.get("SESSDATA") and client.cookie_dict.get("DedeUserID"))
+        try:
+            if await client.pong():
+                return True
+        except Exception as exc:
+            reason = str(exc)
+            if cookie_present and ("request was banned" in reason or "412" in reason or "风控" in reason):
+                logger.debug("[BilibiliLogin.has_valid_cookie] Pong blocked by risk control, trying page fallback")
+                via_page = await self._check_login_via_page()
+                logger.debug(f"[BilibiliLogin.has_valid_cookie] Page fallback result: {via_page}")
+                return via_page or cookie_present
+            logger.debug(f"[BilibiliLogin.has_valid_cookie] Pong failed: {exc}")
+            return False
+
+        if not cookie_present:
+            return False
+
+        # httpx 返回未登录但 cookie 仍在，尝试使用浏览器上下文进行检测
+        via_page = await self._check_login_via_page()
+        logger.debug(f"[BilibiliLogin.has_valid_cookie] Additional page fallback result: {via_page}")
+        if via_page:
+            return True
+
+        # 最终兜底：Cookie 存在但无法请求接口时，认为已登录（与旧实现保持一致）
+        if cookie_present:
+            logger.debug("[BilibiliLogin.has_valid_cookie] Falling back to cookie presence result")
+            return True
+
+        return False
 
     async def wait_for_login(self, timeout: float = 180.0, interval: float = 1.0) -> bool:
         """轮询检测登录状态"""

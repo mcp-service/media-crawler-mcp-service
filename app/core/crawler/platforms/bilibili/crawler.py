@@ -47,6 +47,10 @@ class BilibiliCrawler(AbstractCrawler):
         self.store_options = context.store
         self.extra = context.extra or {}
         self.platform = context.platform
+        if isinstance(self.platform, Platform):
+            self.platform_code = self.platform.value
+        else:
+            self.platform_code = str(self.platform)
         self.crawler_type = context.crawler_type
 
         self.user_agent = self.browser.user_agent or self._get_default_user_agent()
@@ -439,7 +443,7 @@ class BilibiliCrawler(AbstractCrawler):
                 await self.bili_client.get_video_all_comments(
                     video_id=video_id,
                     crawl_interval=self.crawl.crawl_interval,
-                    is_fetch_sub_comments=self.crawl.enable_sub_comments,
+                    is_fetch_sub_comments=self.crawl.enable_get_sub_comments,
                     callback=callback,
                     max_count=self.crawl.max_comments_per_note,
                 )
@@ -779,7 +783,7 @@ class BilibiliCrawler(AbstractCrawler):
             user_data_dir = os.path.join(
                 os.getcwd(),
                 "browser_data",
-                f"{self.platform}"
+                self.platform_code
             )
 
             # 使用配置中的 headless 设置，确保登录和搜索时使用相同的模式

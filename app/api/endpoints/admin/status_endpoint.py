@@ -6,13 +6,15 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional
 
 import psutil
 from starlette.responses import JSONResponse
 
 from app.api.endpoints.base import MCPBlueprint
 from app.config.settings import Platform, global_settings
+from app.core.login import login_service
+from app.core.login.models import PlatformLoginState
 from app.providers.logger import get_logger
 
 
@@ -149,8 +151,18 @@ async def get_platforms_status(request):
             platform_code = platform_enum.value
             platform_name = platform_names.get(platform_code, platform_code)
 
-            browser_data_path = Path(f"browser_data/{platform_code}_user_data_dir")
-            has_session = browser_data_path.exists()
+            state: Optional[PlatformLoginState] = None
+            try:
+                state = await login_service.refresh_platform_state(platform_code, force=True)
+            except Exception as exc:
+                logger.warning(f"[状态监控] 刷新 {platform_code} 登录状态失败: {exc}")
+                state = None
+
+            is_logged_in = bool(state and state.is_logged_in)
+            has_session = is_logged_in
+            has_cookie = bool(state and (state.cookie_dict or state.cookie_str))
+            message = state.message if state else "状态不可用"
+            last_checked_at = state.last_checked_at if state else None
 
             platforms.append(
                 {
@@ -159,6 +171,10 @@ async def get_platforms_status(request):
                     "enabled": True,
                     "has_session": has_session,
                     "tools_available": True,
+                    "is_logged_in": is_logged_in,
+                    "message": message,
+                    "last_checked_at": last_checked_at,
+                    "has_cookie": has_cookie,
                 }
             )
 

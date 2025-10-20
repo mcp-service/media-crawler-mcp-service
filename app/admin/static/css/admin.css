@@ -324,41 +324,41 @@ select.form-control {
 }
 
 .status {
+  --status-dot-color: var(--admin-text-secondary);
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  gap: 0.4rem;
-  padding: 0.5rem 0.85rem;
-  border-radius: 999px;
+  gap: 0.45rem;
+  padding: 0;
+  border: none;
+  background: none;
   font-size: 0.85rem;
   font-weight: 600;
-  background: rgba(255, 255, 255, 0.9);
-  border: 1px solid rgba(17, 17, 17, 0.12);
-  color: var(--admin-text-secondary);
+  color: var(--status-dot-color);
+}
+
+.status::before {
+  content: "";
+  display: inline-flex;
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 999px;
+  background-color: var(--status-dot-color);
 }
 
 .status-success {
-  background: rgba(0, 0, 0, 0.05);
-  border-color: rgba(0, 0, 0, 0.22);
-  color: var(--admin-text-primary);
+  --status-dot-color: #16a34a;
 }
 
 .status-error {
-  background: rgba(0, 0, 0, 0.08);
-  border-color: rgba(0, 0, 0, 0.28);
-  color: var(--admin-text-primary);
+  --status-dot-color: #ef4444;
 }
 
 .status-warning {
-  background: rgba(0, 0, 0, 0.12);
-  border-color: rgba(0, 0, 0, 0.32);
-  color: #fff;
+  --status-dot-color: #f97316;
 }
 
 .status-info {
-  background: rgba(0, 0, 0, 0.04);
-  border-color: rgba(0, 0, 0, 0.18);
-  color: var(--admin-text-secondary);
+  --status-dot-color: #2563eb;
 }
 
 .page-title {
@@ -1323,28 +1323,13 @@ button.quick-action-card {
   text-align: center;
 }
 
-.login-page .status-success {
-  background: rgba(0, 0, 0, 0.05);
-  border-color: rgba(0, 0, 0, 0.22);
-  color: var(--admin-text-primary);
+.login-page .status {
+  justify-content: center;
+  color: var(--status-dot-color);
 }
 
-.login-page .status-error {
-  background: rgba(0, 0, 0, 0.08);
-  border-color: rgba(0, 0, 0, 0.28);
-  color: var(--admin-text-primary);
-}
-
-.login-page .status-warning {
-  background: rgba(0, 0, 0, 0.12);
-  border-color: rgba(0, 0, 0, 0.32);
-  color: #fff;
-}
-
-.login-page .status-info {
-  background: rgba(0, 0, 0, 0.04);
-  border-color: rgba(0, 0, 0, 0.18);
-  color: var(--admin-text-secondary);
+.login-page .status::before {
+  box-shadow: none;
 }
 
 .qr-display {

@@ -10,7 +10,7 @@ from starlette.applications import Starlette
 
 from app.api.endpoints.base import get_registered_blueprints
 from app.config.settings import Platform, global_settings
-from app.core.tools import list_tools, service_health, service_info, tool_info
+from app.core.mcp_tools import list_tools, service_health, service_info, tool_info
 from app.providers.logger import get_logger, init_logger
 
 
@@ -65,7 +65,6 @@ def create_app() -> Starlette:
     register_resources(app)
     logger.info("✅ MCP Prompts 和 Resources 注册成功")
 
-    http_app.state.mcp = app
     logger.info(f"✅ {global_settings.app.name} ASGI 应用创建完成")
     return http_app
 

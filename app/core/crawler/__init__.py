@@ -18,7 +18,7 @@ class LoginOptions:
 
 @dataclass
 class BrowserOptions:
-    headless: bool = False
+    headless: bool = True
     user_agent: Optional[str] = None
     proxy: Optional[str] = None
     viewport_width: int = 1920
@@ -33,7 +33,7 @@ class CrawlOptions:
     max_notes_count: int = 15
     max_comments_per_note: int = 10
     enable_get_comments: bool = True
-    enable_sub_comments: bool = False
+    enable_get_sub_comments: bool = False
     enable_save_media: bool = False
     max_concurrency: int = 5
     crawl_interval: float = 1.0

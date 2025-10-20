@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 from typing import List
 
-from app.core import bilibili as bilibili_core
+from app.core.crawler.platforms.bilibili import service as bilibili_core
 
 
 async def bili_search(
