@@ -3,7 +3,7 @@ import asyncio
 import os
 from asyncio import Task
 from functools import partial
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 from datetime import datetime, timedelta
 from pathlib import Path
 import pandas as pd
@@ -143,6 +143,9 @@ class BilibiliCrawler(AbstractCrawler):
                             await self.get_creator_videos(int(creator_id))
                     else:
                         await self.get_all_creator_details([int(cid) for cid in self.crawl.creator_ids])
+            elif self.crawler_type == CrawlerType.COMMENTS:
+                if self.crawl.note_ids:
+                    result = await self.fetch_comments_for_ids(self.crawl.note_ids)
 
             logger.info("[BilibiliCrawler.start] Bilibili Crawler finished")
             return result
@@ -201,203 +204,314 @@ class BilibiliCrawler(AbstractCrawler):
         """
         logger.info("[BilibiliCrawler.search_by_keywords] Begin search bilibili keywords")
 
-        bili_limit_count = 20  # B站固定每页数量
-        max_notes_count = max(self.crawl.max_notes_count, bili_limit_count)
-        start_page = self.crawl.start_page
+        def _safe_int(value, default):
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return default
+
+        page_size = max(1, min(_safe_int(self.extra.get("page_size"), 1), 50))
+        page_num = max(1, _safe_int(self.extra.get("page_num"), 1))
+        target_notes = max(1, self.crawl.max_notes_count)
+        start_page = max(1, self.crawl.start_page)
         keywords = self.crawl.keywords or ""
 
-        results = {}
+        results: Dict[str, List[Dict]] = {}
 
         for keyword in keywords.split(","):
             keyword = keyword.strip()
             if not keyword:
                 continue
 
-            logger.info(f"[BilibiliCrawler.search_by_keywords] Current search keyword: {keyword}")
-            page = 1
+            logger.info(
+                "[BilibiliCrawler.search_by_keywords] keyword=%s page_size=%s page_num=%s limit=%s",
+                keyword,
+                page_size,
+                page_num,
+                target_notes,
+            )
 
-            while (page - start_page + 1) * bili_limit_count <= max_notes_count:
-                if page < start_page:
-                    logger.info(f"[BilibiliCrawler.search_by_keywords] Skip page: {page}")
-                    page += 1
-                    continue
+            collected_items: List[Dict] = []
 
-                logger.info(f"[BilibiliCrawler.search_by_keywords] Searching keyword: {keyword}, page: {page}")
+            for page_index in range(page_num):
+                if len(collected_items) >= target_notes:
+                    break
+
+                page = start_page + page_index
+                logger.info(
+                    "[BilibiliCrawler.search_by_keywords] Searching keyword=%s page=%s",
+                    keyword,
+                    page,
+                )
 
                 try:
                     videos_res = await self.bili_client.search_video_by_keyword(
                         keyword=keyword,
                         page=page,
-                        page_size=bili_limit_count,
+                        page_size=page_size,
                         order=SearchOrderType.DEFAULT,
                         pubtime_begin_s="0",
                         pubtime_end_s="0",
                     )
-                    video_list: List[Dict] = videos_res.get("result", [])
+                except Exception as exc:
+                    logger.error(
+                        "[BilibiliCrawler.search_by_keywords] Error requesting page %s: %s",
+                        page,
+                        exc,
+                    )
+                    break
 
-                    if not video_list:
-                        logger.info(f"[BilibiliCrawler.search_by_keywords] No more videos for '{keyword}'")
+                video_list: List[Dict] = videos_res.get("result", [])[:page_size]
+                if not video_list:
+                    logger.info(
+                        "[BilibiliCrawler.search_by_keywords] No more videos for keyword '%s'",
+                        keyword,
+                    )
+                    break
+
+                semaphore = asyncio.Semaphore(self.crawl.max_concurrency)
+                tasks = [
+                    self.get_video_info_task(aid=item.get("aid"), bvid="", semaphore=semaphore)
+                    for item in video_list
+                ]
+                video_items = await asyncio.gather(*tasks)
+
+                for video_item in video_items:
+                    if not video_item:
+                        continue
+                    try:
+                        await bilibili_store.update_bilibili_video(
+                            video_item,
+                            crawler_type=self.crawler_label,
+                            source_keyword=keyword,
+                        )
+                        await bilibili_store.update_up_info(
+                            video_item,
+                            crawler_type=self.crawler_label,
+                        )
+                        await self.get_bilibili_video(video_item, semaphore)
+                    except Exception as store_exc:  # pragma: no cover - best effort logging
+                        logger.error(
+                            "[BilibiliCrawler.search_by_keywords] Store media error: %s",
+                            store_exc,
+                        )
+
+                    collected_items.append(video_item)
+                    if len(collected_items) >= target_notes:
                         break
 
-                    semaphore = asyncio.Semaphore(self.crawl.max_concurrency)
-                    task_list = [
-                        self.get_video_info_task(aid=video_item.get("aid"), bvid="", semaphore=semaphore)
-                        for video_item in video_list
-                    ]
-                    video_items = await asyncio.gather(*task_list)
+                await asyncio.sleep(self.crawl.crawl_interval)
 
-                    video_id_list: List[str] = []
-                    for video_item in video_items:
-                        if video_item:
-                            video_aid = video_item.get("View", {}).get("aid")
-                            if video_aid:
-                                video_id_list.append(str(video_aid))
-
-                            try:
-                                await bilibili_store.update_bilibili_video(
-                                    video_item,
-                                    crawler_type=self.crawler_label,
-                                    source_keyword=keyword,
-                                )
-                                await bilibili_store.update_up_info(
-                                    video_item,
-                                    crawler_type=self.crawler_label,
-                                )
-                                await self.get_bilibili_video(video_item, semaphore)
-                            except Exception as store_exc:  # pragma: no cover - best effort logging
-                                logger.error(f"[BilibiliCrawler.search_by_keywords] Store media error: {store_exc}")
-
-                            if keyword not in results:
-                                results[keyword] = []
-                            results[keyword].append(video_item)
-
-                    page += 1
-
-                    # 爬取间隔
-                    await asyncio.sleep(self.crawl.crawl_interval)
-                    logger.info(f"[BilibiliCrawler.search_by_keywords] Sleeping {self.crawl.crawl_interval}s after page {page-1}")
-
-                    # 获取评论
-                    await self.batch_get_video_comments(video_id_list, source_keyword=keyword)
-
-                except Exception as e:
-                    logger.error(f"[BilibiliCrawler.search_by_keywords] Error on page {page}: {e}")
-                    break
+            if collected_items:
+                results[keyword] = collected_items
 
         return results
 
     async def search_by_keywords_in_time_range(self, daily_limit: bool) -> Dict:
         """
-        按关键词和时间范围搜索
+        按关键词和时间范围搜索。
 
         Args:
-            daily_limit: 是否限制每天的爬取数量
+            daily_limit: 是否限制每天的爬取数量。
 
         Returns:
-            搜索结果字典
+            搜索结果字典。
         """
-        logger.info(f"[BilibiliCrawler.search_by_keywords_in_time_range] Begin search with daily_limit={daily_limit}")
+        logger.info(
+            f"[BilibiliCrawler.search_by_keywords_in_time_range] Begin search with daily_limit={daily_limit}"
+        )
 
-        bili_limit_count = 20
-        start_page = self.crawl.start_page
+        def _safe_int(value, default):
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return default
+
+        page_size = max(1, min(_safe_int(self.extra.get("page_size"), 1), 50))
+        page_num = max(1, _safe_int(self.extra.get("page_num"), 1))
+        target_notes = max(1, self.crawl.max_notes_count)
+
         keywords = self.crawl.keywords or ""
         start_day = self.crawl.start_day or datetime.now().strftime("%Y-%m-%d")
         end_day = self.crawl.end_day or datetime.now().strftime("%Y-%m-%d")
 
-        results = {}
+        results: Dict[str, List[Dict]] = {}
 
         for keyword in keywords.split(","):
             keyword = keyword.strip()
             if not keyword:
                 continue
 
-            logger.info(f"[BilibiliCrawler.search_by_keywords_in_time_range] Current keyword: {keyword}")
-            total_notes_crawled_for_keyword = 0
+            logger.info(
+                "[BilibiliCrawler.search_by_keywords_in_time_range] keyword=%s page_size=%s page_num=%s limit=%s",
+                keyword,
+                page_size,
+                page_num,
+                target_notes,
+            )
+            collected_items: List[Dict] = []
+            total_notes_for_keyword = 0
 
             for day in pd.date_range(start=start_day, end=end_day, freq="D"):
-                if daily_limit and total_notes_crawled_for_keyword >= self.crawl.max_notes_count:
-                    logger.info(f"[BilibiliCrawler] Reached max_notes_count limit for keyword '{keyword}'")
+                if len(collected_items) >= target_notes:
+                    break
+                if daily_limit and total_notes_for_keyword >= target_notes:
+                    logger.info(
+                        "[BilibiliCrawler] Reached total limit for keyword '%s'",
+                        keyword,
+                    )
                     break
 
                 pubtime_begin_s, pubtime_end_s = await self.get_pubtime_datetime(
                     start=day.strftime("%Y-%m-%d"),
-                    end=day.strftime("%Y-%m-%d")
+                    end=day.strftime("%Y-%m-%d"),
                 )
-                page = 1
-                notes_count_this_day = 0
 
-                while True:
-                    if notes_count_this_day >= self.crawl.max_notes_per_day:
-                        logger.info(f"[BilibiliCrawler] Reached max_notes_per_day limit for {day.date()}")
+                notes_this_day = 0
+
+                for page_index in range(page_num):
+                    if len(collected_items) >= target_notes:
                         break
-                    if daily_limit and total_notes_crawled_for_keyword >= self.crawl.max_notes_count:
+                    if daily_limit and total_notes_for_keyword >= target_notes:
                         break
+
+                    if notes_this_day >= self.crawl.max_notes_per_day:
+                        logger.info(
+                            "[BilibiliCrawler] Reached per-day limit for keyword '%s' on %s",
+                            keyword,
+                            day.date(),
+                        )
+                        break
+
+                    page = self.crawl.start_page + page_index
+                    logger.info(
+                        "[BilibiliCrawler] Searching keyword=%s date=%s page=%s",
+                        keyword,
+                        day.date(),
+                        page,
+                    )
 
                     try:
-                        logger.info(f"[BilibiliCrawler] Searching keyword: {keyword}, date: {day.date()}, page: {page}")
                         videos_res = await self.bili_client.search_video_by_keyword(
                             keyword=keyword,
                             page=page,
-                            page_size=bili_limit_count,
+                            page_size=page_size,
                             order=SearchOrderType.DEFAULT,
                             pubtime_begin_s=pubtime_begin_s,
                             pubtime_end_s=pubtime_end_s,
                         )
-                        video_list: List[Dict] = videos_res.get("result", [])
-
-                        if not video_list:
-                            logger.info(f"[BilibiliCrawler] No more videos for '{keyword}' on {day.date()}")
-                            break
-
-                        semaphore = asyncio.Semaphore(self.crawl.max_concurrency)
-                        task_list = [
-                            self.get_video_info_task(aid=video_item.get("aid"), bvid="", semaphore=semaphore)
-                            for video_item in video_list
-                        ]
-                        video_items = await asyncio.gather(*task_list)
-
-                        video_id_list: List[str] = []
-                        for video_item in video_items:
-                            if video_item:
-                                if daily_limit and total_notes_crawled_for_keyword >= self.crawl.max_notes_count:
-                                    break
-                                if notes_count_this_day >= self.crawl.max_notes_per_day:
-                                    break
-
-                                notes_count_this_day += 1
-                                total_notes_crawled_for_keyword += 1
-
-                                video_aid = video_item.get("View", {}).get("aid")
-                                if video_aid:
-                                    video_id_list.append(str(video_aid))
-
-                                try:
-                                    await bilibili_store.update_bilibili_video(
-                                        video_item,
-                                        crawler_type=self.crawler_label,
-                                        source_keyword=keyword,
-                                    )
-                                    await bilibili_store.update_up_info(
-                                        video_item,
-                                        crawler_type=self.crawler_label,
-                                    )
-                                    await self.get_bilibili_video(video_item, semaphore)
-                                except Exception as store_exc:  # pragma: no cover - log but continue
-                                    logger.error(f"[BilibiliCrawler.search_by_keywords_in_time_range] Store media error: {store_exc}")
-
-                                if keyword not in results:
-                                    results[keyword] = []
-                                results[keyword].append(video_item)
-
-                        page += 1
-                        await asyncio.sleep(self.crawl.crawl_interval)
-                        await self.batch_get_video_comments(video_id_list, source_keyword=keyword)
-
-                    except Exception as e:
-                        logger.error(f"[BilibiliCrawler] Error searching on {day.date()}: {e}")
+                    except Exception as exc:
+                        logger.error(
+                            "[BilibiliCrawler] Error searching keyword=%s on %s page=%s: %s",
+                            keyword,
+                            day.date(),
+                            page,
+                            exc,
+                        )
                         break
 
+                    video_list: List[Dict] = videos_res.get("result", [])[:page_size]
+                    if not video_list:
+                        logger.info(
+                            "[BilibiliCrawler] No more videos for keyword '%s' on %s",
+                            keyword,
+                            day.date(),
+                        )
+                        break
+
+                    semaphore = asyncio.Semaphore(self.crawl.max_concurrency)
+                    tasks = [
+                        self.get_video_info_task(aid=item.get("aid"), bvid="", semaphore=semaphore)
+                        for item in video_list
+                    ]
+                    video_items = await asyncio.gather(*tasks)
+
+                    for video_item in video_items:
+                        if not video_item:
+                            continue
+                        try:
+                            await bilibili_store.update_bilibili_video(
+                                video_item,
+                                crawler_type=self.crawler_label,
+                                source_keyword=keyword,
+                            )
+                            await bilibili_store.update_up_info(
+                                video_item,
+                                crawler_type=self.crawler_label,
+                            )
+                            await self.get_bilibili_video(video_item, semaphore)
+                        except Exception as store_exc:  # pragma: no cover - log but continue
+                            logger.error(
+                                "[BilibiliCrawler.search_by_keywords_in_time_range] Store media error: %s",
+                                store_exc,
+                            )
+
+                        collected_items.append(video_item)
+                        notes_this_day += 1
+                        total_notes_for_keyword += 1
+                        if len(collected_items) >= target_notes:
+                            break
+                        if daily_limit and total_notes_for_keyword >= target_notes:
+                            break
+
+                    await asyncio.sleep(self.crawl.crawl_interval)
+
+                if len(collected_items) >= target_notes:
+                    break
+
+            if collected_items:
+                results[keyword] = collected_items
+
         return results
+
+    async def fetch_comments_for_ids(self, video_ids: List[str]) -> Dict[str, Any]:
+        """
+        根据视频ID批量获取评论。
+        """
+        if not video_ids:
+            return {"comments": {}}
+
+        logger.info(
+            "[BilibiliCrawler.fetch_comments_for_ids] Fetching comments for %s videos",
+            len(video_ids),
+        )
+
+        semaphore = asyncio.Semaphore(self.crawl.max_concurrency)
+        results: Dict[str, List[Dict]] = {}
+
+        async def _fetch(video_id: str) -> List[Dict]:
+            async with semaphore:
+                try:
+                    comments = await self.bili_client.get_video_all_comments(
+                        video_id=video_id,
+                        crawl_interval=self.crawl.crawl_interval,
+                        is_fetch_sub_comments=self.crawl.enable_get_sub_comments,
+                        callback=None,
+                        max_count=self.crawl.max_comments_per_note,
+                    )
+                    return comments or []
+                except Exception as exc:
+                    logger.error(
+                        "[BilibiliCrawler.fetch_comments_for_ids] Failed to fetch comments for %s: %s",
+                        video_id,
+                        exc,
+                    )
+                    return []
+
+        tasks = {str(video_id): asyncio.create_task(_fetch(str(video_id))) for video_id in video_ids}
+
+        for video_id, task in tasks.items():
+            try:
+                results[video_id] = await task
+            except Exception as exc:  # pragma: no cover - unexpected failure
+                logger.error(
+                    "[BilibiliCrawler.fetch_comments_for_ids] Task failed for %s: %s",
+                    video_id,
+                    exc,
+                )
+                results[video_id] = []
+
+        return {"comments": results}
 
     async def batch_get_video_comments(self, video_id_list: List[str], source_keyword: str = ""):
         """

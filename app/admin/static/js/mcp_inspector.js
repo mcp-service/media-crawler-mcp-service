@@ -3,15 +3,17 @@
 const apiBase = '/mcp';
 
 const defaultPayloads = {
-    bili_search: { keywords: "示例关键词", max_notes: 5 },
-    bili_detail: { video_ids: ["BV1xx411c7mD"], max_comments_per_note: 5 },
+    bili_search: { keywords: "sample keyword", page_size: 1, page_num: 5 },
+    bili_detail: { video_ids: ["BV1xx411c7mD"] },
     bili_creator: { creator_ids: ["123456"], creator_mode: true },
     bili_search_time_range: {
-        keywords: "示例关键词",
+        keywords: "sample keyword",
         start_day: "2024-01-01",
         end_day: "2024-01-07",
-        max_notes: 10
-    }
+        page_size: 1,
+        page_num: 5
+    },
+    bili_comments: { video_ids: ["BV1xx411c7mD"], max_comments: 20, fetch_sub_comments: false }
 };
 
 const toolListElement = document.getElementById('tool-list');
@@ -64,7 +66,7 @@ function renderToolList(items) {
                     methods,
                 }))}'>
                     <span class="tool-name">${tool.name}</span>
-                    <span class="tool-meta">${routeLabel || '无 HTTP 路由'}</span>
+                    <span class="tool-meta">${routeLabel || 'No HTTP route'}</span>
                 </button>`;
         }).join('');
 
@@ -91,7 +93,7 @@ function renderToolList(items) {
 }
 
 async function loadTools() {
-    toolListElement.innerHTML = '<div class="status-placeholder">加载中...</div>';
+    toolListElement.innerHTML = '<div class="status-placeholder">加载?..</div>';
     try {
         const response = await fetch(`${apiBase}/tools`);
         if (!response.ok) {
@@ -108,7 +110,7 @@ async function loadTools() {
 function selectTool(tool, triggerBtn) {
     activeTool = tool;
     toolNameElement.textContent = tool.name;
-    toolDescriptionElement.textContent = tool.description || '无描述';
+    toolDescriptionElement.textContent = tool.description || 'No description';
     toolPathElement.textContent = tool.path || '-';
     toolMethodsElement.textContent = tool.methods && tool.methods.length ? tool.methods.join(', ') : 'POST';
     const sample = defaultPayloads[tool.name] || {};
@@ -140,7 +142,7 @@ async function executeTool() {
         return;
     }
 
-    responseStatusElement.textContent = '请求中...';
+    responseStatusElement.textContent = '请求?..';
     responseBodyElement.textContent = '';
 
     try {

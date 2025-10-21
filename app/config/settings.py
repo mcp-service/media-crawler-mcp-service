@@ -53,6 +53,7 @@ class CrawlerType(str, Enum):
     SEARCH = "search"      # 关键词搜索
     DETAIL = "detail"      # 指定内容详情
     CREATOR = "creator"    # 创作者主页
+    COMMENTS = "comments"  # 评论抓取
 
 
 class LoginType(str, Enum):

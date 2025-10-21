@@ -41,9 +41,9 @@ def _build_common_context(
     creator_ids: Optional[List[str]] = None,
     login_cookie: Optional[str] = None,
     headless: Optional[bool] = None,
-    enable_comments: bool = True,
-    max_notes: int = 15,
-    max_comments_per_note: int = 10,
+    enable_comments: bool = False,
+    max_notes: int = 0,
+    max_comments_per_note: int = 0,
     enable_save_media: Optional[bool] = None,
     extra: Optional[Dict[str, Any]] = None,
 ) -> CrawlerContext:
@@ -60,10 +60,15 @@ def _build_common_context(
     viewport_height = options.pop("viewport_height", browser_defaults.viewport_height)
     max_concurrency = options.pop("max_concurrency", crawl_defaults.max_concurrency)
     crawl_interval = options.pop("crawl_interval", crawl_defaults.crawl_interval)
-    enable_get_sub_comments = options.pop(
-        "enable_get_sub_comments", crawl_defaults.enable_get_sub_comments
-    )
-    extra_payload = options
+
+    if "fetch_sub_comments" in options:
+        enable_get_sub_comments = bool(options.pop("fetch_sub_comments"))
+    else:
+        enable_get_sub_comments = options.pop(
+            "enable_get_sub_comments", crawl_defaults.enable_get_sub_comments
+        )
+
+    max_notes_value = max(max_notes, 0) or crawl_defaults.max_notes_count
 
     browser = BrowserOptions(
         headless=headless if headless is not None else browser_defaults.headless,
@@ -77,7 +82,7 @@ def _build_common_context(
         keywords=keywords,
         note_ids=note_ids,
         creator_ids=creator_ids,
-        max_notes_count=max_notes,
+        max_notes_count=max_notes_value,
         max_comments_per_note=max_comments_per_note,
         enable_get_comments=enable_comments,
         enable_get_sub_comments=enable_get_sub_comments,
@@ -112,7 +117,7 @@ def _build_common_context(
         browser=browser,
         crawl=crawl,
         store=store,
-        extra=extra_payload,
+        extra=options,
     )
     return context
 
@@ -120,24 +125,30 @@ def _build_common_context(
 async def search(
     *,
     keywords: str,
-    max_notes: int = 15,
-    enable_comments: bool = True,
-    max_comments_per_note: int = 10,
+    page_size: int = 1,
+    page_num: int = 1,
+    limit: Optional[int] = None,
+    headless: Optional[bool] = None,
     **kwargs: Any,
 ) -> Dict[str, Any]:
     logger.info(f"[bilibili.core.search] keywords={keywords}")
 
     enable_save_media = kwargs.pop("enable_save_media", None)
     extra = dict(kwargs) if kwargs else {}
+    extra["page_size"] = page_size
+    extra["page_num"] = page_num
+
+    total_limit = limit if limit is not None else page_size * page_num
 
     login_cookie = await login_service.get_cookie(Platform.BILIBILI.value)
 
     context = _build_common_context(
         crawler_type=CrawlerType.SEARCH,
         keywords=keywords,
-        enable_comments=enable_comments,
-        max_notes=max_notes,
-        max_comments_per_note=max_comments_per_note,
+        headless=headless,
+        enable_comments=False,
+        max_notes=total_limit,
+        max_comments_per_note=0,
         enable_save_media=enable_save_media,
         extra=extra,
         login_cookie=login_cookie,
@@ -150,11 +161,61 @@ async def search(
         await crawler.close()
 
 
+async def search_with_time_range(
+    *,
+    keywords: str,
+    start_day: str,
+    end_day: str,
+    page_size: int = 1,
+    page_num: int = 1,
+    limit: Optional[int] = None,
+    max_notes_per_day: int = 50,
+    daily_limit: bool = False,
+    headless: Optional[bool] = None,
+    **kwargs: Any,
+) -> Dict[str, Any]:
+    logger.info(
+        "[bilibili.core.search_with_time_range] "
+        f"keywords={keywords} start={start_day} end={end_day} limit={daily_limit}"
+    )
+
+    enable_save_media = kwargs.pop("enable_save_media", None)
+    extra = dict(kwargs) if kwargs else {}
+    extra["page_size"] = page_size
+    extra["page_num"] = page_num
+    extra["search_mode"] = "daily_limit_in_time_range" if daily_limit else "all_in_time_range"
+
+    total_limit = limit if limit is not None else page_size * page_num
+
+    login_cookie = await login_service.get_cookie(Platform.BILIBILI.value)
+
+    context = _build_common_context(
+        crawler_type=CrawlerType.SEARCH,
+        keywords=keywords,
+        headless=headless,
+        enable_comments=False,
+        max_notes=total_limit,
+        max_comments_per_note=0,
+        enable_save_media=enable_save_media,
+        extra=extra,
+        login_cookie=login_cookie,
+    )
+
+    context.crawl.start_day = start_day
+    context.crawl.end_day = end_day
+    context.crawl.max_notes_per_day = max_notes_per_day
+    context.crawl.search_mode = extra["search_mode"]
+
+    crawler = BilibiliCrawler(context)
+    try:
+        return await crawler.start()
+    finally:
+        await crawler.close()
+
+
 async def get_detail(
     *,
     video_ids: List[str],
-    enable_comments: bool = True,
-    max_comments_per_note: int = 10,
     headless: Optional[bool] = None,
     **kwargs: Any,
 ) -> Dict[str, Any]:
@@ -169,9 +230,9 @@ async def get_detail(
         crawler_type=CrawlerType.DETAIL,
         note_ids=video_ids,
         headless=headless,
-        enable_comments=enable_comments,
+        enable_comments=False,
         max_notes=len(video_ids),
-        max_comments_per_note=max_comments_per_note,
+        max_comments_per_note=0,
         enable_save_media=enable_save_media,
         extra=extra,
         login_cookie=login_cookie,
@@ -187,8 +248,6 @@ async def get_detail(
 async def get_creator(
     *,
     creator_ids: List[str],
-    enable_comments: bool = True,
-    max_comments_per_note: int = 10,
     creator_mode: bool = True,
     headless: Optional[bool] = None,
     **kwargs: Any,
@@ -208,9 +267,9 @@ async def get_creator(
         crawler_type=CrawlerType.CREATOR,
         creator_ids=creator_ids,
         headless=headless,
-        enable_comments=enable_comments,
+        enable_comments=False,
         max_notes=len(creator_ids),
-        max_comments_per_note=max_comments_per_note,
+        max_comments_per_note=0,
         enable_save_media=enable_save_media,
         extra=extra,
         login_cookie=login_cookie,
@@ -223,46 +282,35 @@ async def get_creator(
         await crawler.close()
 
 
-async def search_with_time_range(
+async def fetch_comments(
     *,
-    keywords: str,
-    start_day: str,
-    end_day: str,
-    max_notes: int = 15,
-    max_notes_per_day: int = 50,
-    daily_limit: bool = False,
-    enable_comments: bool = True,
-    max_comments_per_note: int = 10,
+    video_ids: List[str],
+    max_comments: int = 20,
+    fetch_sub_comments: bool = False,
+    headless: Optional[bool] = None,
     **kwargs: Any,
 ) -> Dict[str, Any]:
     logger.info(
-        "[bilibili.core.search_with_time_range] "
-        f"keywords={keywords} start={start_day} end={end_day} limit={daily_limit}"
+        f"[bilibili.core.fetch_comments] video_count={len(video_ids)} "
+        f"max_comments={max_comments} fetch_sub={fetch_sub_comments}"
     )
 
-    enable_save_media = kwargs.pop("enable_save_media", None)
     extra = dict(kwargs) if kwargs else {}
-    extra["search_mode"] = (
-        "daily_limit_in_time_range" if daily_limit else "all_in_time_range"
-    )
+    extra["fetch_sub_comments"] = fetch_sub_comments
 
     login_cookie = await login_service.get_cookie(Platform.BILIBILI.value)
 
     context = _build_common_context(
-        crawler_type=CrawlerType.SEARCH,
-        keywords=keywords,
-        enable_comments=enable_comments,
-        max_notes=max_notes,
-        max_comments_per_note=max_comments_per_note,
-        enable_save_media=enable_save_media,
+        crawler_type=CrawlerType.COMMENTS,
+        note_ids=video_ids,
+        headless=headless,
+        enable_comments=True,
+        max_notes=len(video_ids),
+        max_comments_per_note=max_comments,
+        enable_save_media=None,
         extra=extra,
         login_cookie=login_cookie,
     )
-
-    context.crawl.start_day = start_day
-    context.crawl.end_day = end_day
-    context.crawl.max_notes_per_day = max_notes_per_day
-    context.crawl.search_mode = extra["search_mode"]
 
     crawler = BilibiliCrawler(context)
     try:

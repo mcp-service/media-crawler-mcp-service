@@ -34,24 +34,26 @@ class BiliSearchRequest(_BaseCrawlerRequest):
     """Bilibili 搜索请求"""
 
     keywords: str = Field(..., description="搜索关键词，多个关键词用逗号分隔")
-    max_notes: int = Field(default=15, ge=1, description="最大作品数量")
-    enable_comments: bool = Field(default=True, description="是否抓取评论")
-    max_comments_per_note: int = Field(default=10, ge=0, description="单个作品最大评论数")
+    page_size: int = Field(default=1, ge=1, description="单页作品数量")
+    page_num: int = Field(default=1, ge=1, description="抓取页数")
+    limit: Optional[int] = Field(default=None, ge=1, description="返回作品上限")
 
     @model_validator(mode="after")
-    def validate_keywords(self) -> "BiliSearchRequest":
+    def normalize(self) -> "BiliSearchRequest":
         cleaned = ",".join(filter(None, [kw.strip() for kw in self.keywords.split(",")]))
         if not cleaned:
             raise ValueError("keywords 不能为空")
         self.keywords = cleaned
+        if self.limit is None:
+            self.limit = self.page_size * self.page_num
         return self
 
     def to_service_params(self) -> Dict[str, Any]:
         params: Dict[str, Any] = {
             "keywords": self.keywords,
-            "max_notes": self.max_notes,
-            "enable_comments": self.enable_comments,
-            "max_comments_per_note": self.max_comments_per_note,
+            "page_size": self.page_size,
+            "page_num": self.page_num,
+            "limit": self.limit,
         }
         params.update(self._collect_common_params())
         return params
@@ -61,8 +63,6 @@ class BiliDetailRequest(_BaseCrawlerRequest):
     """Bilibili 指定视频详情请求"""
 
     video_ids: List[str] = Field(..., min_length=1, description="视频ID列表（BV号或AV号）")
-    enable_comments: bool = Field(default=True, description="是否抓取评论")
-    max_comments_per_note: int = Field(default=10, ge=0, description="单个作品最大评论数")
 
     @model_validator(mode="after")
     def sanitize_ids(self) -> "BiliDetailRequest":
@@ -73,11 +73,7 @@ class BiliDetailRequest(_BaseCrawlerRequest):
         return self
 
     def to_service_params(self) -> Dict[str, Any]:
-        params: Dict[str, Any] = {
-            "video_ids": self.video_ids,
-            "enable_comments": self.enable_comments,
-            "max_comments_per_note": self.max_comments_per_note,
-        }
+        params: Dict[str, Any] = {"video_ids": self.video_ids}
         params.update(self._collect_common_params())
         return params
 
@@ -86,8 +82,6 @@ class BiliCreatorRequest(_BaseCrawlerRequest):
     """Bilibili 创作者内容请求"""
 
     creator_ids: List[str] = Field(..., min_length=1, description="创作者ID列表")
-    enable_comments: bool = Field(default=True, description="是否抓取评论")
-    max_comments_per_note: int = Field(default=10, ge=0, description="单个作品最大评论数")
     creator_mode: bool = Field(default=True, description="True=抓取作品，False=抓取创作者信息")
 
     @model_validator(mode="after")
@@ -101,8 +95,6 @@ class BiliCreatorRequest(_BaseCrawlerRequest):
     def to_service_params(self) -> Dict[str, Any]:
         params: Dict[str, Any] = {
             "creator_ids": self.creator_ids,
-            "enable_comments": self.enable_comments,
-            "max_comments_per_note": self.max_comments_per_note,
             "creator_mode": self.creator_mode,
         }
         params.update(self._collect_common_params())
@@ -127,4 +119,29 @@ class BiliSearchTimeRangeRequest(BiliSearchRequest):
                 "daily_limit": self.daily_limit,
             }
         )
+        return params
+
+
+class BiliCommentsRequest(_BaseCrawlerRequest):
+    """Bilibili 评论抓取请求"""
+
+    video_ids: List[str] = Field(..., min_length=1, description="视频ID列表（BV号或AV号）")
+    max_comments: int = Field(default=20, ge=1, description="每条作品最大评论数")
+    fetch_sub_comments: bool = Field(default=False, description="是否抓取二级评论")
+
+    @model_validator(mode="after")
+    def sanitize_ids(self) -> "BiliCommentsRequest":
+        cleaned = [vid.strip() for vid in self.video_ids if vid and vid.strip()]
+        if not cleaned:
+            raise ValueError("视频ID列表不能为空")
+        self.video_ids = cleaned
+        return self
+
+    def to_service_params(self) -> Dict[str, Any]:
+        params: Dict[str, Any] = {
+            "video_ids": self.video_ids,
+            "max_comments": self.max_comments,
+            "fetch_sub_comments": self.fetch_sub_comments,
+        }
+        params.update(self._collect_common_params())
         return params

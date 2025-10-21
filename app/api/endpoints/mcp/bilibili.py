@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Bilibili (B站) 平台端点与 MCP 工具注册。"""
+"""Bilibili MCP endpoints and tool registrations."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from starlette.responses import JSONResponse
 from app.api.endpoints.base import MCPBlueprint
 from app.api.scheme import error_codes, jsonify_response
 from app.api.scheme.bilibili_scheme import (
+    BiliCommentsRequest,
     BiliCreatorRequest,
     BiliDetailRequest,
     BiliSearchRequest,
@@ -26,7 +27,7 @@ logger = get_logger()
 bp = MCPBlueprint(
     prefix=f"/{Platform.BILIBILI.value}",
     name=Platform.BILIBILI.value,
-    tags=["B站"],
+    tags=["bili"],
     category=Platform.BILIBILI.value,
 )
 
@@ -69,7 +70,7 @@ async def bili_search_http(request):
         result = await bili_tools.bili_search(**params)
         return jsonify_response(_as_dict(result))
     except Exception as exc:  # pragma: no cover - runtime safeguard
-        logger.error(f"[Bilibili.search] 执行失败: {exc}")
+        logger.error(f"[Bilibili.search] failed: {exc}")
         return _server_error(f"bilibili 搜索失败: {exc}")
 
 
@@ -89,7 +90,7 @@ async def bili_detail_http(request):
         result = await bili_tools.bili_detail(**params)
         return jsonify_response(_as_dict(result))
     except Exception as exc:  # pragma: no cover
-        logger.error(f"[Bilibili.detail] 执行失败: {exc}")
+        logger.error(f"[Bilibili.detail] failed: {exc}")
         return _server_error(f"bilibili 详情获取失败: {exc}")
 
 
@@ -109,7 +110,7 @@ async def bili_creator_http(request):
         result = await bili_tools.bili_creator(**params)
         return jsonify_response(_as_dict(result))
     except Exception as exc:  # pragma: no cover
-        logger.error(f"[Bilibili.creator] 执行失败: {exc}")
+        logger.error(f"[Bilibili.creator] failed: {exc}")
         return _server_error(f"bilibili 创作者抓取失败: {exc}")
 
 
@@ -129,8 +130,28 @@ async def bili_search_time_range_http(request):
         result = await bili_tools.bili_search_time_range(**params)
         return jsonify_response(_as_dict(result))
     except Exception as exc:  # pragma: no cover
-        logger.error(f"[Bilibili.search_time_range] 执行失败: {exc}")
+        logger.error(f"[Bilibili.search_time_range] failed: {exc}")
         return _server_error(f"bilibili 时间范围搜索失败: {exc}")
+
+
+@bp.route("/comments", methods=["POST"])
+async def bili_comments_http(request):
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    try:
+        req = BiliCommentsRequest.model_validate(payload)
+    except ValidationError as exc:
+        return _validation_error(exc)
+
+    params = _to_tool_params(req.to_service_params())
+    try:
+        result = await bili_tools.bili_comments(**params)
+        return jsonify_response(_as_dict(result))
+    except Exception as exc:  # pragma: no cover
+        logger.error(f"[Bilibili.comments] failed: {exc}")
+        return _server_error(f"bilibili 评论抓取失败: {exc}")
 
 
 bp.tool(
@@ -161,9 +182,16 @@ bp.tool(
     http_methods=["POST"],
 )(bili_tools.bili_search_time_range)
 
+bp.tool(
+    "bili_comments",
+    description="按视频 ID 抓取 Bilibili 评论",
+    http_path="/comments",
+    http_methods=["POST"],
+)(bili_tools.bili_comments)
+
 
 def _to_tool_params(params: Dict[str, Any]) -> Dict[str, Any]:
-    """调整参数名称以匹配工具函数签名。"""
+    """Adjust parameter names so they match tool signatures."""
     adjusted = dict(params)
     if "enable_save_media" in adjusted:
         adjusted["save_media"] = adjusted.pop("enable_save_media")
@@ -171,7 +199,7 @@ def _to_tool_params(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _as_dict(result: str | Dict[str, Any]) -> Dict[str, Any]:
-    """确保工具返回为 JSON 字典。"""
+    """Ensure tool responses are JSON objects."""
     if isinstance(result, dict):
         return result
     try:

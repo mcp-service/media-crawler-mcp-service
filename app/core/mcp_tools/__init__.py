@@ -1,7 +1,13 @@
 # -*- coding: utf-8 -*-
 """核心 MCP 工具聚合。"""
 
-from .bilibili import bili_creator, bili_detail, bili_search, bili_search_time_range
+from .bilibili import (
+    bili_comments,
+    bili_creator,
+    bili_detail,
+    bili_search,
+    bili_search_time_range,
+)
 from .service import list_tools, service_health, service_info, tool_info
 
 __all__ = [
@@ -9,6 +15,7 @@ __all__ = [
     "bili_detail",
     "bili_creator",
     "bili_search_time_range",
+    "bili_comments",
     "service_info",
     "service_health",
     "list_tools",
