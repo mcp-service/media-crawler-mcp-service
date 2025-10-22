@@ -4,120 +4,357 @@
 
 ## 1. 项目概览
 
-- 目标：将 MediaCrawler 的能力以 MCP（Model Context Protocol）方式暴露，便于 Claude/ChatGPT 等 AI 助手直接调用。
-- 技术栈：FastMCP + Starlette（SSE 集成）、Playwright、Pydantic Settings。
-- 运行模式：`STDIO`、`SSE` 或两者同时（`--transport both`）。
-- 已完成平台：Bilibili（4 个工具）；其它平台（xhs/dy/ks/wb/tieba/zhihu）处于规划中。
+**目标**：将 MediaCrawler 的能力以 MCP（Model Context Protocol）方式暴露，便于 Claude/ChatGPT 等 AI 助手直接调用。
 
-非目标（明确约束）：
-- 面向个人效率的单用户/单账号使用场景。
-- 不做多账号池/多租户/分布式集群等复杂特性。
-- 保持架构清晰，提供可扩展点，鼓励他人自行按需扩展。
+**技术栈**：
+- FastMCP + Starlette（SSE 集成）
+- Playwright（浏览器自动化）
+- Pydantic Settings（配置管理）
+- httpx（HTTP 客户端）
+- Redis（登录状态缓存）
+
+**运行模式**：`Http-streamble`。
+
+**已完成平台：Bilibili（生产就绪 ✅）**
+- 5 个 MCP 工具（search/detail/creator/search_time_range/comments）
+- 完整的登录状态管理（Redis 缓存 + 持久化 Cookie）
+- 数据存储支持（JSON/CSV/SQLite/DB）
+- 风控优化（登录状态缓存、请求间隔控制）
+
+**规划中平台**：xhs/dy/ks/wb/tieba/zhihu
+
+**非目标（明确约束）**：
+- 面向个人效率的单用户/单账号使用场景
+- 不做多账号池/多租户/分布式集群等复杂特性
+- 保持架构清晰，提供可扩展点，鼓励他人自行按需扩展
 
 ## 2. 架构总览
 
-核心流转（高层）：
-- MCP 工具调用 → Endpoint（MCP 工具注册点）→ Service（服务层）→ Crawler（Playwright 驱动的抓取逻辑）→ 数据输出到 `data/`
-- SSE 与 Starlette 共用同一进程，`create_app()` 内对 FastMCP 的 `run_sse_async` 做了轻度补丁以挂载路由。
+### 2.1 核心流转（数据流）
 
-关键模块（文件路径）：
+```
+MCP 工具调用
+    ↓
+MCP Tools 层 (app/core/mcp_tools/bilibili.py)
+    - 参数验证与转换
+    - 结果结构化（Pydantic Models）
+    ↓
+Service 层 (app/core/crawler/platforms/bilibili/service.py)
+    - 构建 CrawlerContext（配置聚合）
+    - 生命周期管理（crawler.start/close）
+    - 登录状态获取（login_service）
+    ↓
+Crawler 层 (app/core/crawler/platforms/bilibili/crawler.py)
+    - 浏览器启动与管理
+    - 登录流程编排（优先缓存，避免风控）
+    - 业务逻辑调度（search/detail/creator/comments）
+    ↓
+Client 层 (app/core/crawler/platforms/bilibili/client.py)
+    - HTTP API 调用（httpx）
+    - WBI 签名（Bilibili 防爬）
+    - Cookie 管理与更新
+    ↓
+Store 层 (app/core/crawler/store/bilibili/)
+    - 数据持久化（JSON/CSV/SQLite/DB）
+    - 媒体文件保存
+```
+
+### 2.2 关键模块（文件路径）
+
+**应用入口与配置**：
 - 应用入口：`main.py`
-- 应用工厂与路由挂载：`app/api_service.py`
-- 端点基类与注册器：`app/api/endpoints/base.py`
-- 已实现平台端点：`app/api/endpoints/mcp/bilibili.py`
-- B 站服务层：`app/crawler/platforms/bilibili/service.py`
-- B 站爬虫层：`app/crawler/platforms/bilibili/crawler.py`（若存在）
-- 管理页与状态端点：
-  - 管理页：`app/api/endpoints/admin/admin_page_endpoint.py`
-  - 配置：`app/api/endpoints/admin/config_endpoint.py`
-  - 状态：`app/api/endpoints/admin/status_endpoint.py`
-  - 登录：`app/api/endpoints/login/login_endpoint.py`
+- 应用工厂：`app/api_service.py`（FastMCP + Starlette 集成）
 - 配置系统：`app/config/settings.py`（Pydantic Settings，`env_nested_delimiter='__'`）
-- 日志：`app/providers/logger.py`
-- 缓存：`app/providers/cache/*`
 
-SSE 集成要点：
-- 见 `app/api_service.py:_patch_fastmcp_sse()`；在 `/sse` 提供 SSE，挂载 `/messages/` 与各业务路由。
+**Bilibili 平台完整架构**：
+```
+app/core/crawler/platforms/bilibili/
+├── __init__.py
+├── crawler.py          # 爬虫主逻辑（搜索/详情/创作者/评论）
+├── service.py          # 服务层（Context 构建与生命周期管理）
+├── client.py           # HTTP 客户端（API 调用 + WBI 签名）
+├── login.py            # 登录流程（QRCODE/COOKIE/PHONE）
+├── field.py            # 枚举定义（SearchOrderType/CommentOrderType）
+├── help.py             # 辅助函数（BilibiliSign/parse_video_info）
+└── exception.py        # 异常定义（DataFetchError）
+
+app/core/crawler/store/bilibili/
+├── __init__.py
+├── _store_impl.py      # 存储实现（JSON/CSV/SQLite/DB）
+└── bilibilli_store_media.py  # 媒体文件存储
+```
+
+**MCP 工具与端点**：
+- MCP Tools：`app/core/mcp_tools/bilibili.py`（工具函数实现）
+- MCP Schemas：`app/core/mcp_tools/schemas/bilibili.py`（Pydantic 模型）
+- HTTP 端点：`app/api/endpoints/mcp/bilibili.py`（路由注册 + Blueprint）
+- 请求验证：`app/api/scheme/bilibili_scheme.py`（请求/响应 Schema）
+
+**登录与状态管理**：
+- 登录服务：`app/core/login/service.py`（统一登录接口）
+- 登录存储：`app/core/login/storage.py`（Redis 缓存 TTL 管理）
+- 登录适配器：`app/core/login/bilibili/adapter.py`（Bilibili 登录适配）
+- 登录端点：`app/api/endpoints/login/login_endpoint.py`（HTTP API）
+
+**管理页与监控**：
+- 管理页：`app/api/endpoints/admin/admin_page_endpoint.py`
+- 配置管理：`app/api/endpoints/admin/config_endpoint.py`
+- 状态监控：`app/api/endpoints/admin/status_endpoint.py`
+
+**基础设施**：
+- 日志：`app/providers/logger.py`（统一日志入口）
+- 缓存：`app/providers/cache/*`（Redis 抽象层）
+- 端点基类：`app/api/endpoints/base.py`（MCPBlueprint）
+
+### 2.3 SSE 集成要点
+
+- 见 `app/api_service.py:_patch_fastmcp_sse()`
+- 在 `/sse` 提供 SSE 端点
+- 挂载 `/messages/` 与各业务路由（/bili/*, /admin/*, /login/*）
 
 ## 3. 运行与开发
 
-本地运行：
+### 3.1 本地运行
+
 ```bash
+# 安装依赖
 poetry install
 poetry run playwright install chromium
+
+# 启动服务（双传输模式）
 python main.py --transport both
-# 访问：
+
+# 访问地址：
 #   MCP SSE: http://localhost:9090/sse
 #   管理页面: http://localhost:9090/admin
 #   状态概览: http://localhost:9090/admin/api/status/summary
+#   登录管理: http://localhost:9090/login
 ```
 
-环境变量（.env，示例）：
+### 3.2 环境变量（.env 示例）
+
 ```bash
+# 应用配置
 APP__ENV=dev
 APP__DEBUG=true
 APP__PORT=9090
+
+# 平台配置
 PLATFORM__ENABLED_PLATFORMS=all
+
+# 浏览器配置
 BROWSER__HEADLESS=false
+BROWSER__USER_AGENT=Mozilla/5.0 ...
+BROWSER__VIEWPORT_WIDTH=1920
+BROWSER__VIEWPORT_HEIGHT=1080
+
+# 爬取配置
 CRAWL__MAX_NOTES_COUNT=15
 CRAWL__MAX_COMMENTS_PER_NOTE=10
+CRAWL__MAX_CONCURRENCY=5
+CRAWL__CRAWL_INTERVAL=1.0
+CRAWL__SEARCH_MODE=normal
+CRAWL__START_PAGE=1
+
+# 存储配置
 STORE__SAVE_FORMAT=json
 STORE__OUTPUT_DIR=./data
+STORE__ENABLE_SAVE_MEDIA=false
+
+# 日志配置
 LOGGER__LEVEL=INFO
+LOGGER__FORMAT=%(asctime)s - %(name)s - %(levelname)s - %(message)s
+
+# Redis 配置（登录状态缓存）
+REDIS__HOST=localhost
+REDIS__PORT=6379
+REDIS__DB=0
 ```
 
-说明：
-- 配置通过 Pydantic Settings 自动读取（支持双下划线嵌套）。
-- 任务级参数（如 `headless`、`login_cookie`、`max_notes`）可在 MCP 工具调用时覆盖全局默认。
+### 3.3 配置说明
+
+- 配置通过 Pydantic Settings 自动读取（支持双下划线嵌套）
+- 任务级参数（如 `headless`、`login_cookie`、`max_notes`）可在 MCP 工具调用时覆盖全局默认
+- 登录状态缓存 TTL：未登录 60s，已登录 3600s（可在 `app/core/login/storage.py` 调整）
 
 ## 4. MCP 工具（当前状态）
 
-服务内置工具（通用）
-- `service_info` / `service_health` / `list_tools` / `tool_info`
+### 4.1 服务内置工具（通用）
 
-B 站（已实现 4 个）：见 `app/api/endpoints/mcp/bilibili.py`
-- `bili_search`
-- `bili_detail`
-- `bili_creator`
-- `bili_search_time_range`
+- `service_info` - 服务信息
+- `service_health` - 健康检查
+- `list_tools` - 工具列表
+- `tool_info` - 工具详情
 
-其它平台（xhs/dy/ks/wb/tieba/zhihu）：规划中。
+### 4.2 Bilibili 工具（已完成 5 个）✅
+
+**实现位置**：
+- 工具函数：`app/core/mcp_tools/bilibili.py`
+- HTTP 端点：`app/api/endpoints/mcp/bilibili.py`
+- 路由前缀：`/bili/*`
+
+**工具清单**：
+
+1. **bili_search** - 快速搜索视频
+   - 路径：`POST /bili/search`
+   - 参数：keywords, page_size, page_num, limit, headless, save_media
+   - 返回：简化结构（BilibiliVideoSimple）
+   - 特点：使用 aid 作为 video_id，方便后续调用详情
+
+2. **bili_detail** - 获取视频详情
+   - 路径：`POST /bili/detail`
+   - 参数：video_ids (List[str]), headless, save_media
+   - 返回：完整结构（BilibiliVideoFull）
+   - 包含字段：
+     - 基础信息：title/desc/duration/video_url/cover_url
+     - 分区信息：tname/tid
+     - 视频属性：copyright/cid
+     - UP主信息：user_id/nickname/avatar/sex/sign/level/fans/official_verify
+     - 统计数据：play_count/liked_count/disliked_count/comment/coin/share/favorite/danmaku
+     - **标签**：tags (List[{tag_id, tag_name}])
+
+3. **bili_creator** - 获取 UP 主视频
+   - 路径：`POST /bili/creator`
+   - 参数：creator_ids (List[str]), creator_mode, headless, save_media
+   - creator_mode=True：获取UP主所有视频
+   - creator_mode=False：获取UP主详情（粉丝/关注/动态）
+
+4. **bili_search_time_range** - 时间范围搜索
+   - 路径：`POST /bili/search/time-range`
+   - 参数：keywords, start_day, end_day, page_size, page_num, limit, max_notes_per_day, daily_limit, headless, save_media
+   - daily_limit=True：限制每天爬取数量
+   - daily_limit=False：全量爬取（仅受 limit 约束）
+
+5. **bili_comments** - 抓取视频评论
+   - 路径：`POST /bili/comments`
+   - 参数：video_ids (List[str]), max_comments, fetch_sub_comments, headless
+   - fetch_sub_comments=True：递归抓取子评论
+   - 返回：{"comments": {video_id: [comment_list]}}
+
+### 4.3 其它平台（规划中）
+
+- xhs（小红书）
+- dy（抖音）
+- ks（快手）
+- wb（微博）
+- tieba（贴吧）
+- zhihu（知乎）
 
 ## 5. 管理与状态
 
-Web 管理：`http://localhost:9090/admin`（本地开发默认不鉴权，公开部署需自行加鉴权）
+### 5.1 Web 管理界面
 
-状态/统计 API：
-- 系统资源: `GET /admin/api/status/system`
-- 数据统计: `GET /admin/api/status/data`
-- 服务状态: `GET /admin/api/status/services`
-- 平台状态: `GET /admin/api/status/platforms`
-- 概览汇总: `GET /admin/api/status/summary`
+访问地址：`http://localhost:9090/admin`
 
-登录管理 API（B 站已接好）：
-- 启动登录: `POST /admin/api/login/start`
-- 登录状态: `GET /admin/api/login/status/{platform}`
-- 会话状态: `GET /admin/api/login/session/{session_id}`
-- 退出登录: `POST /admin/api/login/logout/{platform}`
-- 会话列表: `GET /admin/api/login/sessions`
+**功能**：
+- 配置查看与管理
+- 系统资源监控
+- 数据统计概览
+- 平台状态检查
 
-会话持久化：
-- 浏览器登录态保存在 `browser_data/<platform>/`，任务会尽量复用。
+**注意**：本地开发默认不鉴权，公开部署需自行加鉴权。
+
+### 5.2 状态/统计 API
+
+- 系统资源：`GET /admin/api/status/system`（CPU/内存/磁盘）
+- 数据统计：`GET /admin/api/status/data`（爬取数量/存储大小）
+- 服务状态：`GET /admin/api/status/services`（Playwright/Redis/数据库）
+- 平台状态：`GET /admin/api/status/platforms`（各平台工具状态）
+- 概览汇总：`GET /admin/api/status/summary`（所有状态聚合）
+
+### 5.3 登录管理 API（Bilibili 已接入）
+
+- 启动登录：`POST /admin/api/login/start`
+  - 参数：platform, login_type (QRCODE/COOKIE/PHONE)
+  - 返回：session_id, qr_url (QRCODE 模式)
+- 登录状态：`GET /admin/api/login/status/{platform}`
+  - 返回：is_logged_in, user_info, cache_ttl
+- 会话状态：`GET /admin/api/login/session/{session_id}`
+  - 返回：status, qr_url, user_info
+- 退出登录：`POST /admin/api/login/logout/{platform}`
+  - 清除 Redis 缓存与浏览器持久化状态
+- 会话列表：`GET /admin/api/login/sessions`
+  - 返回所有活跃登录会话
+
+### 5.4 会话持久化
+
+- **浏览器状态**：保存在 `browser_data/<platform>/`（Playwright persistent context）
+- **Redis 缓存**：登录状态缓存（TTL：未登录 60s，已登录 3600s）
+- **优势**：
+  - 避免频繁调用 `pong()` 触发风控
+  - 重启服务后自动恢复登录状态
+  - 支持跨进程共享（通过 Redis）
 
 ## 6. 代码约定（请务必遵守）
 
-- Endpoint 规范：
-  - 继承 `BaseEndpoint`，实现 `register_routes()` 与 `register_mcp_tools()`。
-  - 在 `app/api_service.py:auto_discover_endpoints()` 中注册。
-  - 所有 API 均放在 `app/api/endpoints/` 统一管理。
+### 6.1 架构分层（严格遵守）
 
-- 日志：统一使用 `app/providers/logger.py` 的 `get_logger()`，禁止私建 logger。
+```
+MCP Tools 层 (app/core/mcp_tools/)
+    - 职责：参数验证、结果结构化、错误处理
+    - 原则：薄封装，不包含业务逻辑
+    ↓
+Service 层 (app/core/crawler/platforms/{platform}/service.py)
+    - 职责：Context 构建、生命周期管理、登录状态获取
+    - 原则：协调者角色，不直接操作浏览器
+    ↓
+Crawler 层 (app/core/crawler/platforms/{platform}/crawler.py)
+    - 职责：浏览器管理、业务逻辑编排、数据提取
+    - 原则：核心业务逻辑所在，调用 Client 和 Store
+    ↓
+Client 层 (app/core/crawler/platforms/{platform}/client.py)
+    - 职责：HTTP API 调用、签名计算、Cookie 管理
+    - 原则：纯 HTTP 客户端，不依赖浏览器
+    ↓
+Store 层 (app/core/crawler/store/{platform}/)
+    - 职责：数据持久化、媒体文件保存
+    - 原则：可插拔存储实现（JSON/CSV/SQLite/DB）
+```
 
-- 配置：统一通过 `app/config/settings.py` 的 Pydantic Settings 读取；不要新建零散的 config 文件或全局单例。
+### 6.2 端点规范
 
-- 缓存：如需缓存，优先使用 `app/providers/cache` 抽象层。
+- 使用 `MCPBlueprint`（继承自 FastMCP 的 Blueprint）
+- 在 `app/api/endpoints/mcp/{platform}.py` 中注册
+- 通过 `bp.tool()` 装饰器绑定 MCP 工具与 HTTP 路由
+- 在 `app/api_service.py:auto_discover_endpoints()` 中自动发现并注册
 
-- 风格：遵循仓库现有 Black/isort/mypy 配置；避免一次性大改无关代码。
+**示例**：
+```python
+from app.api.endpoints.base import MCPBlueprint
+from app.core.mcp_tools import bilibili as bili_tools
+
+bp = MCPBlueprint(prefix="/bili", name="bilibili", tags=["bili"])
+
+bp.tool(
+    "bili_search",
+    description="搜索 Bilibili 视频",
+    http_path="/search",
+    http_methods=["POST"],
+)(bili_tools.bili_search)
+```
+
+### 6.3 日志规范
+
+- 统一使用 `app/providers/logger.py` 的 `get_logger()`，禁止私建 logger
+- 日志格式：`[ClassName.method_name] message`
+- 重要操作必须记录日志（登录/API调用/错误）
+
+### 6.4 配置规范
+
+- 统一通过 `app/config/settings.py` 的 Pydantic Settings 读取
+- 不要新建零散的 config 文件或全局单例
+- 环境变量支持双下划线嵌套（如 `CRAWL__MAX_NOTES_COUNT`）
+
+### 6.5 缓存规范
+
+- 如需缓存，优先使用 `app/providers/cache` 抽象层
+- 登录状态缓存示例：`app/core/login/storage.py`
+
+### 6.6 代码风格
+
+- 遵循仓库现有 Black/isort/mypy 配置
+- 避免一次性大改无关代码
+- 类型注解：所有公共函数必须提供类型注解
 
 ## 7. 扩展新平台（模板）
 
@@ -194,48 +431,82 @@ def auto_discover_endpoints():
     pass
 ```
 
-## 8. TODO（里程碑）
+### 问题排查黄金法则
 
-平台与功能
-- [ ] 小红书（xhs）服务层与端点重构（search/detail/creator）
-- [ ] 抖音（dy）服务层与端点重构（search/detail/creator）
-- [ ] 快手、微博、贴吧、知乎 平台适配
-- [ ] 统一评论抓取策略与阈值（跨平台）
+**遇到数据流问题时，永远先问这三个问题：**
 
-稳定性与性能
-- [ ] Playwright 浏览器上下文复用与池化策略
-- [ ] 限速与退避策略（按域名/平台）
-- [ ] 并发调度与队列隔离（按任务/平台）
+1. **数据从哪来？** - 上游API返回了什么字段？什么格式？
+2. **数据要到哪去？** - 下游API需要什么参数？什么格式？
+3. **原始实现怎么做的？** - MediaCrawler源码是如何处理这个流程的？
 
-可观测性与运维
-- [ ] 统一结构化日志与 trace-id 贯穿
-- [ ] 指标上报（采集耗时、成功率、队列长度）
-- [ ] 管理页面补充运行时统计与任务面板
+**反面教材（避免）：**
+- ❌ 过早陷入技术细节（WBI签名、Cookie认证等）
+- ❌ 基于假设猜测问题（"可能是XX"而不是验证）
+- ❌ 忽略用户提供的关键信息（URL参数、错误日志等）
 
-配置与存储
-- [ ] 环境变量与默认值核对（.env.example 同步至代码）
-- [ ] 数据持久化：SQLite/PostgreSQL 写入适配层
-- [ ] 数据校验与脱敏（导出前处理）
+**正确方法（推荐）：**
+1. ✅ **先画数据流图**：`search API → video_id → detail API`，标注每个环节的输入输出
+2. ✅ **对比原始代码**：第一时间查看MediaCrawler如何实现相同功能
+3. ✅ **端到端验证**：从源头（API响应）到终点（用户收到的数据）追踪每一步转换
+4. ✅ **提取用户反馈中的硬证据**：URL参数、日志片段、实际响应数据
 
-API/MCP 与体验
-- [ ] 服务内置工具补充文档示例（service_info/list_tools）
-- [ ] 增加错误码与统一异常响应（MCP 与 HTTP）
-- [ ] 示例 Prompt 与使用范式完善
+### B站爬虫特定注意事项
 
-测试与发布
-- [ ] 单元测试与集成测试覆盖关键路径（Bili 完整用例）
-- [ ] Docker 本地运行与 CI 构建流程
-- [ ] 版本化变更日志（CHANGELOG）
+**视频ID的两种格式（关键）：**
+- `aid`（数字ID）：detail API必需参数，如 `aid=1504494553`
+- `bvid`（BV号）：前端URL使用，如 `BV1Dr421q7YD`
 
-安全
-- [ ] Cookie/会话安全存储与清理策略
-- [ ] Admin UI 基础鉴权（公开部署）
+**数据流正确实现：**
+```
+search API 返回: {"result": [{"aid": 123, "bvid": "BV1xxx"}]}
+                      ↓
+              提取 aid 作为 video_id
+                      ↓
+detail API 调用: get_video_info(aid=123)  ← 注意：必须用aid，不能用bvid
+                      ↓
+            返回嵌套结构: {"View": {...}, "Card": {...}}
+                      ↓
+           转换为扁平格式返回给用户
+```
 
-## 9. 常见问题
+**常见错误模式：**
+- 搜索返回`bvid`直接作为`video_id` → detail API失败（"啥都木有"）
+- detail API返回原始嵌套结构 → 用户收到空响应或难以使用
+- 频繁调用`pong()`检查登录状态 → 触发风控
 
-- 首次运行请执行：`poetry run playwright install chromium`。
-- 首次抓取 B 站可能需要扫码登录；登录态会保存在 `browser_data/bili/`。
-- 未抓到数据：打开 `headless=false` 观察浏览器行为，或检查登录态。
+**正确处理方式：**
+- 搜索时：返回`aid`作为`video_id`，同时保留`bvid`字段供参考
+- 详情时：使用`aid`调用API，返回前转换为扁平格式
+- 登录检查：优先使用缓存状态（TTL 60s未登录/3600s已登录），避免频繁pong
+
+### 登录状态管理最佳实践
+
+**问题背景：**
+- B站有风控机制，频繁验证登录状态会触发限制
+- Cookie需要在正确时机更新，否则认证失败
+
+**正确流程（crawler.py:117-146）：**
+```python
+# 1. 优先从缓存读取登录状态
+login_status = await login_service.get_login_status("bili")
+is_logged_in = login_status.get('is_logged_in', False)
+
+# 2. 仅在缓存显示未登录时才调用pong验证
+if not is_logged_in:
+    is_logged_in = await self.bili_client.pong()
+
+# 3. 未登录则执行登录流程
+if not is_logged_in:
+    login_obj = BilibiliLogin(...)
+    await login_obj.begin()
+
+# 4. 无论是否重新登录，都要更新cookies（关键！）
+await self.bili_client.update_cookies(browser_context=self.browser_context)
+```
+
+**关键点：**
+- Cookie更新必须在登录检查之后，而不是client创建时
+- 即使跳过登录流程，也要更新cookies确保使用最新认证信息
 
 ## 10. 提交前自检清单
 

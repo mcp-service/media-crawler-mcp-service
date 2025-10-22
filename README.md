@@ -1,8 +1,8 @@
 # MediaCrawler MCP 服务
 
-让 AI 原生使用社媒数据的研究助手。将传统 CLI 爬虫升级为 MCP 标准工具，让 Claude / ChatGPT 直连调用，一次配置，长期可用。
+让 AI 原生使用社媒数据的MCP服务。将传统 CLI 爬虫升级为 MCP 标准工具，让 Claude / ChatGPT 直连调用，一次配置，长期可用。
 
-![登录与工具预览](docs/img.png)
+
 
 <p>
   <img alt="Python" src="https://img.shields.io/badge/Python-3.8%2B-3776AB?logo=python&logoColor=white" />
@@ -33,7 +33,8 @@ MediaCrawler MCP Service 是面向“学习与研究”的数据获取工具集�
 - 从脚本到标准：从一次性脚本变成可复用的 MCP 工具
 - 登录完全外部化：可视化界面 + 二维码/Cookie 双模式，状态持久
 - 真·工程化：分层解耦、Pydantic 模型、状态缓存与风控友好
-
+- 文本格式友好: 需要AI分析，所以要返回文本友好的格式，不是大量无用的嵌套数据
+![img.png](docs/content-nice.png)
 ## 核心特性
 - 一次配置，AI 原生调用（Claude/ChatGPT）
 - 登录外部化：跨重启保持，支持多平台
@@ -106,12 +107,12 @@ poetry run python main.py    # 默认端口 9090
 
 - `bili_detail`（指定视频详情）
 ```json
-{ "video_ids": ["BV1xx411c7mD"] }
+{ "video_ids": ["115285696846946"] }
 ```
 
 - `bili_creator`（创作者分析）
 ```json
-{ "creator_ids": ["123456"], "creator_mode": true }
+{ "creator_ids": ["99801185"], "creator_mode": true }
 ```
 
 ![工具测试](docs/tools-test.png)

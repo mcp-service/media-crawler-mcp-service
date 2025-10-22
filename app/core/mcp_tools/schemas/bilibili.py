@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
 
 
@@ -50,14 +50,55 @@ class BilibiliVideoSimple(BilibiliVideoBase):
         )
 
 
+class TagInfo(BaseModel):
+    """标签信息"""
+    tag_id: Optional[int] = Field(None, description="标签 ID")
+    tag_name: Optional[str] = Field(None, description="标签名称")
+
+
 class BilibiliVideoFull(BilibiliVideoBase):
     """完整的 Bilibili 视频信息（用于详情获取）"""
+    # 视频标识
+    bvid: str = Field(default="", description="视频 BV 号")
+
+    # 时间与时长
+    duration: Optional[int] = Field(None, description="视频时长（秒）")
+
+    # 分区信息
+    tname: str = Field(default="", description="分区名称")
+    tid: Optional[int] = Field(None, description="分区 ID")
+
+    # 视频属性
+    copyright: Optional[int] = Field(None, description="版权标识（1原创 2转载）")
+    cid: Optional[int] = Field(None, description="视频 CID")
+
+    # UP主基础信息
     avatar: str = Field(default="", description="用户头像")
+
+    # UP主详细信息（从 Card 获取）
+    user_sex: str = Field(default="", description="用户性别")
+    user_sign: str = Field(default="", description="用户个性签名")
+    user_level: Optional[int] = Field(None, description="用户等级")
+    user_fans: Optional[int] = Field(None, description="粉丝数")
+    user_official_verify: Optional[int] = Field(None, description="官方认证类型")
+
+    # 统计数据（详细）
     disliked_count: str = Field(default="0", description="踩数")
-    video_favorite_count: str = Field(default="0", description="收藏数")
-    video_share_count: str = Field(default="0", description="分享数")
-    video_coin_count: str = Field(default="0", description="投币数")
-    video_danmaku: str = Field(default="0", description="弹幕数")
+    coin_count: str = Field(default="0", description="投币数")
+    share_count: str = Field(default="0", description="分享数")
+    favorite_count: str = Field(default="0", description="收藏数")
+    danmaku_count: str = Field(default="0", description="弹幕数")
+
+    # 标签列表
+    tags: List[TagInfo] = Field(default_factory=list, description="视频标签列表")
+
+    # 兼容旧字段名
+    video_favorite_count: str = Field(default="0", description="收藏数（兼容字段）")
+    video_share_count: str = Field(default="0", description="分享数（兼容字段）")
+    video_coin_count: str = Field(default="0", description="投币数（兼容字段）")
+    video_danmaku: str = Field(default="0", description="弹幕数（兼容字段）")
+
+    # 其他
     last_modify_ts: Optional[int] = Field(None, description="最后修改时间戳")
     video_type: str = Field(default="video", description="视频类型")
 

@@ -69,7 +69,7 @@ async def admin_inspector_page(request):
         return _templates.TemplateResponse(
             request,
             "inspector.html",
-            {"title": "MCP Tools Inspector"},
+            {"title": "Media Crawler Inspector"},
         )
     except Exception as exc:
         logger.error(f"[管理界面] 渲染 inspector 失败: {exc}")

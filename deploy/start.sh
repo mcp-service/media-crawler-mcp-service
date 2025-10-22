@@ -17,7 +17,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
 echo "========================================"
-echo "  MCP Tools - 社交媒体爬虫 MCP 服务"
+echo "  Media Crawler MCP - 社交媒体爬虫 MCP 服务"
 echo "  模式: $MODE"
 echo "========================================"
 

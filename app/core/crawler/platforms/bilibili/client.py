@@ -76,11 +76,13 @@ class BilibiliClient:  # 移除 AbstractApiClient 继承
     async def request(self, method, url, **kwargs) -> Any:
         async with httpx.AsyncClient(proxy=self.proxy) as client:
             response = await client.request(method, url, timeout=self.timeout, **kwargs)
+
         try:
             data: Dict = response.json()
         except json.JSONDecodeError:
             logger.error(f"[BilibiliClient.request] Failed to decode JSON from response. status_code: {response.status_code}, response_text: {response.text}")
             raise DataFetchError(f"Failed to decode JSON, content: {response.text}")
+
         if data.get("code") != 0:
             raise DataFetchError(data.get("message", "unkonw error"))
         else:
@@ -152,12 +154,15 @@ class BilibiliClient:  # 移除 AbstractApiClient 继承
         return ping_flag
 
     async def update_cookies(self, browser_context: BrowserContext):
-        # 转换 cookies
+        logger.info("[BilibiliClient.update_cookies] Updating cookies from browser context...")
         cookies = await browser_context.cookies()
+
         cookie_str = "; ".join([f"{c['name']}={c['value']}" for c in cookies])
         cookie_dict = {c['name']: c['value'] for c in cookies}
+
         self.headers["Cookie"] = cookie_str
         self.cookie_dict = cookie_dict
+        logger.info("[BilibiliClient.update_cookies] Cookies updated successfully")
 
     async def search_video_by_keyword(
         self,

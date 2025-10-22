@@ -9,11 +9,12 @@ from typing import List, Optional
 from app.core.crawler.platforms.bilibili import service as bilibili_core
 from .schemas.bilibili import (
     BilibiliSearchResult,
-    BilibiliDetailResult, 
+    BilibiliDetailResult,
     BilibiliVideoSimple,
     BilibiliVideoFull,
     BilibiliCommentsResult,
     BilibiliComment,
+    TagInfo,
 )
 
 
@@ -44,7 +45,7 @@ def _process_detail_result(raw_result: dict) -> BilibiliDetailResult:
     """处理详情结果，转换为完整模型"""
     if not isinstance(raw_result, dict):
         return BilibiliDetailResult()
-    
+
     videos = []
     if "videos" in raw_result and isinstance(raw_result["videos"], list):
         for video_data in raw_result["videos"]:
@@ -54,11 +55,66 @@ def _process_detail_result(raw_result: dict) -> BilibiliDetailResult:
             except Exception as e:
                 # 如果某个视频数据有问题，跳过但不影响其他视频
                 continue
-    
+
     return BilibiliDetailResult(
         videos=videos,
         total_count=raw_result.get("total_count"),
         crawl_info=raw_result.get("crawl_info", {}),
+    )
+
+
+def _process_comments_result(raw_result: dict) -> BilibiliCommentsResult:
+    """处理评论结果，转换为结构化模型
+
+    输入格式: {"comments": {video_id: [comment_dict_list]}}
+    输出格式: BilibiliCommentsResult with flat comment list
+    """
+    if not isinstance(raw_result, dict):
+        return BilibiliCommentsResult()
+
+    comments_dict = raw_result.get("comments", {})
+    if not isinstance(comments_dict, dict):
+        return BilibiliCommentsResult()
+
+    all_comments = []
+    video_ids = []
+
+    for video_id, comment_list in comments_dict.items():
+        video_ids.append(str(video_id))
+        if not isinstance(comment_list, list):
+            continue
+
+        for comment_data in comment_list:
+            try:
+                # 从原始评论数据提取字段
+                comment_id = str(comment_data.get("rpid", ""))
+                parent_comment_id = str(comment_data.get("parent", 0))
+                content_dict = comment_data.get("content", {})
+                user_info = comment_data.get("member", {})
+
+                comment = BilibiliComment(
+                    comment_id=comment_id,
+                    parent_comment_id=parent_comment_id,
+                    create_time=comment_data.get("ctime"),
+                    video_id=str(video_id),
+                    content=content_dict.get("message", "") if isinstance(content_dict, dict) else "",
+                    user_id=str(user_info.get("mid", "")) if isinstance(user_info, dict) else "",
+                    nickname=user_info.get("uname", "") if isinstance(user_info, dict) else "",
+                    sex=user_info.get("sex", "") if isinstance(user_info, dict) else "",
+                    sign=user_info.get("sign", "") if isinstance(user_info, dict) else "",
+                    avatar=user_info.get("avatar", "") if isinstance(user_info, dict) else "",
+                    sub_comment_count=str(comment_data.get("rcount", 0)),
+                    like_count=comment_data.get("like", 0),
+                )
+                all_comments.append(comment)
+            except Exception as e:
+                # 如果某个评论数据有问题，跳过但不影响其他评论
+                continue
+
+    return BilibiliCommentsResult(
+        comments=all_comments,
+        total_count=len(all_comments),
+        video_ids=video_ids,
     )
 
 
@@ -171,18 +227,21 @@ async def bili_comments(
     video_ids: List[str],
     max_comments: int = 20,
     fetch_sub_comments: bool = False,
-    headless: Optional[bool] = None,  # 改为 None
+    headless: Optional[bool] = None,
 ) -> str:
     """
-    根据视频ID抓取评论。
+    根据视频ID抓取评论，返回结构化的评论列表。
     """
-    result = await bilibili_core.fetch_comments(
+    raw_result = await bilibili_core.fetch_comments(
         video_ids=video_ids,
         max_comments=max_comments,
         fetch_sub_comments=fetch_sub_comments,
         headless=headless,
     )
-    return json.dumps(result, ensure_ascii=False, indent=2)
+
+    # 转换为结构化的评论数据
+    structured_result = _process_comments_result(raw_result)
+    return structured_result.model_dump_json(ensure_ascii=False, indent=2)
 
 
 __all__ = [

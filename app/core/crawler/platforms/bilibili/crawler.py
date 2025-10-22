@@ -114,21 +114,20 @@ class BilibiliCrawler(AbstractCrawler):
             # 创建 Bilibili 客户端
             self.bili_client = await self.create_bilibili_client(httpx_proxy)
 
-            # 优先检查登录服务中的状态，避免触发风控
-            login_status = None
+            # 优先使用登录服务的缓存状态，避免频繁触发风控
+            is_logged_in = False
             try:
                 login_status = await login_service.get_login_status("bili")
-                logger.info(f"[BilibiliCrawler.start] 从登录服务获取状态: {login_status.get('is_logged_in', False)}")
+                is_logged_in = login_status.get('is_logged_in', False)
+                if is_logged_in:
+                    logger.info("[BilibiliCrawler.start] Using cached login state from login service")
+                else:
+                    logger.info("[BilibiliCrawler.start] Cached state shows not logged in, verifying with pong...")
+                    # 只在缓存状态显示未登录时才使用 pong 检查
+                    is_logged_in = await self.bili_client.pong()
             except Exception as exc:
-                logger.warning(f"[BilibiliCrawler.start] 获取登录状态失败: {exc}")
-
-            # 只有在登录服务状态不可用时才使用 pong 检查
-            is_logged_in = False
-            if login_status and login_status.get('is_logged_in'):
-                is_logged_in = True
-                logger.info("[BilibiliCrawler.start] 使用登录服务状态: 已登录")
-            else:
-                logger.info("[BilibiliCrawler.start] 登录服务状态不可用，使用 pong 检查...")
+                logger.warning(f"[BilibiliCrawler.start] Failed to get login status from service, fallback to pong: {exc}")
+                # 登录服务失败时才使用 pong
                 is_logged_in = await self.bili_client.pong()
 
             if not is_logged_in:
@@ -141,7 +140,10 @@ class BilibiliCrawler(AbstractCrawler):
                     cookie_str=self.login_options.cookie or "",
                 )
                 await login_obj.begin()
-                await self.bili_client.update_cookies(browser_context=self.browser_context)
+
+            # 无论是否重新登录，都要更新cookies以确保使用最新的认证信息
+            await self.bili_client.update_cookies(browser_context=self.browser_context)
+            logger.info("[BilibiliCrawler.start] Cookies updated from browser context")
 
             # 根据爬虫类型执行不同操作
             result = {}
@@ -165,7 +167,7 @@ class BilibiliCrawler(AbstractCrawler):
                 if self.crawl.note_ids:
                     result = await self.fetch_comments_for_ids(self.crawl.note_ids)
 
-            logger.info("[BilibiliCrawler.start] Bilibili Crawler finished")
+            logger.info(f"[BilibiliCrawler.start] Bilibili Crawler finished, result keys: {result.keys() if result else 'empty'}")
             return result
 
     async def search(self) -> Dict:
@@ -285,12 +287,13 @@ class BilibiliCrawler(AbstractCrawler):
             for item in video_list:
                 if collected_count >= target_notes:
                     break
-                
+
                 # 从搜索结果构建基础视频信息
+                aid = str(item.get("aid", ""))
                 bvid = item.get("bvid", "")
                 video_info = {
-                    # 使用 BV 号作为对外视频 ID
-                    "video_id": bvid,
+                    # 使用 aid 作为对外视频 ID，方便后续请求详情
+                    "video_id": aid,
                     "title": item.get("title", ""),
                     "desc": item.get("description", ""),
                     "create_time": item.get("pubdate"),
@@ -303,11 +306,12 @@ class BilibiliCrawler(AbstractCrawler):
                     "video_url": f"https://www.bilibili.com/video/{bvid}",
                     "video_cover_url": item.get("pic", ""),
                     "source_keyword": keyword,
-                    "bvid": item.get("bvid", ""),
+                    "aid": aid,
+                    "bvid": bvid,
                     "duration": item.get("duration", ""),
                     "video_type": "video",
                 }
-                
+
                 all_videos.append(video_info)
                 collected_count += 1
 
@@ -392,6 +396,7 @@ class BilibiliCrawler(AbstractCrawler):
                 )
                 continue
 
+            # 使用aid而不是bvid获取视频详情，因为detail API需要aid
             semaphore = asyncio.Semaphore(self.crawl.max_concurrency)
             tasks = [
                 self.get_video_info_task(aid=item.get("aid"), bvid="", semaphore=semaphore)
@@ -699,22 +704,50 @@ class BilibiliCrawler(AbstractCrawler):
             await asyncio.sleep(self.crawl.crawl_interval)
             pn += 1
 
-    async def get_specified_videos(self, bvids_list: List[str], source_keyword: str = "") -> Dict:
+    async def get_specified_videos(self, video_ids: List[str], source_keyword: str = "") -> Dict:
         """
         获取指定视频的详情
 
         Args:
-            bvids_list: 视频BV号列表
+            video_ids: 视频 ID 列表（支持 BV 号、带 AV 前缀、纯数字 avid）
 
         Returns:
             视频详情字典
         """
-        logger.info(f"[BilibiliCrawler.get_specified_videos] Getting details for {len(bvids_list)} videos")
+        logger.info(f"[BilibiliCrawler.get_specified_videos] Getting details for {len(video_ids)} videos")
         semaphore = asyncio.Semaphore(self.crawl.max_concurrency)
-        task_list = [
-            self.get_video_info_task(aid=0, bvid=video_id, semaphore=semaphore)
-            for video_id in bvids_list
-        ]
+
+        task_list = []
+        for raw_video_id in video_ids:
+            if raw_video_id is None:
+                continue
+
+            cleaned_id = str(raw_video_id).strip()
+            if not cleaned_id:
+                continue
+
+            lowered = cleaned_id.lower()
+            aid = 0
+            bvid = ""
+
+            if lowered.startswith("bv"):
+                bvid = cleaned_id.upper()
+            elif lowered.startswith("av") and lowered[2:].isdigit():
+                aid = int(lowered[2:])
+            elif cleaned_id.isdigit():
+                aid = int(cleaned_id)
+            else:
+                # fallback 传入其它格式时按 BV 处理，交由 API 校验
+                bvid = cleaned_id
+
+            task_list.append(
+                self.get_video_info_task(
+                    aid=aid,
+                    bvid=bvid,
+                    semaphore=semaphore,
+                )
+            )
+
         video_details = await asyncio.gather(*task_list)
 
         video_aids_list = []
@@ -726,7 +759,65 @@ class BilibiliCrawler(AbstractCrawler):
                 video_aid: str = video_item_view.get("aid")
                 if video_aid:
                     video_aids_list.append(str(video_aid))
-                results.append(video_detail)
+
+                # 转换为用户友好的格式，提取所有有用字段
+                owner = video_item_view.get("owner", {})
+                stat = video_item_view.get("stat", {})
+                card_info = video_detail.get("Card", {}).get("card", {})
+                tags_list = video_detail.get("Tags", [])
+
+                # 提取tags信息
+                tags = [{"tag_id": tag.get("tag_id"), "tag_name": tag.get("tag_name")} for tag in tags_list] if tags_list else []
+
+                formatted_video = {
+                    # 基础视频信息
+                    "video_id": str(video_aid),
+                    "bvid": video_item_view.get("bvid", ""),
+                    "title": video_item_view.get("title", ""),
+                    "desc": video_item_view.get("desc", ""),
+                    "create_time": video_item_view.get("pubdate"),
+                    "duration": video_item_view.get("duration"),
+                    "video_url": f"https://www.bilibili.com/video/{video_item_view.get('bvid', '')}",
+                    "video_cover_url": video_item_view.get("pic", ""),
+
+                    # 分区信息
+                    "tname": video_item_view.get("tname", ""),  # 分区名称
+                    "tid": video_item_view.get("tid"),  # 分区ID
+
+                    # 视频属性
+                    "copyright": video_item_view.get("copyright"),  # 1原创 2转载
+                    "cid": video_item_view.get("cid"),  # 视频CID
+
+                    # UP主信息
+                    "user_id": str(owner.get("mid", "")),
+                    "nickname": owner.get("name", ""),
+                    "avatar": owner.get("face", ""),
+
+                    # UP主详细信息（从Card获取）
+                    "user_sex": card_info.get("sex", ""),
+                    "user_sign": card_info.get("sign", ""),
+                    "user_level": card_info.get("level_info", {}).get("current_level") if card_info.get("level_info") else None,
+                    "user_fans": card_info.get("fans"),
+                    "user_official_verify": card_info.get("official_verify", {}).get("type") if card_info.get("official_verify") else None,
+
+                    # 统计数据
+                    "video_play_count": str(stat.get("view", 0)),
+                    "liked_count": str(stat.get("like", 0)),
+                    "disliked_count": str(stat.get("dislike", 0)),
+                    "video_comment": str(stat.get("reply", 0)),
+                    "coin_count": str(stat.get("coin", 0)),
+                    "share_count": str(stat.get("share", 0)),
+                    "favorite_count": str(stat.get("favorite", 0)),
+                    "danmaku_count": str(stat.get("danmaku", 0)),
+
+                    # 标签
+                    "tags": tags,
+
+                    # 来源关键词
+                    "source_keyword": source_keyword,
+                }
+                results.append(formatted_video)
+
                 try:
                     await bilibili_store.update_bilibili_video(
                         video_detail,
@@ -742,6 +833,8 @@ class BilibiliCrawler(AbstractCrawler):
                     logger.error(f"[BilibiliCrawler.get_specified_videos] Store media error: {store_exc}")
 
         await self.batch_get_video_comments(video_aids_list, source_keyword=source_keyword)
+
+        logger.info(f"[BilibiliCrawler.get_specified_videos] Returning {len(results)} video details")
         return {"videos": results}
 
     async def get_video_info_task(self, aid: int, bvid: str, semaphore: asyncio.Semaphore) -> Optional[Dict]:

@@ -4,8 +4,8 @@ const apiBase = '/mcp';
 
 const defaultPayloads = {
     bili_search: { keywords: "纯圆大嬛嬛", page_size: 5, page_num: 1 },
-    bili_detail: { video_ids: ["BV1xx411c7mD"] },
-    bili_creator: { creator_ids: ["123456"], creator_mode: true },
+    bili_detail: { video_ids: ["115285696846946"] },
+    bili_creator: { creator_ids: ["99801185"], creator_mode: true },
     bili_search_time_range: {
         keywords: "纯圆大嬛嬛",
         start_day: "2024-01-01",
@@ -13,7 +13,7 @@ const defaultPayloads = {
         page_size: 5,
         page_num: 1
     },
-    bili_comments: { video_ids: ["BV1xx411c7mD"], max_comments: 20, fetch_sub_comments: false }
+    bili_comments: { video_ids: ["115285696846946"], max_comments: 20, fetch_sub_comments: false }
 };
 
 const toolListElement = document.getElementById('tool-list');
