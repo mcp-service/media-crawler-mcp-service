@@ -162,7 +162,6 @@ class PlatformConfig(BaseModel):
         default="all",
         description="启用的平台列表，默认全部启用"
     )
-    default_login_type: LoginType = LoginType.COOKIE
     default_save_format: SaveFormat = SaveFormat.JSON
 
     @field_validator("enabled_platforms", mode="before")

@@ -26,11 +26,17 @@ from app.providers.logger import get_logger
 logger = get_logger()
 
 
-def _resolve_login_type(provided_cookie: Optional[str]) -> LoginType:
+def _resolve_login_type(provided_cookie: Optional[str], provided_phone: Optional[str]) -> LoginType:
+    """根据传入参数自动判定登录方式：
+    - 传入 Cookie -> COOKIE
+    - 否则传入手机号 -> PHONE
+    - 否则默认使用 QRCODE（内部缺省，不再依赖可配置项）
+    """
     if provided_cookie:
         return LoginType.COOKIE
-    default_login = global_settings.platform.default_login_type
-    return default_login if isinstance(default_login, LoginType) else LoginType(str(default_login))
+    if provided_phone:
+        return LoginType.PHONE
+    return LoginType.QRCODE
 
 
 def _build_common_context(
@@ -104,7 +110,7 @@ def _build_common_context(
     )
 
     login_options = LoginOptions(
-        login_type=_resolve_login_type(login_cookie),
+        login_type=_resolve_login_type(login_cookie, login_phone),
         cookie=login_cookie,
         phone=login_phone,
         save_login_state=save_login_state,
@@ -138,7 +144,7 @@ async def search(
     extra["page_size"] = page_size
     extra["page_num"] = page_num
 
-    total_limit = limit if limit is not None else page_size * page_num
+    total_limit = limit if limit is not None else page_size
 
     login_cookie = await login_service.get_cookie(Platform.BILIBILI.value)
 
@@ -185,7 +191,7 @@ async def search_with_time_range(
     extra["page_num"] = page_num
     extra["search_mode"] = "daily_limit_in_time_range" if daily_limit else "all_in_time_range"
 
-    total_limit = limit if limit is not None else page_size * page_num
+    total_limit = limit if limit is not None else page_size
 
     login_cookie = await login_service.get_cookie(Platform.BILIBILI.value)
 

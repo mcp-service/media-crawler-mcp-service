@@ -38,7 +38,6 @@ class CrawlerConfigUpdate(BaseModel):
     max_comments_per_note: int = 10
     headless: bool = False
     save_data_option: str = "json"
-    default_login_type: str = "qrcode"
 
 
 @bp.route("/platforms", methods=["GET"])
@@ -138,7 +137,6 @@ async def get_crawler_config(request):
             "max_comments_per_note": int(global_settings.crawl.max_comments_per_note),
             "headless": bool(global_settings.browser.headless),
             "save_data_option": str(global_settings.store.save_format),
-            "default_login_type": str(global_settings.platform.default_login_type),
         }
         return JSONResponse(content=data)
 
@@ -170,7 +168,6 @@ async def update_crawler_config(request):
             "CRAWL__MAX_COMMENTS_PER_NOTE": str(config.max_comments_per_note),
             "BROWSER__HEADLESS": str(config.headless).lower(),
             "STORE__SAVE_FORMAT": config.save_data_option,
-            "PLATFORM__DEFAULT_LOGIN_TYPE": config.default_login_type,
         }
 
         new_lines: List[str] = []

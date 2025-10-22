@@ -24,10 +24,15 @@ def get_tools_summary() -> Dict[str, Any]:
     total_tools = 0
 
     for bp in _blueprints:
-        if not bp.tools_info:
+        tools = bp.tools_info or []
+        if not tools:
             continue
-        categories[bp.category] = [tool["name"] for tool in bp.tools_info]
-        total_tools += len(bp.tools_info)
+        names = [tool.name for tool in tools]
+        if not names:
+            continue
+        categories.setdefault(bp.category, [])
+        categories[bp.category].extend(names)
+        total_tools += len(names)
 
     return {
         "categories": categories,

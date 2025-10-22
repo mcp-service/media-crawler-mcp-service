@@ -8,10 +8,10 @@ from importlib import import_module
 from fastmcp import FastMCP
 from starlette.applications import Starlette
 
-from app.api.endpoints.base import get_registered_blueprints
+from app.api.endpoints.base import get_registered_blueprints, get_tools_summary
 from app.config.settings import Platform, global_settings
-from app.core.mcp_tools import list_tools, service_health, service_info, tool_info
 from app.providers.logger import get_logger, init_logger
+from app.core.mcp_tools import list_tools, service_health, service_info, tool_info
 
 
 def create_app() -> Starlette:
@@ -43,11 +43,19 @@ def create_app() -> Starlette:
         logger.info(
             f"🧩 已安装蓝图 {blueprint.name} "
             f"(prefix={blueprint.prefix} "
-            f"routes={len(blueprint.routes)} "
-            f"tools={len(blueprint.tools)})"
+            f"http_routes={len(blueprint.routes)} "
+            f"mcp_tools={len(blueprint.tools)})"
         )
     logger.info(f"✅ 蓝图安装完成，共 {len(blueprints)} 个")
 
+    from app.core.prompts import register_prompts
+    from app.core.resources import register_resources
+
+    register_prompts(app)
+    register_resources(app)
+    logger.info("✅ MCP Prompts 和 Resources 注册成功")
+
+    # 直接注册服务级工具（非蓝图，避免无意义的统计干扰）
     service_tools = {
         "service_info": service_info,
         "service_health": service_health,
@@ -56,14 +64,13 @@ def create_app() -> Starlette:
     }
     for tool_name, handler in service_tools.items():
         app.tool(name=tool_name)(handler)
-    logger.info(f"✅ 服务信息工具注册成功: {', '.join(sorted(service_tools))}")
+    logger.info(f"✅ 服务工具注册成功: {', '.join(sorted(service_tools))}")
 
-    from app.core.prompts import register_prompts
-    from app.core.resources import register_resources
-
-    register_prompts(app)
-    register_resources(app)
-    logger.info("✅ MCP Prompts 和 Resources 注册成功")
+    # 全局工具注册汇总（基于已注册蓝图）
+    summary = get_tools_summary()
+    logger.info(
+        f"✅ 工具注册完成: 蓝图={summary['blueprints_count']} 个, MCP工具总数={summary['total_tools']}"
+    )
 
     logger.info(f"✅ {global_settings.app.name} ASGI 应用创建完成")
     return http_app

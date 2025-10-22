@@ -10,9 +10,9 @@ from playwright.async_api import BrowserContext, Page
 # 移除对全局 config、base、tools 的依赖
 # from base.base_crawler import AbstractApiClient  # 不需要继承
 # from tools import utils  # 直接使用 logging
+from app.providers.logger import get_logger
 
-import logging
-logger = logging.getLogger(__name__)
+logger = get_logger()
 
 from .exception import DataFetchError
 from .field import CommentOrderType, SearchOrderType
@@ -128,6 +128,7 @@ class BilibiliClient:  # 移除 AbstractApiClient 继承
         if isinstance(params, dict):
             final_uri = (f"{uri}?"
                          f"{urlencode(params)}")
+        logger.info(f"{__name__}-> get: {self._host}{final_uri}")
         return await self.request(method="GET", url=f"{self._host}{final_uri}", headers=self.headers)
 
     async def post(self, uri: str, data: dict) -> Dict:

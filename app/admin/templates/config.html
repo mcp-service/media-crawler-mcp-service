@@ -12,7 +12,7 @@
                 <span id="page-status" class="page-status"></span>
             </h2>
             <p class="hero-subtitle">
-                动态启用数据源、调校爬虫行为、维护边车服务。所有变更实时保存，并在需要时提示重启后端服务。
+                动态启用数据源、调校爬虫行为。所有变更实时保存，并在需要时提示重启后端服务。
             </p>
         </div>
         <div class="hero-actions">
@@ -79,14 +79,7 @@
                                 <option value="db">MySQL / PostgreSQL 数据库</option>
                             </select>
                         </div>
-                        <div class="form-group">
-                            <label for="default_login_type" class="form-label">默认登录方式</label>
-                            <select id="default_login_type" name="default_login_type" class="form-control">
-                                <option value="qrcode">二维码扫码</option>
-                                <option value="cookie">Cookie 登录</option>
-                                <option value="phone">手机号登录</option>
-                            </select>
-                        </div>
+                        
                     </div>
                     <div class="form-actions">
                         <button type="submit" class="btn btn-success">保存爬虫配置</button>
@@ -95,38 +88,7 @@
             </div>
         </article>
 
-        <article class="card config-card">
-            <div class="card-header">
-                <div class="card-eyebrow">边车服务</div>
-                <h2>浏览器池设置</h2>
-                <p class="card-subtitle">用于调度远程 Playwright 浏览器与会话池的服务参数。</p>
-            </div>
-            <div class="card-body">
-                <form id="sidecar-config-form" class="config-form">
-                    <div class="config-field-grid">
-                        <div class="form-group">
-                            <label for="sidecar_url" class="form-label">边车服务地址</label>
-                            <input type="url" id="sidecar_url" name="sidecar_url" class="form-control" value="http://localhost:8001" placeholder="http://localhost:8001">
-                        </div>
-                        <div class="form-group">
-                            <label for="browser_pool_size" class="form-label">浏览器池大小</label>
-                            <input type="number" id="browser_pool_size" name="browser_pool_size" class="form-control" min="1" max="10" value="3">
-                        </div>
-                        <div class="form-group">
-                            <label for="sidecar_timeout" class="form-label">请求超时时间（秒）</label>
-                            <input type="number" id="sidecar_timeout" name="sidecar_timeout" class="form-control" min="30" max="600" value="300">
-                        </div>
-                        <div class="form-group">
-                            <label for="session_timeout" class="form-label">会话超时时间（秒）</label>
-                            <input type="number" id="session_timeout" name="session_timeout" class="form-control" min="600" max="86400" value="3600">
-                        </div>
-                    </div>
-                    <div class="form-actions">
-                        <button type="submit" class="btn btn-warning">保存边车配置</button>
-                    </div>
-                </form>
-            </div>
-        </article>
+        
 
         <article class="card config-card">
             <div class="card-header">
@@ -195,20 +157,17 @@ async function loadCurrentConfig() {
     try {
         showMessage('正在加载配置...', 'info');
 
-        const [crawlerConfig, sidecarConfig, platformConfig] = await Promise.all([
+        const [crawlerConfig, platformConfig] = await Promise.all([
             apiRequest('/config/crawler'),
-            apiRequest('/config/sidecar'),
             apiRequest('/config/platforms')
         ]);
 
         configData = {
             crawler: crawlerConfig,
-            sidecar: sidecarConfig,
             platform: platformConfig
         };
 
         fillCrawlerForm(crawlerConfig);
-        fillSidecarForm(sidecarConfig);
 
         document.getElementById('config-display').innerHTML = `<pre>${JSON.stringify(configData, null, 2)}</pre>`;
 
@@ -224,15 +183,10 @@ function fillCrawlerForm(config) {
     document.getElementById('enable_comments').checked = config.enable_comments !== false;
     document.getElementById('headless').checked = config.headless || false;
     document.getElementById('save_data_option').value = config.save_data_option || 'json';
-    document.getElementById('default_login_type').value = config.default_login_type || 'qrcode';
+    // 默认登录方式配置已移除，按工具入参自动判定
 }
 
-function fillSidecarForm(config) {
-    document.getElementById('sidecar_url').value = config.url || 'http://localhost:8001';
-    document.getElementById('browser_pool_size').value = config.browser_pool_size || 3;
-    document.getElementById('sidecar_timeout').value = config.timeout || 300;
-    document.getElementById('session_timeout').value = config.session_timeout || 3600;
-}
+// sidecar 配置已移除
 
 async function savePlatformConfig() {
     try {
@@ -259,8 +213,7 @@ async function saveCrawlerConfig(formData) {
             max_comments_per_note: parseInt(formData.get('max_comments_per_note'), 10),
             enable_comments: formData.get('enable_comments') === 'on',
             headless: formData.get('headless') === 'on',
-            save_data_option: formData.get('save_data_option'),
-            default_login_type: formData.get('default_login_type')
+            save_data_option: formData.get('save_data_option')
         };
 
         const response = await apiRequest('/config/crawler', {
@@ -275,26 +228,7 @@ async function saveCrawlerConfig(formData) {
     }
 }
 
-async function saveSidecarConfig(formData) {
-    try {
-        const config = {
-            url: formData.get('sidecar_url'),
-            browser_pool_size: parseInt(formData.get('browser_pool_size'), 10),
-            timeout: parseInt(formData.get('sidecar_timeout'), 10),
-            session_timeout: parseInt(formData.get('session_timeout'), 10)
-        };
-
-        const response = await apiRequest('/config/sidecar', {
-            method: 'PUT',
-            body: JSON.stringify(config)
-        });
-
-        showSuccess('边车配置保存成功');
-        if (response.need_restart) showRestartWarning();
-    } catch (error) {
-        showError('保存边车配置失败: ' + error.message);
-    }
-}
+// sidecar 保存逻辑已移除
 
 function showRestartWarning() {
     document.getElementById('restart-warning').classList.remove('d-none');
@@ -318,10 +252,7 @@ document.addEventListener('DOMContentLoaded', () => {
         saveCrawlerConfig(new FormData(event.target));
     });
 
-    document.getElementById('sidecar-config-form').addEventListener('submit', (event) => {
-        event.preventDefault();
-        saveSidecarConfig(new FormData(event.target));
-    });
+    // sidecar 表单已移除
 });
 </script>
 {% endblock %}

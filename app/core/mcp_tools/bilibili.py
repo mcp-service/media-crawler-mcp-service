@@ -76,12 +76,12 @@ async def bili_search(
     Args:
         keywords: 搜索关键词，多个关键词用逗号分隔。
         page_size: 单页作品数量。
-        page_num: 抓取页数。
-        limit: 返回作品数量上限，默认为 page_size * page_num。
+        page_num: 页码（从 1 开始，不循环）。
+        limit: 返回作品数量上限，未传则默认为 page_size（单页）。
         headless: 是否无头模式。
         save_media: 是否保存媒体文件。
     """
-    total_limit = limit if limit is not None else page_size * page_num
+    total_limit = limit if limit is not None else page_size
     raw_result = await bilibili_core.search(
         keywords=keywords,
         page_size=page_size,
@@ -111,7 +111,7 @@ async def bili_search_time_range(
     """
     按时间范围搜索 Bilibili 视频，返回简化的结果。
     """
-    total_limit = limit if limit is not None else page_size * page_num
+    total_limit = limit if limit is not None else page_size
     raw_result = await bilibili_core.search_with_time_range(
         keywords=keywords,
         start_day=start_day,

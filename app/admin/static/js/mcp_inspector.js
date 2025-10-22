@@ -3,15 +3,15 @@
 const apiBase = '/mcp';
 
 const defaultPayloads = {
-    bili_search: { keywords: "sample keyword", page_size: 1, page_num: 5 },
+    bili_search: { keywords: "纯圆大嬛嬛", page_size: 5, page_num: 1 },
     bili_detail: { video_ids: ["BV1xx411c7mD"] },
     bili_creator: { creator_ids: ["123456"], creator_mode: true },
     bili_search_time_range: {
-        keywords: "sample keyword",
+        keywords: "纯圆大嬛嬛",
         start_day: "2024-01-01",
         end_day: "2024-01-07",
-        page_size: 1,
-        page_num: 5
+        page_size: 5,
+        page_num: 1
     },
     bili_comments: { video_ids: ["BV1xx411c7mD"], max_comments: 20, fetch_sub_comments: false }
 };
