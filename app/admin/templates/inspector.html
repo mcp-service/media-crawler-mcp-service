@@ -56,7 +56,10 @@
                 <section class="inspector-result">
                     <header class="inspector-result__header">
                         <span class="meta-label">响应结果</span>
-                        <span class="inspector-status" id="response-status">尚未执行</span>
+                        <div class="inspector-result__actions">
+                            <span class="inspector-status" id="response-status">尚未执行</span>
+                            <button class="btn btn-sm btn-secondary" type="button" id="copy-response" title="复制响应内容" style="display: none;">复制</button>
+                        </div>
                     </header>
                     <pre class="inspector-result__body" id="response-body">{}</pre>
                 </section>

@@ -27,6 +27,7 @@ const resetButton = document.getElementById('reset-body');
 const responseStatusElement = document.getElementById('response-status');
 const responseBodyElement = document.getElementById('response-body');
 const refreshButton = document.getElementById('refresh-tools');
+const copyButton = document.getElementById('copy-response');
 
 let toolsCache = [];
 let activeTool = null;
@@ -48,12 +49,31 @@ function formatJSON(value) {
 }
 
 function renderToolList(items) {
-    if (!items.length) {
+    // 过滤掉没有工具的组，并合并相同分类的组
+    const filteredItems = items.filter(group => group.tools && group.tools.length > 0);
+    
+    if (!filteredItems.length) {
         toolListElement.innerHTML = '<div class="status-placeholder">暂无可用工具</div>';
         return;
     }
 
-    const fragments = items.map((group) => {
+    // 按分类合并工具组
+    const mergedGroups = {};
+    filteredItems.forEach(group => {
+        const category = group.category;
+        if (!mergedGroups[category]) {
+            mergedGroups[category] = {
+                category: category,
+                tools: [],
+                http_routes: [],
+                prefix: group.prefix
+            };
+        }
+        mergedGroups[category].tools.push(...(group.tools || []));
+        mergedGroups[category].http_routes.push(...(group.http_routes || []));
+    });
+
+    const fragments = Object.values(mergedGroups).map((group) => {
         const tools = (group.tools || []).map((tool) => {
             const path = tool.http_path || (group.prefix ? `${group.prefix}/${tool.name}` : '');
             const methods = tool.http_methods || [];
@@ -75,10 +95,17 @@ function renderToolList(items) {
             return `<li><code>${methods} ${route.path}</code>${route.label ? ` · ${route.label}` : ''}</li>`;
         }).join('');
 
+        // 显示更友好的分类名称
+        const categoryDisplayName = group.category === 'bili' ? 'Bilibili' : 
+                                   group.category === 'xhs' ? '小红书' :
+                                   group.category === 'dy' ? '抖音' :
+                                   group.category === 'admin' ? '管理工具' : 
+                                   group.category;
+
         return `
             <section class="inspector-group">
                 <header class="inspector-group__header">
-                    <h3>${group.category}</h3>
+                    <h3>${categoryDisplayName}</h3>
                     <span>${group.tools.length} tools</span>
                 </header>
                 <div class="inspector-group__tools">
@@ -120,6 +147,7 @@ function selectTool(tool, triggerBtn) {
     responseBodyElement.textContent = '{}';
     executeButton.disabled = !tool.path;
     resetButton.disabled = false;
+    copyButton.style.display = 'none'; // 隐藏复制按钮直到有响应内容
 
     clearActiveState();
     if (triggerBtn) {
@@ -142,8 +170,9 @@ async function executeTool() {
         return;
     }
 
-    responseStatusElement.textContent = '请求?..';
+    responseStatusElement.textContent = '请求中...';
     responseBodyElement.textContent = '';
+    copyButton.style.display = 'none'; // 请求开始时隐藏复制按钮
 
     try {
         const response = await fetch(activeTool.path, {
@@ -163,14 +192,66 @@ async function executeTool() {
             responseBodyElement.textContent = text || '<empty response>';
         }
         responseStatusElement.textContent = `${response.status} ${response.statusText}`;
+        
+        // 请求成功后显示复制按钮
+        copyButton.style.display = 'inline-block';
     } catch (error) {
         responseStatusElement.textContent = '请求失败';
         responseBodyElement.textContent = error.message;
+        
+        // 请求失败时也显示复制按钮，方便复制错误信息
+        copyButton.style.display = 'inline-block';
     }
 }
 
 function resetPayload() {
     toolRequestBodyElement.value = defaultPayload;
+}
+
+async function copyResponse() {
+    const content = responseBodyElement.textContent;
+    if (!content || content === '{}') {
+        return;
+    }
+    
+    try {
+        await navigator.clipboard.writeText(content);
+        
+        // 临时显示复制成功提示
+        const originalText = copyButton.textContent;
+        copyButton.textContent = '已复制';
+        copyButton.disabled = true;
+        
+        setTimeout(() => {
+            copyButton.textContent = originalText;
+            copyButton.disabled = false;
+        }, 1500);
+    } catch (error) {
+        // 如果 clipboard API 不可用，使用传统方法
+        try {
+            const textArea = document.createElement('textarea');
+            textArea.value = content;
+            textArea.style.position = 'fixed';
+            textArea.style.opacity = '0';
+            document.body.appendChild(textArea);
+            textArea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textArea);
+            
+            // 显示复制成功提示
+            const originalText = copyButton.textContent;
+            copyButton.textContent = '已复制';
+            copyButton.disabled = true;
+            
+            setTimeout(() => {
+                copyButton.textContent = originalText;
+                copyButton.disabled = false;
+            }, 1500);
+        } catch (fallbackError) {
+            console.error('复制失败:', fallbackError);
+            alert('复制失败，请手动选择文本进行复制');
+        }
+    }
 }
 
 toolListElement.addEventListener('click', (event) => {
@@ -187,5 +268,6 @@ toolListElement.addEventListener('click', (event) => {
 executeButton.addEventListener('click', executeTool);
 resetButton.addEventListener('click', resetPayload);
 refreshButton.addEventListener('click', loadTools);
+copyButton.addEventListener('click', copyResponse);
 
 loadTools();

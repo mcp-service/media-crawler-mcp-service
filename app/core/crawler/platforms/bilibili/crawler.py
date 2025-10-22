@@ -21,7 +21,9 @@ from playwright._impl._errors import TargetClosedError
 from app.core.crawler import CrawlerContext
 from app.core.crawler.platforms.base import AbstractCrawler
 from app.core.crawler.store import bilibili as bilibili_store
+from app.core.crawler.tools.time_util import get_current_timestamp
 from app.config.settings import Platform, CrawlerType, global_settings
+from app.core.login import login_service
 
 from .client import BilibiliClient
 from .exception import DataFetchError
@@ -112,8 +114,24 @@ class BilibiliCrawler(AbstractCrawler):
             # 创建 Bilibili 客户端
             self.bili_client = await self.create_bilibili_client(httpx_proxy)
 
-            # 检查登录状态
-            if not await self.bili_client.pong():
+            # 优先检查登录服务中的状态，避免触发风控
+            login_status = None
+            try:
+                login_status = await login_service.get_login_status("bili")
+                logger.info(f"[BilibiliCrawler.start] 从登录服务获取状态: {login_status.get('is_logged_in', False)}")
+            except Exception as exc:
+                logger.warning(f"[BilibiliCrawler.start] 获取登录状态失败: {exc}")
+
+            # 只有在登录服务状态不可用时才使用 pong 检查
+            is_logged_in = False
+            if login_status and login_status.get('is_logged_in'):
+                is_logged_in = True
+                logger.info("[BilibiliCrawler.start] 使用登录服务状态: 已登录")
+            else:
+                logger.info("[BilibiliCrawler.start] 登录服务状态不可用，使用 pong 检查...")
+                is_logged_in = await self.bili_client.pong()
+
+            if not is_logged_in:
                 logger.info("[BilibiliCrawler.start] Not logged in, starting login process...")
                 login_obj = BilibiliLogin(
                     login_type=self.login_options.login_type,
@@ -160,7 +178,7 @@ class BilibiliCrawler(AbstractCrawler):
         search_mode = self.crawl.search_mode
 
         if search_mode == "normal":
-            return await self.search_by_keywords()
+            return await self.search_by_keywords_fast()  # 使用快速搜索
         elif search_mode == "all_in_time_range":
             return await self.search_by_keywords_in_time_range(daily_limit=False)
         elif search_mode == "daily_limit_in_time_range":
@@ -194,6 +212,121 @@ class BilibiliCrawler(AbstractCrawler):
             end_day = end_day + timedelta(days=1) - timedelta(seconds=1)
 
         return str(int(start_day.timestamp())), str(int(end_day.timestamp()))
+
+    async def search_by_keywords_fast(self) -> Dict:
+        """
+        快速搜索（不获取详细信息）
+        只返回搜索API提供的基础数据，提高响应速度
+        
+        Returns:
+            搜索结果字典
+        """
+        logger.info("[BilibiliCrawler.search_by_keywords_fast] Begin fast search bilibili keywords")
+
+        def _safe_int(value, default):
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return default
+
+        page_size = max(1, min(_safe_int(self.extra.get("page_size"), 1), 50))
+        page_num = max(1, _safe_int(self.extra.get("page_num"), 1))
+        target_notes = max(1, self.crawl.max_notes_count)
+        start_page = max(1, self.crawl.start_page)
+        keywords = self.crawl.keywords or ""
+
+        all_videos = []
+        collected_count = 0
+
+        for keyword in keywords.split(","):
+            keyword = keyword.strip()
+            if not keyword:
+                continue
+
+            logger.info(
+                "[BilibiliCrawler.search_by_keywords_fast] keyword=%s page_size=%s page_num=%s limit=%s",
+                keyword,
+                page_size,
+                page_num,
+                target_notes,
+            )
+
+            for page_index in range(page_num):
+                if collected_count >= target_notes:
+                    break
+
+                page = start_page + page_index
+                logger.info(
+                    "[BilibiliCrawler.search_by_keywords_fast] Searching keyword=%s page=%s",
+                    keyword,
+                    page,
+                )
+
+                try:
+                    videos_res = await self.bili_client.search_video_by_keyword(
+                        keyword=keyword,
+                        page=page,
+                        page_size=page_size,
+                        order=SearchOrderType.DEFAULT,
+                        pubtime_begin_s="0",
+                        pubtime_end_s="0",
+                    )
+                except Exception as exc:
+                    logger.error(
+                        "[BilibiliCrawler.search_by_keywords_fast] Error requesting page %s: %s",
+                        page,
+                        exc,
+                    )
+                    break
+
+                video_list: List[Dict] = videos_res.get("result", [])[:page_size]
+                if not video_list:
+                    logger.info(
+                        "[BilibiliCrawler.search_by_keywords_fast] No more videos for keyword '%s'",
+                        keyword,
+                    )
+                    break
+
+                # 直接处理搜索结果，不获取详细信息
+                for item in video_list:
+                    if collected_count >= target_notes:
+                        break
+                    
+                    # 从搜索结果构建基础视频信息
+                    video_info = {
+                        "video_id": str(item.get("aid", "")),
+                        "title": item.get("title", ""),
+                        "desc": item.get("description", ""),
+                        "create_time": item.get("pubdate"),
+                        "user_id": str(item.get("mid", "")),
+                        "nickname": item.get("author", ""),
+                        "video_play_count": str(item.get("play", "0")),
+                        "liked_count": "0",  # 搜索结果中没有点赞数
+                        "video_comment": "0",  # 搜索结果中没有评论数
+                        "video_url": f"https://www.bilibili.com/video/av{item.get('aid', '')}",
+                        "video_cover_url": item.get("pic", ""),
+                        "source_keyword": keyword,
+                        "bvid": item.get("bvid", ""),
+                        "duration": item.get("duration", ""),
+                        "video_type": "video",
+                    }
+                    
+                    all_videos.append(video_info)
+                    collected_count += 1
+
+                await asyncio.sleep(self.crawl.crawl_interval)
+
+        return {
+            "videos": all_videos,
+            "total_count": len(all_videos),
+            "keywords": keywords,
+            "crawl_info": {
+                "crawl_time": get_current_timestamp(),
+                "platform": "bilibili",
+                "crawler_type": "search_fast",
+                "total_videos": len(all_videos)
+            }
+        }
 
     async def search_by_keywords(self) -> Dict:
         """

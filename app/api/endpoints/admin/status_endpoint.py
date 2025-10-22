@@ -153,7 +153,8 @@ async def get_platforms_status(request):
 
             state: Optional[PlatformLoginState] = None
             try:
-                state = await login_service.refresh_platform_state(platform_code, force=True)
+                # 使用缓存状态，避免频繁风控检查
+                state = await login_service.refresh_platform_state(platform_code, force=False)
             except Exception as exc:
                 logger.warning(f"[状态监控] 刷新 {platform_code} 登录状态失败: {exc}")
                 state = None

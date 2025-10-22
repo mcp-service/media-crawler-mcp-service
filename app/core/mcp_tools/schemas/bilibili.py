@@ -1,0 +1,102 @@
+# -*- coding: utf-8 -*-
+"""Bilibili MCP 工具的数据模型定义"""
+
+from __future__ import annotations
+
+from typing import List, Optional
+from pydantic import BaseModel, Field
+
+
+class BilibiliVideoBase(BaseModel):
+    """Bilibili 视频基础信息模型"""
+    video_id: str = Field(..., description="视频 ID")
+    title: str = Field(..., description="视频标题")
+    desc: str = Field(default="", description="视频描述")
+    create_time: Optional[int] = Field(None, description="发布时间戳")
+    user_id: str = Field(..., description="用户 ID")
+    nickname: str = Field(..., description="用户昵称")
+    video_play_count: str = Field(default="0", description="播放量")
+    liked_count: str = Field(default="0", description="点赞数")
+    video_comment: str = Field(default="0", description="评论数")
+    video_url: str = Field(..., description="视频链接")
+    video_cover_url: str = Field(default="", description="封面图片链接")
+    source_keyword: str = Field(default="", description="搜索关键词")
+
+
+class BilibiliVideoSimple(BilibiliVideoBase):
+    """简化的 Bilibili 视频信息（用于搜索结果）"""
+    desc: str = Field(default="", max_length=200, description="视频描述（限制200字符）")
+    
+    @classmethod
+    def from_full_video(cls, video_data: dict) -> 'BilibiliVideoSimple':
+        """从完整视频数据创建简化版本"""
+        desc = video_data.get("desc", "")
+        if len(desc) > 200:
+            desc = desc[:200] + "..."
+            
+        return cls(
+            video_id=video_data.get("video_id", ""),
+            title=video_data.get("title", ""),
+            desc=desc,
+            create_time=video_data.get("create_time"),
+            user_id=video_data.get("user_id", ""),
+            nickname=video_data.get("nickname", ""),
+            video_play_count=video_data.get("video_play_count", "0"),
+            liked_count=video_data.get("liked_count", "0"),
+            video_comment=video_data.get("video_comment", "0"),
+            video_url=video_data.get("video_url", ""),
+            video_cover_url=video_data.get("video_cover_url", ""),
+            source_keyword=video_data.get("source_keyword", ""),
+        )
+
+
+class BilibiliVideoFull(BilibiliVideoBase):
+    """完整的 Bilibili 视频信息（用于详情获取）"""
+    avatar: str = Field(default="", description="用户头像")
+    disliked_count: str = Field(default="0", description="踩数")
+    video_favorite_count: str = Field(default="0", description="收藏数")
+    video_share_count: str = Field(default="0", description="分享数")
+    video_coin_count: str = Field(default="0", description="投币数")
+    video_danmaku: str = Field(default="0", description="弹幕数")
+    last_modify_ts: Optional[int] = Field(None, description="最后修改时间戳")
+    video_type: str = Field(default="video", description="视频类型")
+
+
+class BilibiliSearchResult(BaseModel):
+    """Bilibili 搜索结果"""
+    videos: List[BilibiliVideoSimple] = Field(default_factory=list, description="视频列表")
+    total_count: Optional[int] = Field(None, description="总数量")
+    keywords: str = Field(default="", description="搜索关键词")
+    crawl_info: dict = Field(default_factory=dict, description="爬虫信息")
+
+
+class BilibiliDetailResult(BaseModel):
+    """Bilibili 详情结果"""
+    videos: List[BilibiliVideoFull] = Field(default_factory=list, description="视频列表")
+    total_count: Optional[int] = Field(None, description="总数量")
+    crawl_info: dict = Field(default_factory=dict, description="爬虫信息")
+
+
+class BilibiliComment(BaseModel):
+    """Bilibili 评论模型"""
+    comment_id: str = Field(..., description="评论 ID")
+    parent_comment_id: str = Field(default="0", description="父评论 ID")
+    create_time: Optional[int] = Field(None, description="评论时间戳")
+    video_id: str = Field(..., description="视频 ID")
+    content: str = Field(..., description="评论内容")
+    user_id: Optional[str] = Field(None, description="用户 ID")
+    nickname: Optional[str] = Field(None, description="用户昵称")
+    sex: Optional[str] = Field(None, description="性别")
+    sign: Optional[str] = Field(None, description="个性签名")
+    avatar: Optional[str] = Field(None, description="头像")
+    sub_comment_count: str = Field(default="0", description="子评论数")
+    like_count: int = Field(default=0, description="点赞数")
+    last_modify_ts: Optional[int] = Field(None, description="最后修改时间戳")
+
+
+class BilibiliCommentsResult(BaseModel):
+    """Bilibili 评论结果"""
+    comments: List[BilibiliComment] = Field(default_factory=list, description="评论列表")
+    total_count: Optional[int] = Field(None, description="总数量")
+    video_ids: List[str] = Field(default_factory=list, description="视频 ID 列表")
+    crawl_info: dict = Field(default_factory=dict, description="爬虫信息")

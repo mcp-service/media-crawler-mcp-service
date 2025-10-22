@@ -1,0 +1,38 @@
+[
+    {
+        "user_id": "2",
+        "nickname": "碧诗",
+        "sex": "男",
+        "sign": "https://kami.im 直男过气网红 #  We Are Star Dust",
+        "avatar": "https://i2.hdslb.com/bfs/face/ef0457addb24141e15dfac6fbf45293ccf1e32ab.jpg",
+        "last_modify_ts": 1761120230426,
+        "total_fans": 1354706,
+        "total_liked": 4806682,
+        "user_rank": 6,
+        "is_official": 0
+    },
+    {
+        "user_id": "50329118",
+        "nickname": "哔哩哔哩英雄联盟赛事",
+        "sex": "保密",
+        "sign": "哔哩哔哩英雄联盟赛事官方账号，直播LPL、MSI季中赛、全明星等大型赛事。",
+        "avatar": "https://i2.hdslb.com/bfs/face/544c89e68f2b1f12ffcbb8b3c062a3328e8692d9.jpg",
+        "last_modify_ts": 1761121486984,
+        "total_fans": 16299049,
+        "total_liked": 87494243,
+        "user_rank": 6,
+        "is_official": 1
+    },
+    {
+        "user_id": "2",
+        "nickname": "碧诗",
+        "sex": "男",
+        "sign": "https://kami.im 直男过气网红 #  We Are Star Dust",
+        "avatar": "https://i2.hdslb.com/bfs/face/ef0457addb24141e15dfac6fbf45293ccf1e32ab.jpg",
+        "last_modify_ts": 1761121836281,
+        "total_fans": 1354706,
+        "total_liked": 4806695,
+        "user_rank": 6,
+        "is_official": 0
+    }
+]

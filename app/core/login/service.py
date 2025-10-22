@@ -81,7 +81,8 @@ class LoginService:
         # 如果不是 cookie 登录，先检查当前状态是否已登录，或可用缓存 Cookie
         if payload.login_type != LoginType.COOKIE.value:
             try:
-                current_state = await self.refresh_platform_state(platform, force=True)
+                # 先尝试获取缓存状态，避免触发风控检查
+                current_state = await self.refresh_platform_state(platform, force=False)
             except Exception as exc:
                 logger.warning(f"[登录管理] 刷新 {platform} 登录状态失败，继续登录流程: {exc}")
                 current_state = None
@@ -192,11 +193,24 @@ class LoginService:
         """列出所有平台的登录状态"""
         async def _collect(platform: str) -> Dict[str, Any]:
             handler = self._get_handler(platform)
+            logger.info(f"[调试] 开始收集 {platform} 平台状态")
+            
             try:
-                state = await self.refresh_platform_state(platform, force=False)
+                # 优先从存储中读取状态，避免触发风控检查
+                state = await self._storage.get_platform_state(platform)
+                logger.info(f"[调试] {platform} 从存储读取状态: {state.is_logged_in if state else 'None'}")
+                
+                if not state:
+                    # 只有在没有缓存状态时才刷新（但不强制）
+                    logger.info(f"[调试] {platform} 没有缓存，调用 refresh_platform_state")
+                    state = await self.refresh_platform_state(platform, force=False)
+                    logger.info(f"[调试] {platform} refresh 后状态: {state.is_logged_in}")
+                else:
+                    logger.info(f"[调试] {platform} 使用缓存状态，last_checked: {state.last_checked_at}, is_logged_in: {state.is_logged_in}")
+                    
             except Exception as exc:
-                logger.warning(f"[登录管理] 刷新 {platform} 登录状态失败: {exc}")
-                {
+                logger.warning(f"[登录管理] 获取 {platform} 登录状态失败: {exc}")
+                return {
                     "platform": platform,
                     "platform_name": handler.display_name,
                     "is_logged_in": False,
@@ -206,13 +220,16 @@ class LoginService:
             last_login = handler.format_last_login(state)
             if state.is_logged_in and not state.last_success_at:
                 last_login = "最近登录"
-            return {
+                
+            result = {
                 "platform": platform,
                 "platform_name": handler.display_name,
                 "is_logged_in": state.is_logged_in,
                 "last_login": last_login,
                 "session_path": str(handler.user_data_dir) if state.is_logged_in else None,
             }
+            logger.info(f"[调试] {platform} 最终返回结果: {result}")
+            return result
 
         tasks = [asyncio.create_task(_collect(platform)) for platform in self.get_supported_platforms()]
         if not tasks:
@@ -227,25 +244,46 @@ class LoginService:
         except Exception as exc:
             logger.warning(f"[登录管理] 读取 {platform} 登录状态缓存失败: {exc}")
             cached_state = None
-        if (
-            not force
-            and cached_state
-            and (time.time() - cached_state.last_checked_at) < self.STATUS_CACHE_TTL
-        ):
-            return cached_state
+            
+        # 如果有缓存状态且未强制刷新，检查是否需要刷新
+        if cached_state and not force:
+            cache_age = time.time() - cached_state.last_checked_at
+            # 如果缓存时间小于 TTL，直接返回
+            if cache_age < self.STATUS_CACHE_TTL:
+                return cached_state
+            # 如果是已登录状态且缓存时间不超过 1 小时，也直接返回（避免频繁风控检查）
+            if cached_state.is_logged_in and cache_age < 3600:
+                logger.debug(f"[登录管理] {platform} 已登录状态缓存仍有效，跳过检查")
+                return cached_state
 
         handler = self._get_handler(platform)
-        state = await handler.fetch_login_state()
-        state.touch()
-
-        if cached_state and state.is_logged_in and not state.last_success_at:
-            state.last_success_at = cached_state.last_success_at or state.last_checked_at
-
         try:
-            await self._storage.save_platform_state(state)
+            state = await handler.fetch_login_state()
+            state.touch()
+
+            if cached_state and state.is_logged_in and not state.last_success_at:
+                state.last_success_at = cached_state.last_success_at or state.last_checked_at
+
+            try:
+                await self._storage.save_platform_state(state)
+            except Exception as exc:
+                logger.warning(f"[登录管理] 写入 {platform} 登录状态缓存失败: {exc}")
+            return state
         except Exception as exc:
-            logger.warning(f"[登录管理] 写入 {platform} 登录状态缓存失败: {exc}")
-        return state
+            # 如果检查失败但有缓存状态，返回缓存状态
+            if cached_state:
+                logger.warning(f"[登录管理] {platform} 状态检查失败，使用缓存状态: {exc}")
+                return cached_state
+            
+            # 没有缓存时，创建一个默认的未登录状态
+            logger.error(f"[登录管理] {platform} 状态检查失败且无缓存: {exc}")
+            default_state = PlatformLoginState(
+                platform=platform,
+                is_logged_in=False,
+                message=f"状态检查失败: {exc}",
+                last_checked_at=time.time()
+            )
+            return default_state
 
     async def get_cookie(self, platform: str) -> Optional[str]:
         """获取平台登录 Cookie"""

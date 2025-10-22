@@ -138,10 +138,26 @@ class BilibiliLoginAdapter(BaseLoginAdapter):
             login_obj.cookie_str = cookie_candidate
             try:
                 await login_obj.login_by_cookies()
-                # Cookie 写入后刷新页面，确保状态生效
-                await context_page.goto("https://www.bilibili.com/", wait_until="networkidle")
+                
+                # 即使页面加载失败，也要检查 Cookie 是否有效
+                login_success = False
+                try:
+                    # 尝试页面加载验证
+                    await context_page.goto("https://www.bilibili.com/", 
+                                           wait_until="domcontentloaded", 
+                                           timeout=10000)
+                    login_success = await login_obj.wait_for_login(timeout=10.0, interval=0.5)
+                except Exception as page_exc:
+                    self.logger.warning(f"[登录管理] 页面加载失败，尝试直接验证 Cookie: {page_exc}")
+                    # 页面加载失败时，直接检查 Cookie 有效性
+                    try:
+                        login_success = await login_obj.has_valid_cookie()
+                        if login_success:
+                            self.logger.info(f"[登录管理] Cookie 验证成功，跳过页面加载: session_id={session.id}")
+                    except Exception as cookie_exc:
+                        self.logger.warning(f"[登录管理] Cookie 验证也失败: {cookie_exc}")
 
-                if await login_obj.wait_for_login(timeout=10.0, interval=0.5):
+                if login_success:
                     cookies = await browser_context.cookies()
                     cookie_dict = {cookie["name"]: cookie["value"] for cookie in cookies}
                     cookie_str = "; ".join(
@@ -154,7 +170,36 @@ class BilibiliLoginAdapter(BaseLoginAdapter):
                     session.message = "Cookie 登录成功"
 
                     await self.service.persist_session(session)
-                    await self.service.refresh_platform_state(session.platform, force=True)
+                    
+                    # 直接创建并保存登录状态，避免重新调用可能被风控的检查
+                    from ..models import PlatformLoginState
+                    
+                    success_state = PlatformLoginState(
+                        platform=self.platform,
+                        is_logged_in=True,
+                        cookie_str=cookie_str,
+                        cookie_dict=cookie_dict,
+                        user_info={
+                            "uid": cookie_dict.get("DedeUserID", ""),
+                            "sessdata": (
+                                cookie_dict.get("SESSDATA", "")[:20] + "..."
+                                if cookie_dict.get("SESSDATA")
+                                else ""
+                            ),
+                        },
+                        message="已登录",
+                        last_checked_at=time.time(),
+                        last_success_at=time.time(),
+                    )
+                    
+                    # 直接保存状态，避免重新检查
+                    try:
+                        await self.service._storage.save_platform_state(success_state)
+                        self.logger.info(f"[登录管理] Cookie 登录成功，状态已保存: session_id={session.id}")
+                    except Exception as save_exc:
+                        self.logger.warning(f"[登录管理] 保存登录状态失败: {save_exc}")
+                        # 即使保存失败，也不影响登录流程
+                    
                     response = {
                         "status": session.status,
                         "platform": session.platform,
@@ -167,30 +212,126 @@ class BilibiliLoginAdapter(BaseLoginAdapter):
                     await self.service.cleanup_session(session.id, remove_resources=True, drop=False)
                     return response
 
-                session.status = "failed"
-                session.message = "Cookie 登录失败，Cookie 可能已失效"
-                await self.service.persist_session(session)
+                # Cookie 登录失败，如果原始请求是二维码登录，则继续二维码流程
+                if payload.login_type == "qrcode":
+                    self.logger.info(f"[登录管理] Cookie 登录失败，回退到二维码登录: session_id={session.id}")
+                    session.login_type = LoginType.QRCODE.value  # 恢复为二维码登录
+                    session.status = "started"
+                    session.message = "Cookie 登录失败，正在生成二维码..."
+                    # 不直接返回，继续执行二维码登录逻辑
+                else:
+                    # 非二维码登录类型的 Cookie 失败，直接返回失败
+                    session.status = "failed"
+                    session.message = "Cookie 登录失败，Cookie 可能已失效"
+                    await self.service.persist_session(session)
+                    response = {
+                        "status": session.status,
+                        "platform": session.platform,
+                        "login_type": session.login_type,
+                        "message": session.message,
+                        "session_id": session.id,
+                        "qr_code_base64": session.qr_code_base64,
+                        "qrcode_timestamp": session.qrcode_timestamp,
+                    }
+                    await self.service.cleanup_session(session.id, remove_resources=True, drop=False)
+                    return response
+                    
             except Exception as exc:
-                session.status = "failed"
-                session.message = f"Cookie 登录失败: {exc}"
-                self.logger.error(
-                    f"[登录管理] Cookie 登录失败: session_id={session.id}, error={exc}"
-                )
-                await self.service.persist_session(session)
+                # Cookie 登录异常，先尝试直接验证 Cookie 是否有效
+                login_success = False
+                try:
+                    login_success = await login_obj.has_valid_cookie()
+                    if login_success:
+                        self.logger.info(f"[登录管理] Cookie 登录过程异常但 Cookie 有效: session_id={session.id}")
+                        # 直接处理登录成功逻辑
+                        cookies = await browser_context.cookies()
+                        cookie_dict = {cookie["name"]: cookie["value"] for cookie in cookies}
+                        cookie_str = "; ".join(
+                            f"{name}={value}" for name, value in cookie_dict.items()
+                        )
 
-            response = {
-                "status": session.status,
-                "platform": session.platform,
-                "login_type": session.login_type,
-                "message": session.message,
-                "session_id": session.id,
-                "qr_code_base64": session.qr_code_base64,
-                "qrcode_timestamp": session.qrcode_timestamp,
-            }
-            await self.service.cleanup_session(session.id, remove_resources=True, drop=False)
-            return response
+                        session.metadata["cookie_dict"] = cookie_dict
+                        session.metadata["cookie_str"] = cookie_str
+                        session.status = "success"
+                        session.message = "Cookie 登录成功"
 
-        if payload.login_type == "qrcode":
+                        await self.service.persist_session(session)
+                        
+                        # 直接创建并保存登录状态
+                        from ..models import PlatformLoginState
+                        
+                        success_state = PlatformLoginState(
+                            platform=self.platform,
+                            is_logged_in=True,
+                            cookie_str=cookie_str,
+                            cookie_dict=cookie_dict,
+                            user_info={
+                                "uid": cookie_dict.get("DedeUserID", ""),
+                                "sessdata": (
+                                    cookie_dict.get("SESSDATA", "")[:20] + "..."
+                                    if cookie_dict.get("SESSDATA")
+                                    else ""
+                                ),
+                            },
+                            message="已登录",
+                            last_checked_at=time.time(),
+                            last_success_at=time.time(),
+                        )
+                        
+                        try:
+                            await self.service._storage.save_platform_state(success_state)
+                            self.logger.info(f"[登录管理] Cookie 登录异常但验证成功，状态已保存: session_id={session.id}")
+                        except Exception as save_exc:
+                            self.logger.warning(f"[登录管理] 保存登录状态失败: {save_exc}")
+                        
+                        response = {
+                            "status": session.status,
+                            "platform": session.platform,
+                            "login_type": session.login_type,
+                            "message": session.message,
+                            "session_id": session.id,
+                            "qr_code_base64": session.qr_code_base64,
+                            "qrcode_timestamp": session.qrcode_timestamp,
+                        }
+                        await self.service.cleanup_session(session.id, remove_resources=True, drop=False)
+                        return response
+                except Exception as verify_exc:
+                    self.logger.warning(f"[登录管理] Cookie 验证失败: {verify_exc}")
+                    
+                # Cookie 登录异常，如果原始请求是二维码登录，则继续二维码流程
+                if payload.login_type == "qrcode":
+                    self.logger.info(
+                        f"[登录管理] Cookie 登录异常，回退到二维码登录: session_id={session.id}, error={exc}"
+                    )
+                    session.login_type = LoginType.QRCODE.value  # 恢复为二维码登录
+                    session.status = "started"
+                    session.message = "Cookie 验证失败，正在生成二维码..."
+                    # 不直接返回，继续执行二维码登录逻辑
+                else:
+                    # 非二维码登录类型的 Cookie 异常，直接返回失败
+                    session.status = "failed"
+                    session.message = f"Cookie 登录失败: {exc}"
+                    self.logger.error(
+                        f"[登录管理] Cookie 登录失败: session_id={session.id}, error={exc}"
+                    )
+                    await self.service.persist_session(session)
+                    response = {
+                        "status": session.status,
+                        "platform": session.platform,
+                        "login_type": session.login_type,
+                        "message": session.message,
+                        "session_id": session.id,
+                        "qr_code_base64": session.qr_code_base64,
+                        "qrcode_timestamp": session.qrcode_timestamp,
+                    }
+                    await self.service.cleanup_session(session.id, remove_resources=True, drop=False)
+                    return response
+
+        # 执行二维码登录逻辑（无论是直接请求二维码登录，还是从 Cookie 登录回退过来）
+        if payload.login_type == "qrcode" or session.login_type == LoginType.QRCODE.value:
+            # 确保 login_obj 使用正确的登录类型
+            login_obj.login_type = "qrcode"
+            
             session.status = "started"
             session.message = "正在生成二维码..."
             session.qrcode_timestamp = time.time()
@@ -266,7 +407,35 @@ class BilibiliLoginAdapter(BaseLoginAdapter):
                         f"[登录管理] Bilibili 登录成功: session_id={session_id}"
                     )
                     await self.service.persist_session(session)
-                    await self.service.refresh_platform_state(session.platform, force=True)
+                    
+                    # 直接创建并保存登录状态，避免重新调用可能被风控的检查
+                    from ..models import PlatformLoginState
+                    
+                    success_state = PlatformLoginState(
+                        platform=self.platform,
+                        is_logged_in=True,
+                        cookie_str=cookie_str,
+                        cookie_dict=cookie_dict,
+                        user_info={
+                            "uid": cookie_dict.get("DedeUserID", ""),
+                            "sessdata": (
+                                cookie_dict.get("SESSDATA", "")[:20] + "..."
+                                if cookie_dict.get("SESSDATA")
+                                else ""
+                            ),
+                        },
+                        message="已登录",
+                        last_checked_at=time.time(),
+                        last_success_at=time.time(),
+                    )
+                    
+                    # 直接保存状态，避免重新检查
+                    try:
+                        await self.service._storage.save_platform_state(success_state)
+                        self.logger.info(f"[登录管理] 二维码登录成功，状态已保存: session_id={session_id}")
+                    except Exception as save_exc:
+                        self.logger.warning(f"[登录管理] 保存登录状态失败: {save_exc}")
+                    
                     break
 
                 if time.time() - start_ts > timeout_seconds:
@@ -375,13 +544,25 @@ class BilibiliLoginAdapter(BaseLoginAdapter):
                 accept_downloads=True,
             )
 
-            page = await browser_context.new_page()
-            await page.goto("https://www.bilibili.com")
-
+            # 首先检查保存的 Cookie 是否包含关键字段
             cookies = await browser_context.cookies()
             cookie_str = "; ".join(f"{c['name']}={c['value']}" for c in cookies)
             cookie_dict = {c["name"]: c["value"] for c in cookies}
+            
+            # 检查关键 Cookie 是否存在
+            has_sessdata = bool(cookie_dict.get("SESSDATA"))
+            has_userid = bool(cookie_dict.get("DedeUserID"))
+            
+            if not (has_sessdata and has_userid):
+                state.is_logged_in = False
+                state.cookie_str = cookie_str
+                state.cookie_dict = cookie_dict
+                state.user_info = {}
+                state.message = "关键登录信息缺失"
+                state.last_checked_at = time.time()
+                return state
 
+            # 尝试通过 API 验证登录状态（不依赖页面加载）
             bili_client = BilibiliClient(
                 proxy=None,
                 headers={
@@ -390,12 +571,29 @@ class BilibiliLoginAdapter(BaseLoginAdapter):
                     "Origin": "https://www.bilibili.com",
                     "Referer": "https://www.bilibili.com",
                 },
-                playwright_page=page,
+                playwright_page=None,  # 先不使用页面，避免加载超时
                 cookie_dict=cookie_dict,
             )
 
-            async def _check_via_page() -> bool:
+            is_logged_in = False
+            try:
+                # 直接使用 API 检查，不依赖页面加载
+                api_result = await bili_client.pong()
+                is_logged_in = bool(api_result)
+                self.logger.debug(f"[登录管理] Bilibili API 检查结果: {is_logged_in}")
+            except Exception as api_exc:
+                self.logger.debug(f"[登录管理] Bilibili API 检查失败: {api_exc}")
+                
+                # API 失败时，尝试轻量级页面检查（使用更短的超时）
+                page = None
                 try:
+                    page = await browser_context.new_page()
+                    # 使用更短的超时时间和更宽松的等待条件
+                    await page.goto("https://www.bilibili.com/", 
+                                   wait_until="domcontentloaded",  # 只等待 DOM 加载完成
+                                   timeout=10000)  # 10秒超时
+                    
+                    # 使用页面内 API 调用验证
                     result = await page.evaluate(
                         """
                         async () => {
@@ -403,68 +601,46 @@ class BilibiliLoginAdapter(BaseLoginAdapter):
                                 const resp = await fetch("https://api.bilibili.com/x/web-interface/nav", {
                                     credentials: "include"
                                 });
-                                const status = resp.status;
-                                const text = await resp.text();
-                                let parsed = null;
-                                try { parsed = JSON.parse(text); } catch (err) { parsed = null; }
-                                return { status, body: parsed };
+                                if (resp.status !== 200) return { success: false, status: resp.status };
+                                const data = await resp.json();
+                                return { 
+                                    success: true, 
+                                    isLogin: data?.data?.isLogin || false,
+                                    code: data?.code || -1
+                                };
                             } catch (error) {
-                                return { status: 0, error: String(error) };
+                                return { success: false, error: String(error) };
                             }
                         }
                         """
                     )
-                except Exception as exc:
-                    self.logger.info(f"[登录管理] Bilibili 状态检测浏览器回退失败: {exc}")
-                    return False
+                    
+                    if isinstance(result, dict) and result.get("success"):
+                        is_logged_in = bool(result.get("isLogin", False))
+                        self.logger.debug(f"[登录管理] Bilibili 页面检查结果: {is_logged_in}")
+                    else:
+                        # 页面检查也失败，基于 Cookie 做保守判断
+                        is_logged_in = True  # 有关键 Cookie 就认为可能已登录
+                        self.logger.debug("[登录管理] 页面检查失败，基于 Cookie 保守判断为已登录")
+                        
+                except Exception as page_exc:
+                    # 页面加载失败，基于 Cookie 存在性判断
+                    is_logged_in = True  # 有关键 Cookie 就认为可能已登录
+                    self.logger.debug(f"[登录管理] 页面加载失败，基于 Cookie 判断: {page_exc}")
+                finally:
+                    if page:
+                        try:
+                            await page.close()
+                        except Exception:
+                            pass
 
-                if not isinstance(result, dict):
-                    self.logger.info(f"[登录管理] Bilibili 状态检测浏览器回退返回异常类型: {result}")
-                    return False
-                body = result.get("body")
-                if isinstance(body, dict):
-                    if body.get("code") == 0:
-                        payload = body.get("data") or {}
-                        if isinstance(payload, dict) and payload.get("isLogin"):
-                            return True
-                    if body.get("isLogin"):
-                        return True
-                else:
-                    self.logger.info(f"[登录管理] Bilibili 状态检测浏览器回退返回原始数据: {result}")
-                return False
-
-            is_logged_in = False
-            via_page_logged_in = False
-            try:
-                is_logged_in = await bili_client.pong()
-            except Exception as exc:
-                fallback = bool(cookie_dict.get("SESSDATA") and cookie_dict.get("DedeUserID"))
-                reason = str(exc)
-                if fallback and ("request was banned" in reason or "412" in reason or "风控" in reason):
-                    self.logger.debug("[登录管理] Bilibili 状态检测被风控阻断，使用 Cookie 回退结果")
-                    via_page = await _check_via_page()
-                    self.logger.debug(f"[登录管理] Bilibili 浏览器回退结果: {via_page}")
-                    if via_page:
-                        via_page_logged_in = True
-                    is_logged_in = via_page or fallback
-                else:
-                    raise
-
-            cookie_present = bool(cookie_dict.get("SESSDATA") and cookie_dict.get("DedeUserID"))
-            if not is_logged_in and cookie_present:
-                via_page_logged_in = await _check_via_page()
-                self.logger.debug(f"[登录管理] Bilibili 状态检测补充回退结果: {via_page_logged_in}")
-                if via_page_logged_in:
-                    is_logged_in = True
-                else:
-                    self.logger.info("[登录管理] Bilibili 状态检测接口被风控，基于 Cookie 兜底为已登录")
-                    is_logged_in = True
-
+            # 设置状态信息
             state.is_logged_in = is_logged_in
             state.cookie_str = cookie_str
             state.cookie_dict = cookie_dict
-            state.user_info = (
-                {
+            
+            if is_logged_in:
+                state.user_info = {
                     "uid": cookie_dict.get("DedeUserID", ""),
                     "sessdata": (
                         cookie_dict.get("SESSDATA", "")[:20] + "..."
@@ -472,25 +648,33 @@ class BilibiliLoginAdapter(BaseLoginAdapter):
                         else ""
                     ),
                 }
-                if is_logged_in
-                else {}
-            )
-            if is_logged_in:
-                if via_page_logged_in or (state.user_info and state.user_info.get("uid")):
-                    state.message = "已登录"
-                else:
-                    state.message = "Cookie 已缓存（待验证）"
+                state.message = "已登录"
+                state.last_success_at = time.time()
             else:
+                state.user_info = {}
                 state.message = "未登录"
+                
             state.last_checked_at = time.time()
-            if is_logged_in:
-                state.last_success_at = state.last_checked_at
             return state
+            
         except Exception as exc:
             self.logger.error(f"[登录管理] 检查 Bilibili 登录状态失败: {exc}")
-            state.message = f"状态检查失败: {exc}"
-            state.last_checked_at = time.time()
-            return state
+            # 即使检查失败，也尝试基于现有数据返回状态
+            try:
+                cookies = await browser_context.cookies() if browser_context else []
+                cookie_dict = {c["name"]: c["value"] for c in cookies}
+                has_key_cookies = bool(cookie_dict.get("SESSDATA") and cookie_dict.get("DedeUserID"))
+                
+                state.is_logged_in = has_key_cookies
+                state.cookie_str = "; ".join(f"{c['name']}={c['value']}" for c in cookies)
+                state.cookie_dict = cookie_dict
+                state.message = f"状态检查失败，基于 Cookie 判断: {'可能已登录' if has_key_cookies else '未登录'}"
+                state.last_checked_at = time.time()
+                return state
+            except Exception:
+                state.message = f"状态检查失败: {exc}"
+                state.last_checked_at = time.time()
+                return state
         finally:
             if browser_context:
                 try:

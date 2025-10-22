@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import time
 from typing import Any, Dict, List, Optional
+from pathlib import Path
 
 import ujson
 
@@ -23,7 +24,7 @@ class RedisLoginStorage:
     PLATFORM_STATE_KEY_PREFIX = "login:platform:state:"
     PLATFORM_INDEX_KEY = "login:platform:index"
 
-    def __init__(self, session_ttl: int = 86400, platform_ttl: int = 600):
+    def __init__(self, session_ttl: int = 86400, platform_ttl: int = 7 * 86400):  # 平台状态改为 7 天
         self.session_ttl = session_ttl
         self.platform_ttl = platform_ttl
         self.logger = get_logger()
@@ -124,8 +125,11 @@ class RedisLoginStorage:
     async def get_platform_state(self, platform: str) -> Optional[PlatformLoginState]:
         data = await self.get_platform_state_raw(platform)
         if not data:
+            self.logger.info(f"[调试] {platform} 存储中没有状态数据")
             return None
-        return PlatformLoginState.from_storage_dict(data)
+        state = PlatformLoginState.from_storage_dict(data)
+        self.logger.info(f"[调试] {platform} 从存储加载状态: is_logged_in={state.is_logged_in}, message='{state.message}'")
+        return state
 
     async def remove_platform_state(self, platform: str) -> None:
         await async_redis_storage.delete(self._platform_state_key(platform))
