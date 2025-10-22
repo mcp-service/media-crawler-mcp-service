@@ -1,3 +1,0 @@
-[submodule "media_crawler"]
-	path = media_crawler
-	url = https://github.com/NanmiCoder/MediaCrawler.git
