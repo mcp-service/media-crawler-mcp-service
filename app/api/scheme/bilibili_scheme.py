@@ -83,7 +83,8 @@ class BiliCreatorRequest(_BaseCrawlerRequest):
     """Bilibili 创作者内容请求"""
 
     creator_ids: List[str] = Field(..., min_length=1, description="创作者ID列表")
-    creator_mode: bool = Field(default=True, description="True=抓取作品，False=抓取创作者信息")
+    page_num: int = Field(default=1, ge=1, description="页码，从1开始")
+    page_size: int = Field(default=30, ge=1, le=50, description="每页数量")
 
     @model_validator(mode="after")
     def sanitize_ids(self) -> "BiliCreatorRequest":
@@ -96,7 +97,8 @@ class BiliCreatorRequest(_BaseCrawlerRequest):
     def to_service_params(self) -> Dict[str, Any]:
         params: Dict[str, Any] = {
             "creator_ids": self.creator_ids,
-            "creator_mode": self.creator_mode,
+            "page_num": self.page_num,
+            "page_size": self.page_size,
         }
         params.update(self._collect_common_params())
         return params

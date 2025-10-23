@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 from playwright.async_api import BrowserContext, BrowserType, async_playwright
+from playwright._impl._errors import TargetClosedError
 
 from app.config.settings import CrawlerType, Platform, global_settings
 from app.core.crawler import CrawlerContext
@@ -51,7 +52,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
         self.browser_context: Optional[BrowserContext] = None
 
     async def start(self) -> Dict[str, Any]:
-        logger.info("[xhs.crawler] start crawler type=%s", self.ctx.crawler_type.value)
+        logger.info(f"[xhs.crawler] start crawler type={self.ctx.crawler_type.value}")
         async with async_playwright() as playwright:
             chromium = playwright.chromium
 
@@ -90,32 +91,45 @@ class XiaoHongShuCrawler(AbstractCrawler):
         sleep_interval = float(self.extra.get("sleep_interval", self.crawl_opts.crawl_interval))
         note_type = SearchNoteType(self.extra.get("note_type", SearchNoteType.ALL.value))
         sort_type = SearchSortType(self.extra.get("sort_type", SearchSortType.GENERAL.value))
-        start_page = int(self.extra.get("start_page", self.crawl_opts.start_page or 1))
+        
+        # 支持分页参数传入，不再使用while循环
+        page_num = int(self.extra.get("page_num", self.crawl_opts.start_page or 1))
+        page_size = int(self.extra.get("page_size", 20))  # 每页数量
 
         collected: List[Dict[str, Any]] = []
 
         for keyword in keyword_list:
-            page = start_page
-            search_id = get_search_id()
-
-            while len(collected) < limit:
-                logger.info("[xhs.search] keyword=%s page=%s collected=%s", keyword, page, len(collected))
+            try:
+                search_id = get_search_id()
+                
+                logger.info(f"[xhs.search] keyword={keyword} page={page_num} page_size={page_size}")
                 payload = await self.client.get_note_by_keyword(
                     keyword=keyword,
-                    page=page,
+                    page=page_num,
                     sort=sort_type,
                     note_type=note_type,
                     search_id=search_id,
                 )
+
+                logger.info(f"[xhs.search] API response payload keys: {payload.keys() if payload else 'None'}")
+                if not payload:
+                    logger.warning(f"[xhs.search] Empty payload for keyword={keyword}")
+                    continue
 
                 items = [
                     item
                     for item in payload.get("items") or []
                     if item.get("model_type") not in ("rec_query", "hot_query")
                 ]
+                
+                logger.info(f"[xhs.search] Filtered items count: {len(items)} for keyword={keyword}")
                 if not items:
-                    break
+                    logger.info(f"[xhs.search] No items found for keyword={keyword} on page={page_num}")
+                    continue
 
+                # 限制每个关键词的结果数量
+                items = items[:min(page_size, limit - len(collected))]
+                
                 details = await self._gather_details_from_items(items)
                 for detail in details:
                     if not detail:
@@ -127,16 +141,25 @@ class XiaoHongShuCrawler(AbstractCrawler):
                     if len(collected) >= limit:
                         break
 
-                if not payload.get("has_more", False):
+                if len(collected) >= limit:
                     break
 
-                page += 1
                 if sleep_interval > 0:
                     await asyncio.sleep(sleep_interval)
+                    
+            except Exception as e:
+                logger.error(f"[xhs.search] Error processing keyword={keyword}: {type(e).__name__}: {e}")
+                # 继续处理下一个关键词，而不是让整个搜索失败
+                continue
 
         return {
             "notes": collected,
             "total_count": len(collected),
+            "page_info": {
+                "current_page": page_num,
+                "page_size": page_size,
+                "has_more": len(collected) == page_size  # 如果当前页满了，可能还有更多
+            },
             "crawl_info": self._build_crawl_info(),
         }
 
@@ -270,8 +293,16 @@ class XiaoHongShuCrawler(AbstractCrawler):
         return browser_context
 
     async def close(self):
-        if self.browser_context:
-            await self.browser_context.close()
+        """关闭浏览器上下文"""
+        try:
+            if self.browser_context:
+                await self.browser_context.close()
+            logger.info("[XiaoHongShuCrawler.close] Browser context closed")
+        except TargetClosedError:
+            logger.warning("[XiaoHongShuCrawler.close] Browser context was already closed")
+        except Exception as e:
+            logger.error(f"[XiaoHongShuCrawler.close] Error during close: {e}")
+            # 不要重新抛出异常，避免影响调用方
 
     async def _ensure_login_state(self) -> None:
         state = await login_service.refresh_platform_state(Platform.XIAOHONGSHU.value, force=False)
@@ -348,7 +379,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
                     enable_cookie=True,
                 )
                 if not detail:
-                    logger.warning("[xhs.detail] 获取笔记失败 note_id=%s", note_id)
+                    logger.warning(f"[xhs.detail] 获取笔记失败 note_id={note_id}")
                     return None
 
             detail["xsec_token"] = xsec_token

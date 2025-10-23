@@ -157,12 +157,13 @@ class BilibiliCrawler(AbstractCrawler):
                     )
             elif self.crawler_type == CrawlerType.CREATOR:
                 if self.crawl.creator_ids:
-                    creator_mode = self.extra.get('creator_mode', True)
-                    if creator_mode:
-                        for creator_id in self.crawl.creator_ids:
-                            await self.get_creator_videos(int(creator_id))
-                    else:
-                        await self.get_all_creator_details([int(cid) for cid in self.crawl.creator_ids])
+                    # 获取分页参数
+                    page_num = self.extra.get('page_num', 1)
+                    page_size = self.extra.get('page_size', 30)
+                    result = {}
+                    for creator_id in self.crawl.creator_ids:
+                        tmp = await self.get_creator_videos(creator_id, page_num, page_size)
+                        result[creator_id] = tmp
             elif self.crawler_type == CrawlerType.COMMENTS:
                 if self.crawl.note_ids:
                     result = await self.fetch_comments_for_ids(self.crawl.note_ids)
@@ -676,33 +677,87 @@ class BilibiliCrawler(AbstractCrawler):
                 logger.error(f"[BilibiliCrawler.get_comments] Unexpected error for {video_id}: {e}")
                 raise
 
-    async def get_creator_videos(self, creator_id: int):
+    async def get_creator_videos(self, creator_id: str, page_num: int = 1, page_size: int = 30) -> Dict:
         """
-        获取创作者的视频列表
-
+        获取创作者的视频列表，支持分页
+        
         Args:
             creator_id: 创作者ID
+            page_num: 页码，从1开始
+            page_size: 每页数量，默认30
+            
+        Returns:
+            格式化的创作者视频数据
         """
-        logger.info(f"[BilibiliCrawler.get_creator_videos] Getting videos for creator: {creator_id}")
-        ps = 30
-        pn = 1
+        logger.info(f"[BilibiliCrawler.get_creator_videos] Getting videos for creator: {creator_id}, page: {page_num}, size: {page_size}")
 
-        source_label = f"creator:{creator_id}"
+        result = await self.bili_client.get_creator_videos(creator_id, page_num, page_size)
+        logger.info(f"[BilibiliCrawler.get_creator_videos] Getting videos -----> result {result}")
+        # 从结果中提取创作者信息
+        video_list = result.get("list", {}).get("vlist", [])
+        creator_info = None
+        
+        if video_list:
+            first_video = video_list[0]
+            creator_info = {
+                "creator_id": str(creator_id),
+                "creator_name": first_video.get("author", ""),
+                "total_videos": result.get("page", {}).get("count", 0)
+            }
+        
+        # 处理当前页的视频列表
+        all_videos = []
+        for video in video_list:
+            aid = video.get("aid")
+            if not aid:
+                continue
+                
+            # 构建视频信息，使用类似search的格式
+            video_info = {
+                "video_id": str(aid),
+                "title": video.get("title", ""),
+                "desc": video.get("description", ""),
+                "create_time": video.get("created"),
+                "user_id": str(video.get("mid", "")),
+                "nickname": video.get("author", ""),
+                "video_play_count": str(video.get("play", 0)),
+                "liked_count": "0",  # creator API中没有点赞数
+                "video_comment": str(video.get("comment", 0)),
+                "video_url": f"https://www.bilibili.com/video/{video.get('bvid', '')}",
+                "video_cover_url": video.get("pic", ""),
+                "source_keyword": f"creator:{creator_id}",
+                "aid": str(aid),
+                "bvid": video.get("bvid", ""),
+                "duration": video.get("length", ""),
+                "video_type": "video",
+                "typeid": video.get("typeid"),
+                "copyright": video.get("copyright"),
+            }
+            all_videos.append(video_info)
 
-        while True:
-            result = await self.bili_client.get_creator_videos(creator_id, pn, ps)
-            video_bvids_list = [video["bvid"] for video in result.get("list", {}).get("vlist", [])]
-
-            if not video_bvids_list:
-                break
-
-            await self.get_specified_videos(video_bvids_list, source_keyword=source_label)
-
-            if int(result.get("page", {}).get("count", 0)) <= pn * ps:
-                break
-
-            await asyncio.sleep(self.crawl.crawl_interval)
-            pn += 1
+        return {
+            "creator_info": creator_info or {
+                "creator_id": str(creator_id),
+                "creator_name": "Unknown",
+                "total_videos": 0
+            },
+            "videos": all_videos,
+            "total_count": len(all_videos),
+            "page_info": {
+                "current_page": page_num,
+                "page_size": page_size,
+                "total_videos": result.get("page", {}).get("count", 0),
+                "has_more": len(all_videos) == page_size  # 如果当前页满了，可能还有更多
+            },
+            "crawl_info": {
+                "crawl_time": get_current_timestamp(),
+                "platform": "bilibili",
+                "crawler_type": "creator",
+                "total_videos": len(all_videos),
+                "page_num": page_num,
+                "page_size": page_size
+            }
+        }
 
     async def get_specified_videos(self, video_ids: List[str], source_keyword: str = "") -> Dict:
         """
@@ -728,25 +783,29 @@ class BilibiliCrawler(AbstractCrawler):
 
             lowered = cleaned_id.lower()
             aid = 0
-            bvid = ""
 
             if lowered.startswith("bv"):
-                bvid = cleaned_id.upper()
+                # 对于BV号，暂时跳过，因为detail API需要aid
+                logger.warning(f"[BilibiliCrawler.get_specified_videos] 跳过BV号 {cleaned_id}，detail API需要aid")
+                continue
             elif lowered.startswith("av") and lowered[2:].isdigit():
                 aid = int(lowered[2:])
             elif cleaned_id.isdigit():
                 aid = int(cleaned_id)
             else:
-                # fallback 传入其它格式时按 BV 处理，交由 API 校验
-                bvid = cleaned_id
+                # 其他格式跳过
+                logger.warning(f"[BilibiliCrawler.get_specified_videos] 跳过未识别格式 {cleaned_id}，仅支持aid格式")
+                continue
 
-            task_list.append(
-                self.get_video_info_task(
-                    aid=aid,
-                    bvid=bvid,
-                    semaphore=semaphore,
+            # 只处理有效的aid
+            if aid > 0:
+                task_list.append(
+                    self.get_video_info_task(
+                        aid=aid,
+                        bvid="",  # 不再使用bvid
+                        semaphore=semaphore,
+                    )
                 )
-            )
 
         video_details = await asyncio.gather(*task_list)
 

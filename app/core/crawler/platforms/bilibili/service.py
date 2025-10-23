@@ -253,28 +253,30 @@ async def get_detail(
 
 async def get_creator(
     *,
-    creator_ids: List[str],
-    creator_mode: bool = True,
+    creator_id: str,
+    page_num: int = 1,
+    page_size: int = 30,
     headless: Optional[bool] = None,
     **kwargs: Any,
 ) -> Dict[str, Any]:
     logger.info(
-        f"[bilibili.core.get_creator] creator_count={len(creator_ids)} "
-        f"creator_mode={creator_mode}"
+        f"[bilibili.core.get_creator] creator_id={creator_id} "
+        f"page={page_num} size={page_size}"
     )
 
     enable_save_media = kwargs.pop("enable_save_media", None)
     extra = dict(kwargs) if kwargs else {}
-    extra["creator_mode"] = creator_mode
+    extra["page_num"] = page_num
+    extra["page_size"] = page_size
 
     login_cookie = await login_service.get_cookie(Platform.BILIBILI.value)
 
     context = _build_common_context(
         crawler_type=CrawlerType.CREATOR,
-        creator_ids=creator_ids,
+        creator_ids=[creator_id],  # 转换为单元素列表以保持兼容
         headless=headless,
         enable_comments=False,
-        max_notes=len(creator_ids),
+        max_notes=1,
         max_comments_per_note=0,
         enable_save_media=enable_save_media,
         extra=extra,

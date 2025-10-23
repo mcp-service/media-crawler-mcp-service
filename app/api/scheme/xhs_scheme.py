@@ -29,10 +29,9 @@ class _XhsBaseRequest(BaseModel):
 
 
 class XhsSearchRequest(_XhsBaseRequest):
-    keywords: str = Field(..., description="搜索关键词，多个关键词用逗号分隔")
-    limit: int = Field(20, ge=1, le=200, description="最大抓取数量")
-    enable_comments: bool = Field(False, description="是否同步抓取评论")
-    max_comments_per_note: int = Field(0, ge=0, description="单条笔记最大评论数")
+    keywords: str = Field(..., description="搜索关键词，多个关键词用逗号分隔", examples=["美食,旅游", "护肤"])
+    page_num: int = Field(1, ge=1, description="页码，从1开始", examples=[1, 2])
+    page_size: int = Field(20, ge=1, le=50, description="每页数量", examples=[20, 30])
 
     @model_validator(mode="after")
     def validate_keywords(self) -> "XhsSearchRequest":
@@ -45,18 +44,19 @@ class XhsSearchRequest(_XhsBaseRequest):
     def to_service_params(self) -> Dict[str, Any]:
         params = {
             "keywords": self.keywords,
-            "limit": self.limit,
-            "enable_comments": self.enable_comments,
-            "max_comments_per_note": self.max_comments_per_note,
         }
         params.update(self.to_common_params())
+        # 添加分页参数到 extra
+        extra = params.setdefault("options", {})
+        extra["page_num"] = self.page_num
+        extra["page_size"] = self.page_size
         return params
 
 
 class XhsDetailRequest(_XhsBaseRequest):
-    note_urls: List[str] = Field(..., min_length=1, description="笔记 URL 或 note_id 列表")
-    enable_comments: bool = Field(True, description="是否抓取评论")
-    max_comments_per_note: int = Field(50, ge=0, description="单条笔记最大评论数")
+    note_urls: List[str] = Field(..., min_length=1, description="笔记 URL 或 note_id 列表", examples=[["https://www.xiaohongshu.com/explore/12345"], ["https://www.xiaohongshu.com/explore/12345", "https://www.xiaohongshu.com/explore/67890"]])
+    enable_comments: bool = Field(True, description="是否抓取评论", examples=[True, False])
+    max_comments_per_note: int = Field(50, ge=0, description="单条笔记最大评论数", examples=[50, 100])
 
     @model_validator(mode="after")
     def sanitize_urls(self) -> "XhsDetailRequest":
@@ -77,9 +77,9 @@ class XhsDetailRequest(_XhsBaseRequest):
 
 
 class XhsCreatorRequest(_XhsBaseRequest):
-    creator_ids: List[str] = Field(..., min_length=1, description="创作者 ID 或主页 URL 列表")
-    enable_comments: bool = Field(False, description="是否抓取评论")
-    max_comments_per_note: int = Field(0, ge=0, description="单条笔记最大评论数")
+    creator_ids: List[str] = Field(..., min_length=1, description="创作者 ID 或主页 URL 列表", examples=[["user123"], ["user123", "user456"]])
+    enable_comments: bool = Field(False, description="是否抓取评论", examples=[False, True])
+    max_comments_per_note: int = Field(0, ge=0, description="单条笔记最大评论数", examples=[0, 20])
 
     @model_validator(mode="after")
     def sanitize_ids(self) -> "XhsCreatorRequest":
@@ -100,8 +100,8 @@ class XhsCreatorRequest(_XhsBaseRequest):
 
 
 class XhsCommentsRequest(_XhsBaseRequest):
-    note_urls: List[str] = Field(..., min_length=1, description="笔记 URL 或 note_id 列表")
-    max_comments: int = Field(50, ge=1, description="单条笔记最大评论数")
+    note_urls: List[str] = Field(..., min_length=1, description="笔记 URL 或 note_id 列表", examples=[["https://www.xiaohongshu.com/explore/12345"], ["https://www.xiaohongshu.com/explore/12345", "https://www.xiaohongshu.com/explore/67890"]])
+    max_comments: int = Field(50, ge=1, description="单条笔记最大评论数", examples=[50, 100])
 
     @model_validator(mode="after")
     def sanitize_urls(self) -> "XhsCommentsRequest":

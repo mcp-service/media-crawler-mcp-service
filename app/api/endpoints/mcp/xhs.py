@@ -64,7 +64,7 @@ async def xhs_search_http(request):
         result = await xhs_tools.xhs_search(**req.to_service_params())
         return jsonify_response(_as_dict(result))
     except Exception as exc:  # pragma: no cover - runtime safeguard
-        logger.error("[xhs.search] failed: %s", exc)
+        logger.error(f"[xhs.search] failed: {exc}")
         return _server_error(f"小红书搜索失败: {exc}")
 
 

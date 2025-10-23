@@ -5,7 +5,7 @@ const apiBase = '/mcp';
 const defaultPayloads = {
     bili_search: { keywords: "纯圆大嬛嬛", page_size: 5, page_num: 1 },
     bili_detail: { video_ids: ["115285696846946"] },
-    bili_creator: { creator_ids: ["99801185"], creator_mode: true },
+    bili_creator: { creator_ids: ["99801185"], page_num: 1, page_size: 30 },
     bili_search_time_range: {
         keywords: "纯圆大嬛嬛",
         start_day: "2024-01-01",
@@ -13,7 +13,11 @@ const defaultPayloads = {
         page_size: 5,
         page_num: 1
     },
-    bili_comments: { video_ids: ["115285696846946"], max_comments: 20, fetch_sub_comments: false }
+    bili_comments: { video_ids: ["115285696846946"], max_comments: 20, fetch_sub_comments: false },
+    xhs_search: { keywords: "护肤,美食", page_num: 1, page_size: 20 },
+    xhs_detail: { note_urls: ["https://www.xiaohongshu.com/explore/12345"], enable_comments: true, max_comments_per_note: 50 },
+    xhs_creator: { creator_ids: ["user123"], enable_comments: false, max_comments_per_note: 0 },
+    xhs_comments: { note_urls: ["https://www.xiaohongshu.com/explore/12345"], max_comments: 50 }
 };
 
 const toolListElement = document.getElementById('tool-list');

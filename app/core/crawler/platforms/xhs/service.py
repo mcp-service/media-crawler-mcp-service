@@ -104,20 +104,21 @@ def _build_context(
 async def search(
     *,
     keywords: str,
-    limit: int = 20,
-    enable_comments: bool = False,
-    max_comments_per_note: int = 0,
     headless: Optional[bool] = None,
     enable_save_media: Optional[bool] = None,
     **kwargs,
 ) -> Dict[str, Any]:
     login_cookie = await login_service.get_cookie(Platform.XIAOHONGSHU.value)
+    
+    # 从kwargs中获取分页参数，使用page_size作为max_notes
+    page_size = kwargs.get("page_size", 20)
+    
     context = _build_context(
         crawler_type=CrawlerType.SEARCH,
         keywords=keywords,
-        enable_comments=enable_comments,
-        max_notes=limit,
-        max_comments=max_comments_per_note,
+        enable_comments=False,  # 搜索不获取评论
+        max_notes=page_size,
+        max_comments=0,  # 搜索不获取评论
         headless=headless,
         enable_save_media=enable_save_media,
         extra={**kwargs, "login_cookie": login_cookie},

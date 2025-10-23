@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-"""Xiaohongshu login adapter exports."""
+"""小红书登录模块"""
 
-from .adapter import XiaoHongShuLoginAdapter
+from .login import XiaoHongShuLogin, DISPLAY_NAME, get_user_data_dir
 
-__all__ = ["XiaoHongShuLoginAdapter"]
+__all__ = ["XiaoHongShuLogin", "DISPLAY_NAME", "get_user_data_dir"]

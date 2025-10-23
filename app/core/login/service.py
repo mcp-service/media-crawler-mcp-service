@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 登录核心服务
 """
@@ -12,9 +11,8 @@ from typing import Any, Dict, List, Optional
 from app.config.settings import Platform, LoginType, global_settings
 from app.providers.logger import get_logger
 
-from .base import BaseLoginAdapter
-from .bilibili import BilibiliLoginAdapter
-from .xhs import XiaoHongShuLoginAdapter
+from .bilibili import login as bili_login
+from .xhs import login as xhs_login
 from .exceptions import LoginServiceError
 from .models import LoginSession, LoginStartPayload, PlatformLoginState
 from .storage import RedisLoginStorage
@@ -32,9 +30,10 @@ class LoginService:
         self._active_sessions: Dict[str, LoginSession] = {}
         self._active_sessions_lock = asyncio.Lock()
         self._storage = RedisLoginStorage()
-        self._handlers: Dict[str, BaseLoginAdapter] = {
-            Platform.BILIBILI.value: BilibiliLoginAdapter(self),
-            Platform.XIAOHONGSHU.value: XiaoHongShuLoginAdapter(self),
+        # 直接使用各平台的登录模块
+        self._platform_modules = {
+            Platform.BILIBILI.value: bili_login,
+            Platform.XIAOHONGSHU.value: xhs_login,
         }
 
     # === 基础能力 ===
@@ -45,17 +44,23 @@ class LoginService:
             p.value
             for p in global_settings.platform.enabled_platforms
         ]
-        return [platform for platform in self._handlers if platform in enabled]
+        return [platform for platform in self._platform_modules if platform in enabled]
 
     def get_session(self, session_id: str) -> Optional[LoginSession]:
         """获取活跃会话（仅限当前进程内存）"""
         return self._active_sessions.get(session_id)
 
-    def _get_handler(self, platform: str) -> BaseLoginAdapter:
-        handler = self._handlers.get(platform)
-        if not handler:
+    def _get_platform_module(self, platform: str):
+        """获取平台登录模块"""
+        module = self._platform_modules.get(platform)
+        if not module:
             raise LoginServiceError(f"平台 {platform} 暂不支持或未启用登录功能")
-        return handler
+        return module
+
+    def get_platform_display_name(self, platform: str) -> str:
+        """获取平台显示名称"""
+        module = self._get_platform_module(platform)
+        return getattr(module, 'DISPLAY_NAME', platform)
 
     async def _register_active_session(self, session: LoginSession):
         async with self._active_sessions_lock:
@@ -78,7 +83,7 @@ class LoginService:
     async def start_login(self, payload: LoginStartPayload) -> Dict[str, Any]:
         """启动登录流程"""
         platform = payload.platform
-        handler = self._get_handler(platform)
+        platform_module = self._get_platform_module(platform)
 
         # 如果不是 cookie 登录，先检查当前状态是否已登录，或可用缓存 Cookie
         if payload.login_type != LoginType.COOKIE.value:
@@ -117,7 +122,8 @@ class LoginService:
         await self.persist_session(session)
 
         try:
-            response = await handler.start_login(session, payload)
+            # 直接调用平台登录模块
+            response = await platform_module.start_login(self, session, payload)
             await self.persist_session(session)
             return response
         except Exception as exc:
@@ -134,12 +140,12 @@ class LoginService:
 
     async def get_login_status(self, platform: str) -> Dict[str, Any]:
         """获取平台登录状态"""
-        handler = self._get_handler(platform)
+        platform_module = self._get_platform_module(platform)
         state = await self.refresh_platform_state(platform, force=False)
         message = state.message or ("已登录" if state.is_logged_in else "未登录")
         return {
             "platform": platform,
-            "platform_name": handler.display_name,
+            "platform_name": self.get_platform_display_name(platform),
             "is_logged_in": state.is_logged_in,
             "user_info": state.user_info,
             "message": message,
@@ -147,8 +153,8 @@ class LoginService:
 
     async def logout(self, platform: str) -> Dict[str, Any]:
         """退出登录"""
-        handler = self._get_handler(platform)
-        await handler.logout()
+        platform_module = self._get_platform_module(platform)
+        await platform_module.logout(self)
 
         state = PlatformLoginState(
             platform=platform,
@@ -194,7 +200,7 @@ class LoginService:
     async def list_sessions(self) -> List[Dict[str, Any]]:
         """列出所有平台的登录状态"""
         async def _collect(platform: str) -> Dict[str, Any]:
-            handler = self._get_handler(platform)
+            platform_module = self._get_platform_module(platform)
             logger.info(f"[调试] 开始收集 {platform} 平台状态")
             
             try:
@@ -214,21 +220,22 @@ class LoginService:
                 logger.warning(f"[登录管理] 获取 {platform} 登录状态失败: {exc}")
                 return {
                     "platform": platform,
-                    "platform_name": handler.display_name,
+                    "platform_name": self.get_platform_display_name(platform),
                     "is_logged_in": False,
                     "last_login": "未知",
                     "session_path": None,
                 }
-            last_login = handler.format_last_login(state)
+            
+            last_login = self._format_last_login(state)
             if state.is_logged_in and not state.last_success_at:
                 last_login = "最近登录"
                 
             result = {
                 "platform": platform,
-                "platform_name": handler.display_name,
+                "platform_name": self.get_platform_display_name(platform),
                 "is_logged_in": state.is_logged_in,
                 "last_login": last_login,
-                "session_path": str(handler.user_data_dir) if state.is_logged_in else None,
+                "session_path": str(platform_module.get_user_data_dir()) if state.is_logged_in else None,
             }
             logger.info(f"[调试] {platform} 最终返回结果: {result}")
             return result
@@ -238,6 +245,13 @@ class LoginService:
             return []
         results: List[Dict[str, Any]] = await asyncio.gather(*tasks)
         return results
+
+    def _format_last_login(self, state: PlatformLoginState) -> str:
+        """格式化最近登录时间"""
+        if state.last_success_at:
+            from time import localtime, strftime
+            return strftime("%Y-%m-%d %H:%M:%S", localtime(state.last_success_at))
+        return "从未登录"
 
     async def refresh_platform_state(self, platform: str, force: bool = False) -> PlatformLoginState:
         """刷新或获取平台登录状态（带缓存）"""
@@ -258,9 +272,9 @@ class LoginService:
                 logger.debug(f"[登录管理] {platform} 已登录状态缓存仍有效，跳过检查")
                 return cached_state
 
-        handler = self._get_handler(platform)
+        platform_module = self._get_platform_module(platform)
         try:
-            state = await handler.fetch_login_state()
+            state = await platform_module.fetch_login_state(self)
             state.touch()
 
             if cached_state and state.is_logged_in and not state.last_success_at:

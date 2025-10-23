@@ -14,6 +14,7 @@ from .schemas.bilibili import (
     BilibiliVideoFull,
     BilibiliCommentsResult,
     BilibiliComment,
+    BilibiliCreatorResult,
     TagInfo,
 )
 
@@ -59,6 +60,33 @@ def _process_detail_result(raw_result: dict) -> BilibiliDetailResult:
     return BilibiliDetailResult(
         videos=videos,
         total_count=raw_result.get("total_count"),
+        crawl_info=raw_result.get("crawl_info", {}),
+    )
+
+
+def _process_creator_result(raw_result: dict) -> BilibiliCreatorResult:
+    """处理创作者结果，转换为结构化模型"""
+    if not isinstance(raw_result, dict):
+        return BilibiliCreatorResult(
+            creator_info={"creator_id": "", "creator_name": "", "total_videos": 0},
+            videos=[]
+        )
+
+    videos = []
+    if "videos" in raw_result and isinstance(raw_result["videos"], list):
+        for video_data in raw_result["videos"]:
+            try:
+                simple_video = BilibiliVideoSimple(**video_data)
+                videos.append(simple_video)
+            except Exception as e:
+                # 如果某个视频数据有问题，跳过但不影响其他视频
+                continue
+
+    return BilibiliCreatorResult(
+        creator_info=raw_result.get("creator_info", {}),
+        videos=videos,
+        total_count=raw_result.get("total_count"),
+        page_info=raw_result.get("page_info", {}),
         crawl_info=raw_result.get("crawl_info", {}),
     )
 
@@ -200,27 +228,59 @@ async def bili_detail(
         enable_save_media=save_media,
     )
     
-    # 转换为完整的结构化数据
-    structured_result = _process_detail_result(raw_result)
-    return structured_result.model_dump_json(ensure_ascii=False, indent=2)
+    # 直接返回原始结果，不进行格式化处理
+    return json.dumps(raw_result, ensure_ascii=False, indent=2)
 
 
 async def bili_creator(
     creator_ids: List[str],
-    creator_mode: bool = True,
-    headless: Optional[bool] = None,  # 改为 None
+    page_num: int = 1,
+    page_size: int = 30,
+    headless: Optional[bool] = None,
     save_media: bool = False,
 ) -> str:
     """
-    获取指定创作者的视频。
+    获取指定创作者的视频，支持批量获取多个创作者，支持分页。
+
+    Args:
+        creator_ids: 创作者ID列表，例如: ["99801185", "12345678"]
+        page_num: 页码，从1开始，默认 1
+        page_size: 每页视频数量，默认 30
+        headless: 是否使用无头浏览器，None 使用全局配置
+        save_media: 是否保存媒体资源（图片、视频），默认 False
+
+    Returns:
+        JSON字符串，包含所有创作者信息和视频列表
+
+    Example:
+        creator_ids=["99801185", "12345678"], page_num=1, page_size=10
     """
-    result = await bilibili_core.get_creator(
-        creator_ids=creator_ids,
-        creator_mode=creator_mode,
-        headless=headless,
-        enable_save_media=save_media,
-    )
-    return json.dumps(result, ensure_ascii=False, indent=2)
+    import asyncio
+    
+    all_results = {}
+    
+    for i, creator_id in enumerate(creator_ids):
+        try:
+            raw_result = await bilibili_core.get_creator(
+                creator_id=creator_id,
+                page_num=page_num,
+                page_size=page_size,
+                headless=headless,
+                enable_save_media=save_media,
+            )
+            
+            # 转换为结构化数据
+            structured_result = _process_creator_result(raw_result)
+            all_results[creator_id] = structured_result.model_dump()
+            
+        except Exception as e:
+            all_results[creator_id] = {"error": str(e), "creator_id": creator_id}
+        
+        # 多个用户之间添加间隔，避免风控（最后一个不需要间隔）
+        if i < len(creator_ids) - 1:
+            await asyncio.sleep(2)  # 2秒间隔
+    
+    return json.dumps(all_results, ensure_ascii=False, indent=2)
 
 
 async def bili_comments(

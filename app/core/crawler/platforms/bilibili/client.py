@@ -195,22 +195,18 @@ class BilibiliClient:  # 移除 AbstractApiClient 继承
         }
         return await self.get(uri, post_data)
 
-    async def get_video_info(self, aid: Union[int, None] = None, bvid: Union[str, None] = None) -> Dict:
+    async def get_video_info(self, aid: int, bvid: Union[str, None] = None) -> Dict:
         """
-        Bilibli web video detail api, aid 和 bvid任选一个参数
-        :param aid: 稿件avid
-        :param bvid: 稿件bvid
+        Bilibli web video detail api，仅使用 aid 参数
+        :param aid: 稿件avid (必需)
+        :param bvid: 稿件bvid (保留兼容性，但不使用)
         :return:
         """
-        if not aid and not bvid:
-            raise ValueError("请提供 aid 或 bvid 中的至少一个参数")
+        if not aid:
+            raise ValueError("请提供有效的 aid 参数")
 
         uri = "/x/web-interface/view/detail"
-        params = dict()
-        if aid:
-            params.update({"aid": aid})
-        else:
-            params.update({"bvid": bvid})
+        params = {"aid": aid}
         return await self.get(uri, params, enable_params_sign=False)
 
     async def get_video_play_url(self, aid: int, cid: int) -> Dict:
@@ -413,7 +409,7 @@ class BilibiliClient:  # 移除 AbstractApiClient 继承
             "mid": creator_id,
             "pn": pn,
             "ps": ps,
-            "order": order_mode,
+            "order": order_mode.value,
         }
         return await self.get(uri, post_data)
 

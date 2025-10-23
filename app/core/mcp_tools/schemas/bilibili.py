@@ -141,3 +141,19 @@ class BilibiliCommentsResult(BaseModel):
     total_count: Optional[int] = Field(None, description="总数量")
     video_ids: List[str] = Field(default_factory=list, description="视频 ID 列表")
     crawl_info: dict = Field(default_factory=dict, description="爬虫信息")
+
+
+class BilibiliCreatorInfo(BaseModel):
+    """创作者基础信息"""
+    creator_id: str = Field(..., description="创作者 ID")
+    creator_name: str = Field(..., description="创作者名称")
+    total_videos: int = Field(default=0, description="视频总数")
+
+
+class BilibiliCreatorResult(BaseModel):
+    """Bilibili 单个创作者视频结果"""
+    creator_info: BilibiliCreatorInfo = Field(..., description="创作者信息")
+    videos: List[BilibiliVideoSimple] = Field(default_factory=list, description="视频列表")
+    total_count: Optional[int] = Field(None, description="当前页视频数量")
+    page_info: dict = Field(default_factory=dict, description="分页信息")
+    crawl_info: dict = Field(default_factory=dict, description="爬虫信息")

@@ -18,14 +18,24 @@ def parse_note_info_from_note_url(url: str) -> NoteUrlInfo:
     """Parse note information from a Xiaohongshu note URL."""
     if not url:
         raise ValueError("note url 不能为空")
-    normalized = normalize_url(url)
-    note_id = normalized.split("/")[-1].split("?")[0]
-    params = crawler_util.extract_url_params_to_dict(normalized)
-    return NoteUrlInfo(
-        note_id=note_id,
-        xsec_token=params.get("xsec_token", ""),
-        xsec_source=params.get("xsec_source", ""),
-    )
+    
+    try:
+        normalized = normalize_url(url)
+        path_parts = normalized.split("/")
+        if len(path_parts) < 2:
+            raise ValueError(f"Invalid note URL format: {url}")
+        note_id = path_parts[-1].split("?")[0]
+        if not note_id:
+            raise ValueError(f"Cannot extract note_id from URL: {url}")
+        
+        params = crawler_util.extract_url_params_to_dict(normalized)
+        return NoteUrlInfo(
+            note_id=note_id,
+            xsec_token=params.get("xsec_token", ""),
+            xsec_source=params.get("xsec_source", ""),
+        )
+    except (IndexError, AttributeError) as e:
+        raise ValueError(f"Failed to parse note URL {url}: {e}")
 
 
 def parse_creator_info_from_url(url: str) -> CreatorUrlInfo:
@@ -34,22 +44,38 @@ def parse_creator_info_from_url(url: str) -> CreatorUrlInfo:
         raise ValueError("creator url 不能为空")
 
     stripped = url.strip()
-    # Plain user id (24 hex characters) is accepted.
+    
+    # If it's a simple string (user_id), use it directly
+    # This matches the original MediaCrawler behavior where user_id is passed directly
+    if not stripped.startswith(("http://", "https://", "/")):
+        return CreatorUrlInfo(user_id=stripped, xsec_token="", xsec_source="")
+    
+    # Plain user id (24 hex characters) is also accepted.
     if len(stripped) == 24 and all(c in "0123456789abcdef" for c in stripped):
         return CreatorUrlInfo(user_id=stripped, xsec_token="", xsec_source="")
 
-    normalized = normalize_url(stripped)
-    user_segment = "/user/profile/"
-    if user_segment not in normalized:
-        raise ValueError(f"无法解析创作者 URL: {url}")
+    try:
+        normalized = normalize_url(stripped)
+        user_segment = "/user/profile/"
+        if user_segment not in normalized:
+            raise ValueError(f"URL does not contain expected user profile path: {url}")
 
-    user_id = normalized.split(user_segment, 1)[-1].split("?")[0]
-    params = crawler_util.extract_url_params_to_dict(normalized)
-    return CreatorUrlInfo(
-        user_id=user_id,
-        xsec_token=params.get("xsec_token", ""),
-        xsec_source=params.get("xsec_source", ""),
-    )
+        parts = normalized.split(user_segment, 1)
+        if len(parts) < 2:
+            raise ValueError(f"Cannot split URL by user profile path: {url}")
+            
+        user_id = parts[-1].split("?")[0]
+        if not user_id:
+            raise ValueError(f"Cannot extract user_id from URL: {url}")
+            
+        params = crawler_util.extract_url_params_to_dict(normalized)
+        return CreatorUrlInfo(
+            user_id=user_id,
+            xsec_token=params.get("xsec_token", ""),
+            xsec_source=params.get("xsec_source", ""),
+        )
+    except (IndexError, AttributeError) as e:
+        raise ValueError(f"Failed to parse creator URL {url}: {e}")
 
 
 def normalize_url(url: str) -> str:

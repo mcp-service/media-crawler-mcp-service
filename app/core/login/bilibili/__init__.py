@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-"""Bilibili 登录适配器"""
+"""Bilibili 登录模块"""
 
-from .adapter import BilibiliLoginAdapter
+from .login import BilibiliLogin, DISPLAY_NAME, get_user_data_dir
 
-__all__ = ["BilibiliLoginAdapter"]
+__all__ = ["BilibiliLogin", "DISPLAY_NAME", "get_user_data_dir"]
