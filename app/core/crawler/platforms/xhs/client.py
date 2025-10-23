@@ -104,14 +104,23 @@ class XiaoHongShuClient:
             return mapping.get(s, 0)
 
     async def get_note_by_id(self, note_id: str, xsec_source: str, xsec_token: str) -> Optional[Dict]:
-        """Fetch note detail using API, with MediaCrawler's feed fallback.
+        """Fetch note detail, prefer HTML when token is provided.
 
-        Strategy:
-        1) Try feed endpoint (/api/sns/web/v1/feed) with source_note_id (more tolerant)
-        2) Fallback to note/detail GET
-        3) HTML extraction fallback handled by caller
+        If xsec_token is present (detail tool requires it), avoid API endpoints and
+        directly extract from explore HTML to reduce 406/404 noise. When token is
+        absent (other flows), fall back to API strategies.
         """
-        # 1) feed endpoint (MediaCrawler behavior)
+        if xsec_token:
+            detail = await self.get_note_by_id_from_html(
+                note_id,
+                xsec_source,
+                xsec_token,
+                enable_cookie=True,
+            )
+            if detail:
+                return detail
+
+        # 1) feed endpoint (fallback when token is absent or HTML fallback failed)
         feed_data: Dict[str, Any] = {
             "source_note_id": note_id,
             "image_formats": ["jpg", "webp", "avif"],
