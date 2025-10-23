@@ -14,6 +14,7 @@ from app.providers.logger import get_logger
 
 from .base import BaseLoginAdapter
 from .bilibili import BilibiliLoginAdapter
+from .xhs import XiaoHongShuLoginAdapter
 from .exceptions import LoginServiceError
 from .models import LoginSession, LoginStartPayload, PlatformLoginState
 from .storage import RedisLoginStorage
@@ -33,6 +34,7 @@ class LoginService:
         self._storage = RedisLoginStorage()
         self._handlers: Dict[str, BaseLoginAdapter] = {
             Platform.BILIBILI.value: BilibiliLoginAdapter(self),
+            Platform.XIAOHONGSHU.value: XiaoHongShuLoginAdapter(self),
         }
 
     # === 基础能力 ===

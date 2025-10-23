@@ -93,6 +93,7 @@ def _import_platform_endpoints() -> None:
     """按配置导入平台端点模块。"""
     platform_modules = {
         Platform.BILIBILI: "app.api.endpoints.mcp.bilibili",
+        Platform.XIAOHONGSHU: "app.api.endpoints.mcp.xhs",
     }
 
     enabled_platforms = getattr(global_settings.platform, "enabled_platforms", [])
