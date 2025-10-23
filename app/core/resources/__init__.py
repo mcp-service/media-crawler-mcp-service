@@ -30,17 +30,28 @@ def register_resources(app: FastMCP) -> None:
                 "path": str(data_path.absolute())
             }, ensure_ascii=False, indent=2)
 
-        # 统计各平台数据
+        # 统计各平台数据（非递归：根目录 + json/csv 子目录）
         platform_stats = {}
         for platform_dir in data_path.iterdir():
             if platform_dir.is_dir():
                 files = list(platform_dir.glob("*.json")) + list(platform_dir.glob("*.csv"))
+                json_dir = platform_dir / "json"
+                csv_dir = platform_dir / "csv"
+                if json_dir.exists() and json_dir.is_dir():
+                    files += list(json_dir.glob("*.json"))
+                if csv_dir.exists() and csv_dir.is_dir():
+                    files += list(csv_dir.glob("*.csv"))
+
                 total_size = sum(f.stat().st_size for f in files if f.is_file())
+                latest_file = "无"
+                if files:
+                    newest = max(files, key=lambda f: f.stat().st_mtime)
+                    latest_file = newest.name
 
                 platform_stats[platform_dir.name] = {
                     "files_count": len(files),
                     "total_size_mb": round(total_size / 1024 / 1024, 2),
-                    "latest_file": max([f.name for f in files], default="无") if files else "无"
+                    "latest_file": latest_file,
                 }
 
         return json.dumps({

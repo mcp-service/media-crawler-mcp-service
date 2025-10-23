@@ -20,6 +20,7 @@ from app.api.scheme.bilibili_scheme import (
 )
 from app.config.settings import Platform
 from app.core.mcp_tools import bilibili as bili_tools
+from app.core.login.exceptions import LoginExpiredError
 from app.providers.logger import get_logger
 
 
@@ -69,6 +70,8 @@ async def bili_search_http(request):
     try:
         result = await bili_tools.bili_search(**params)
         return jsonify_response(_as_dict(result))
+    except LoginExpiredError:
+        return jsonify_response({}, status_response=(error_codes.INVALID_TOKEN[0], "登录过期，Cookie失效"))
     except Exception as exc:  # pragma: no cover - runtime safeguard
         logger.error(f"[Bilibili.search] failed: {exc}")
         return _server_error(f"bilibili 搜索失败: {exc}")
@@ -89,6 +92,8 @@ async def bili_detail_http(request):
     try:
         result = await bili_tools.bili_detail(**params)
         return jsonify_response(_as_dict(result))
+    except LoginExpiredError:
+        return jsonify_response({}, status_response=(error_codes.INVALID_TOKEN[0], "登录过期，Cookie失效"))
     except Exception as exc:  # pragma: no cover
         logger.error(f"[Bilibili.detail] failed: {exc}")
         return _server_error(f"bilibili 详情获取失败: {exc}")
@@ -109,6 +114,8 @@ async def bili_creator_http(request):
     try:
         result = await bili_tools.bili_creator(**params)
         return jsonify_response(_as_dict(result))
+    except LoginExpiredError:
+        return jsonify_response({}, status_response=(error_codes.INVALID_TOKEN[0], "登录过期，Cookie失效"))
     except Exception as exc:  # pragma: no cover
         logger.error(f"[Bilibili.creator] failed: {exc}")
         return _server_error(f"bilibili 创作者抓取失败: {exc}")
@@ -129,6 +136,8 @@ async def bili_search_time_range_http(request):
     try:
         result = await bili_tools.bili_search_time_range(**params)
         return jsonify_response(_as_dict(result))
+    except LoginExpiredError:
+        return jsonify_response({}, status_response=(error_codes.INVALID_TOKEN[0], "登录过期，Cookie失效"))
     except Exception as exc:  # pragma: no cover
         logger.error(f"[Bilibili.search_time_range] failed: {exc}")
         return _server_error(f"bilibili 时间范围搜索失败: {exc}")
@@ -149,6 +158,8 @@ async def bili_comments_http(request):
     try:
         result = await bili_tools.bili_comments(**params)
         return jsonify_response(_as_dict(result))
+    except LoginExpiredError:
+        return jsonify_response({}, status_response=(error_codes.INVALID_TOKEN[0], "登录过期，Cookie失效"))
     except Exception as exc:  # pragma: no cover
         logger.error(f"[Bilibili.comments] failed: {exc}")
         return _server_error(f"bilibili 评论抓取失败: {exc}")

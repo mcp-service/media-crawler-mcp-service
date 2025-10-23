@@ -18,23 +18,6 @@ def safe_print(message: str):
         print(safe_message, flush=True)
 
 
-def _safe_json_loads(value: Any) -> Any:
-    """Gracefully fallback to raw value when JSON decoding fails."""
-    if value is None or isinstance(value, (dict, list)):
-        return value
-    if isinstance(value, (bytes, bytearray)):
-        value = value.decode("utf-8")
-    if isinstance(value, str):
-        stripped = value.strip()
-        if not stripped:
-            return stripped
-        try:
-            return json.loads(stripped)
-        except json.JSONDecodeError:
-            return stripped
-    return value
-
-
 # === 枚举类型 ===
 
 class Platform(str, Enum):

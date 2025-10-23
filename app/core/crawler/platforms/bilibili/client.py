@@ -131,7 +131,10 @@ class BilibiliClient:  # 移除 AbstractApiClient 继承
             final_uri = (f"{uri}?"
                          f"{urlencode(params)}")
         logger.info(f"{__name__}-> get: {self._host}{final_uri}")
-        return await self.request(method="GET", url=f"{self._host}{final_uri}", headers=self.headers)
+        res = await self.request(method="GET", url=f"{self._host}{final_uri}", headers=self.headers)
+        logger.info(f"{__name__}-> res: {res}")
+
+        return res
 
     async def post(self, uri: str, data: dict) -> Dict:
         data = await self.pre_request_data(data)

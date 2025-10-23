@@ -2,7 +2,7 @@
 
 让 AI 原生使用社媒数据的MCP服务。将传统 CLI 爬虫升级为 MCP 标准工具，让 Claude / ChatGPT 直连调用，一次配置，长期可用。
 
-
+![index .png](docs/index.png)
 
 <p>
   <img alt="Python" src="https://img.shields.io/badge/Python-3.8%2B-3776AB?logo=python&logoColor=white" />
@@ -29,12 +29,13 @@
 
 MediaCrawler MCP Service 是面向个人的数据获取工具集，通过 MCP（Model Context Protocol）把社媒公开信息变成 AI 助手可直接调用的标准化工具。核心能力包括“登录外部化管理”“任务级配置隔离”“浏览器上下文复用”和“结构化数据输出”。
 
+
 为什么与众不同？
 - 从脚本到标准：从一次性脚本变成可复用的 MCP 工具
 - 登录完全外部化：可视化界面 + 二维码/Cookie 双模式，状态持久
 - 真·工程化：分层解耦、Pydantic 模型、状态缓存与风控友好
 - 文本格式友好: 需要AI分析，所以要返回文本友好的格式，不是大量无用的嵌套数据
-![img.png](docs/content-nice.png)
+![bili-detail.png](docs/bili-detail.png)
 ## 核心特性
 - 一次配置，AI 原生调用（Claude/ChatGPT）
 - 登录外部化：跨重启保持，支持多平台
@@ -77,15 +78,15 @@ poetry run python main.py    # 默认端口 9090
 ## 管理界面与登录
 
 1) 打开管理界面 `http://localhost:9090/admin`
+    ![index .png](docs/index.png)
 2) 进入“登录管理”，选择平台（如 B 站）
+   ![登录界面](docs/login.png)
 3) 支持“二维码登录”或“Cookie 登录”，状态会持久化
-
-![登录界面](docs/login.png)
-![登录状态](docs/login-state.png)
+   ![登录状态](docs/login-state.png)
 
 ## 在 AI 助手中使用
 
-你可以直接在 Claude/ChatGPT 中让其调用 MCP 工具：
+你可以直接在 Claude/ChatGPT 中配置mcp链接（还没做鉴权，大家可以本地先试用，后续会新增基础鉴权）, 让其调用 MCP 工具：
 ```
 示例对话：
 “帮我搜索 Python 机器学习相关的 B 站视频，并分析受欢迎程度与创作者。”
@@ -107,15 +108,42 @@ poetry run python main.py    # 默认端口 9090
 
 - `bili_detail`（指定视频详情）
 ```json
-{ "video_ids": ["115285696846946"] }
+{
+  "video_ids": [
+    "444445981"
+  ]
+}
 ```
-
+![img.png](docs/bili-detail.png)
 - `bili_creator`（创作者分析）
 ```json
 { "creator_ids": ["99801185"], "creator_mode": true }
 ```
 
 ![工具测试](docs/tools-test.png)
+
+- `xhs_search`（小红书关键词搜索，返回本页摘要，不拉详情）
+```json
+{
+  "keywords": "护肤,美食",
+  "page_num": 1,
+  "page_size": 20
+}
+```
+
+- `xhs_detail`（小红书笔记详情，原子化参数；xsec_token 必传）
+```json
+{
+  "node_id": "68f9b8b20000000004010353",
+  "xsec_token": "从搜索结果或分享链接中获取（必传）",
+  "xsec_source": "可选，未传时默认 pc_search",
+  "enable_comments": true,
+  "max_comments_per_note": 50
+}
+```
+说明：
+- 小红书网页端对详情访问存在更严格的风控与授权校验，调用 `xhs_detail` 必须传入 `xsec_token`（来源于 `xhs_search` 的返回或分享链接）。
+- 当未传 `xsec_source` 时，服务会默认使用 `pc_search`；仍无法访问时请检查登录态、token 是否过期或笔记是否限制浏览。
 
 ## 架构与技术选择
 
@@ -151,7 +179,7 @@ poetry run python main.py    # 默认端口 9090
 - 小红书 / 抖音 / 快手 / 知乎 / 微博 / 贴吧 适配
 - 工具调试器与可视化增强（过滤、导出、趋势）
 - 更细粒度的速率与风控策略
-- 更多存储目标（SQLite/DB 持久化）
+- 更多存储目标（PGSQL 持久化）
 
 ## 开发与贡献
 
@@ -206,4 +234,3 @@ poetry run playwright install-deps chromium
 - 建议单次请求量小、请求间隔 ≥ 2s
 
 如果这个项目对你的学习有帮助，欢迎 ⭐ Star 支持！
-

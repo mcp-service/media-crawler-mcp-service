@@ -177,6 +177,33 @@ REDIS__DB=0
 - 任务级参数（如 `headless`、`login_cookie`、`max_notes`）可在 MCP 工具调用时覆盖全局默认
 - 登录状态缓存 TTL：未登录 60s，已登录 3600s（可在 `app/core/login/storage.py` 调整）
 
+## 5. 代码规范（约定）
+
+### 5.1 日志格式
+
+- 一律使用 f-string 进行字符串插值，避免使用 `%s` 占位符或逗号分隔的参数传递。
+- 目的：确保日志内容与上下文直观一致，减少格式化歧义；同时保持各层日志风格统一。
+
+正确示例：
+
+```python
+logger.info(f"[xhs.client] url={url} status={status_code}")
+logger.error(f"[bili.login] Pong failed: {exc}")
+logger.debug(f"[store] saved file={file_path} size={size}B")
+```
+
+错误示例（禁止）：
+
+```python
+logger.info("[xhs.client] url=%s status=%s", url, status_code)
+logger.error("[bili.login] Pong failed: %s", exc)
+```
+
+### 5.2 其他建议
+
+- 大对象或响应体仅在 debug 级别打印，避免 info 级别刷屏。
+- 网络错误、风控触发（如 406/412/461/471）使用 warning/error 级别，并附加关键信息（endpoint、note_id、trace）。
+
 ## 4. MCP 工具（当前状态）
 
 ### 4.1 服务内置工具（通用）
@@ -516,4 +543,3 @@ await self.bili_client.update_cookies(browser_context=self.browser_context)
 - README/Agent.md 中提到的开发者路径与命令是否仍然正确？
 
 — End —
-

@@ -24,6 +24,7 @@ from app.core.crawler.store import bilibili as bilibili_store
 from app.core.crawler.tools.time_util import get_current_timestamp
 from app.config.settings import Platform, CrawlerType, global_settings
 from app.core.login import login_service
+from app.core.login.exceptions import LoginExpiredError
 
 from .client import BilibiliClient
 from .exception import DataFetchError
@@ -115,22 +116,26 @@ class BilibiliCrawler(AbstractCrawler):
             self.bili_client = await self.create_bilibili_client(httpx_proxy)
 
             # 优先使用登录服务的缓存状态，避免频繁触发风控
-            is_logged_in = False
+            is_logged_in: Optional[bool] = None
             try:
                 login_status = await login_service.get_login_status("bili")
-                is_logged_in = login_status.get('is_logged_in', False)
+                is_logged_in = bool(login_status.get('is_logged_in', False))
                 if is_logged_in:
                     logger.info("[BilibiliCrawler.start] Using cached login state from login service")
                 else:
-                    logger.info("[BilibiliCrawler.start] Cached state shows not logged in, verifying with pong...")
-                    # 只在缓存状态显示未登录时才使用 pong 检查
-                    is_logged_in = await self.bili_client.pong()
+                    logger.info("[BilibiliCrawler.start] Cached state shows not logged in, will verify with pong")
             except Exception as exc:
-                logger.warning(f"[BilibiliCrawler.start] Failed to get login status from service, fallback to pong: {exc}")
-                # 登录服务失败时才使用 pong
+                logger.warning(f"[BilibiliCrawler.start] Failed to get login status from service: {exc}")
+                is_logged_in = None
+
+            # 仅在未登录或未知时做一次 pong 校验，避免重复调用
+            if not is_logged_in:
                 is_logged_in = await self.bili_client.pong()
 
             if not is_logged_in:
+                # MCP 工具场景下不自动登录，直接提示登录过期
+                if self.extra.get("no_auto_login"):
+                    raise LoginExpiredError("登录过期，Cookie失效")
                 logger.info("[BilibiliCrawler.start] Not logged in, starting login process...")
                 login_obj = BilibiliLogin(
                     login_type=self.login_options.login_type,
@@ -161,9 +166,8 @@ class BilibiliCrawler(AbstractCrawler):
                     page_num = self.extra.get('page_num', 1)
                     page_size = self.extra.get('page_size', 30)
                     result = {}
-                    for creator_id in self.crawl.creator_ids:
-                        tmp = await self.get_creator_videos(creator_id, page_num, page_size)
-                        result[creator_id] = tmp
+                    result = await self.get_creator_videos(self.crawl.creator_ids[0], page_num, page_size)
+
             elif self.crawler_type == CrawlerType.COMMENTS:
                 if self.crawl.note_ids:
                     result = await self.fetch_comments_for_ids(self.crawl.note_ids)

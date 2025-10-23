@@ -180,10 +180,18 @@ async function loadServicesStatus() {
 
 function updateServiceStatus(elementId, serviceStatus) {
     const element = document.getElementById(elementId);
-    if (element && serviceStatus) {
-        element.textContent = serviceStatus.status === 'running' ? '运行中' : '未知';
-        element.className = `status ${serviceStatus.status === 'running' ? 'status-success' : 'status-error'}`;
+    if (!element || !serviceStatus) return;
+    let text = '未知';
+    let cls = 'status-error';
+    if (serviceStatus.status === 'running') {
+        text = '运行中';
+        cls = 'status-success';
+    } else if (serviceStatus.status === 'down') {
+        text = '异常';
+        cls = 'status-error';
     }
+    element.textContent = text;
+    element.className = `status ${cls}`;
 }
 
 async function loadPlatformsStatus() {

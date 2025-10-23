@@ -7,8 +7,10 @@ import json
 from typing import List, Optional
 
 from app.core.crawler.platforms.xhs import service as xhs_service
+from app.providers.logger import get_logger
 from .schemas.xhs import XhsCommentsResult, XhsNoteDetail, XhsNoteSearchResult
 
+logger = get_logger()
 
 async def xhs_search(
     keywords: str,
@@ -59,7 +61,9 @@ async def xhs_search(
 
 
 async def xhs_detail(
-    note_urls: List[str],
+    node_id: str,
+    xsec_token: str,
+    xsec_source: Optional[str] = None,
     enable_comments: bool = True,
     max_comments_per_note: int = 50,
     headless: Optional[bool] = None,
@@ -69,10 +73,12 @@ async def xhs_detail(
     save_login_state: bool = True,
 ) -> str:
     """
-    获取小红书笔记详情，返回结构化的详情信息。
+    获取小红书笔记详情，返回结构化的详情信息（原子化参数）。
 
     Args:
-        note_urls: 笔记URL列表，例如: ["https://www.xiaohongshu.com/explore/xxxxx"]
+        node_id: 笔记ID
+        xsec_token: 必传，推荐从搜索结果或分享链接中获取
+        xsec_source: 可选，未提供时服务会默认 pc_search
         enable_comments: 是否抓取评论，默认 True
         max_comments_per_note: 单条笔记最大评论数，默认 50
         headless: 是否使用无头浏览器，None 使用全局配置
@@ -85,7 +91,7 @@ async def xhs_detail(
         JSON字符串，包含笔记详情列表、总数量和抓取信息
 
     Example:
-        note_urls=["https://www.xiaohongshu.com/explore/12345"], enable_comments=True, max_comments_per_note=20
+        node_id="68f9b8b20000000004010353", enable_comments=True, max_comments_per_note=20
     """
     extra = {}
     if login_phone is not None:
@@ -95,13 +101,16 @@ async def xhs_detail(
     extra["save_login_state"] = save_login_state
     
     result = await xhs_service.get_detail(
-        note_urls=note_urls,
+        node_id=node_id,
+        xsec_token=xsec_token,
+        xsec_source=xsec_source,
         enable_comments=enable_comments,
         max_comments_per_note=max_comments_per_note,
         headless=headless,
         enable_save_media=save_media,
         **extra,
     )
+    logger.debug(f"[xhs-detail] result {result}")
     payload = XhsNoteSearchResult(
         notes=[XhsNoteDetail(**note) for note in result.get("notes", [])],
         total_count=result.get("total_count", 0),
@@ -158,7 +167,7 @@ async def xhs_creator(
 
 
 async def xhs_comments(
-    note_urls: List[str],
+    note_ids: List[str],
     max_comments: int = 50,
     headless: Optional[bool] = None,
     login_phone: Optional[str] = None,
@@ -169,7 +178,7 @@ async def xhs_comments(
     获取小红书笔记评论，返回结构化的评论信息。
 
     Args:
-        note_urls: 笔记URL列表，例如: ["https://www.xiaohongshu.com/explore/xxxxx"]
+        note_ids: 笔记ID列表，亦支持混传URL（会自动解析为ID）
         max_comments: 最大评论数量，默认 50
         headless: 是否使用无头浏览器，None 使用全局配置
         login_phone: 登录手机号，可选
@@ -180,7 +189,7 @@ async def xhs_comments(
         JSON字符串，包含评论列表、总数量和抓取信息
 
     Example:
-        note_urls=["https://www.xiaohongshu.com/explore/12345"], max_comments=100
+        note_ids=["68f9b8b20000000004010353"], max_comments=100
     """
     extra = {}
     if login_phone is not None:
@@ -190,7 +199,7 @@ async def xhs_comments(
     extra["save_login_state"] = save_login_state
     
     result = await xhs_service.fetch_comments(
-        note_urls=note_urls,
+        note_ids=note_ids,
         max_comments=max_comments,
         headless=headless,
         **extra,

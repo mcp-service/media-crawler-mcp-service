@@ -18,6 +18,7 @@ from app.core.crawler.platforms.base import AbstractCrawler
 from app.core.crawler.store import xhs as xhs_store
 from app.core.crawler.tools import crawler_util, time_util
 from app.core.login import login_service
+from app.core.login.exceptions import LoginExpiredError
 from app.providers.logger import get_logger
 
 from .client import XiaoHongShuClient
@@ -50,6 +51,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
         self.user_agent = self.browser_opts.user_agent or crawler_util.get_user_agent()
         self.client: Optional[XiaoHongShuClient] = None
         self.browser_context: Optional[BrowserContext] = None
+        self._closed: bool = False
 
     async def start(self) -> Dict[str, Any]:
         logger.info(f"[xhs.crawler] start crawler type={self.ctx.crawler_type.value}")
@@ -127,17 +129,48 @@ class XiaoHongShuCrawler(AbstractCrawler):
                     logger.info(f"[xhs.search] No items found for keyword={keyword} on page={page_num}")
                     continue
 
-                # 限制每个关键词的结果数量
+                # 限制每个关键词的结果数量（粗粒度：仅返回搜索摘要，不拉详情）
                 items = items[:min(page_size, limit - len(collected))]
-                
-                details = await self._gather_details_from_items(items)
-                for detail in details:
-                    if not detail:
+
+                for item in items:
+                    info = self._extract_note_info_from_search_item(item)
+                    if not info:
                         continue
-                    await xhs_store.update_xhs_note(detail)
-                    if self.store_opts.enable_save_media:
-                        await xhs_store.update_xhs_note_media(detail)
-                    collected.append(detail)
+                    note_id, xsec_source, xsec_token = info
+
+                    note_obj = (item.get("note_card") or item.get("note") or {})
+                    title = note_obj.get("display_title") or note_obj.get("title") or ""
+
+                    user = note_obj.get("user", {}) if isinstance(note_obj, dict) else {}
+                    interact = note_obj.get("interact_info", {}) if isinstance(note_obj, dict) else {}
+
+                    def _to_int(v):
+                        try:
+                            return int(v)
+                        except Exception:
+                            try:
+                                return int(str(v))
+                            except Exception:
+                                return None
+
+                    collected.append({
+                        "note_id": str(note_id),
+                        "title": title,
+                        "note_url": f"https://www.xiaohongshu.com/explore/{note_id}",
+                        "user": {
+                            "user_id": user.get("user_id"),
+                            "nickname": user.get("nickname") or user.get("nick_name"),
+                            "avatar": user.get("avatar"),
+                        },
+                        "interact_info": {
+                            "liked_count": _to_int(interact.get("liked_count")),
+                            "collected_count": _to_int(interact.get("collected_count")),
+                            "comment_count": _to_int(interact.get("comment_count")),
+                            "share_count": _to_int(interact.get("shared_count")),
+                        },
+                        "xsec_token": xsec_token,
+                        "xsec_source": xsec_source,
+                    })
                     if len(collected) >= limit:
                         break
 
@@ -164,15 +197,33 @@ class XiaoHongShuCrawler(AbstractCrawler):
         }
 
     async def get_detail(self) -> Dict[str, Any]:
-        note_urls = self.crawl_opts.note_ids or self.extra.get("note_urls") or []
-        if not note_urls:
-            raise ValueError("note_urls 不能为空")
+        targets = self.crawl_opts.note_ids or self.extra.get("note_ids") or []
+        if not targets:
+            raise ValueError("note_ids 不能为空")
 
         semaphore = Semaphore(self.crawl_opts.max_concurrency)
         details: List[Dict[str, Any]] = []
-        for url in note_urls:
-            info = parse_note_info_from_note_url(url)
-            note_detail = await self._get_note_detail(info.note_id, info.xsec_source, info.xsec_token, semaphore)
+        for item in targets:
+            note_id = ""
+            xsec_token = ""
+            xsec_source = ""
+            if isinstance(item, dict):
+                note_id = str(item.get("note_id", "")).strip()
+                xsec_token = str(item.get("xsec_token", "") or "")
+                xsec_source = str(item.get("xsec_source", "") or "")
+            else:
+                s = str(item or "").strip()
+                if not s:
+                    continue
+                if s.startswith("http://") or s.startswith("https://"):
+                    info = parse_note_info_from_note_url(s)
+                    note_id, xsec_source, xsec_token = info.note_id, info.xsec_source, info.xsec_token
+                else:
+                    note_id = s
+            if not note_id:
+                continue
+
+            note_detail = await self._get_note_detail(note_id, xsec_source, xsec_token, semaphore)
             if not note_detail:
                 continue
             await xhs_store.update_xhs_note(note_detail)
@@ -212,7 +263,18 @@ class XiaoHongShuCrawler(AbstractCrawler):
                 callback=self._creator_notes_callback,
                 max_notes=self.crawl_opts.max_notes_count,
             )
-            collected.extend(notes)
+            # 与 MediaCrawler 对齐：拉取每条作品详情，必要时再抓评论
+            details = await self._gather_details_from_items(notes)
+            for detail in details:
+                if not detail:
+                    continue
+                await xhs_store.update_xhs_note(detail)
+                if self.store_opts.enable_save_media:
+                    await xhs_store.update_xhs_note_media(detail)
+                collected.append(detail)
+
+            if self.crawl_opts.enable_get_comments and self.crawl_opts.max_comments_per_note > 0 and collected:
+                await self._batch_fetch_comments([d for d in details if d], self.crawl_opts.max_comments_per_note)
 
         return {
             "notes": collected,
@@ -221,16 +283,24 @@ class XiaoHongShuCrawler(AbstractCrawler):
         }
 
     async def fetch_comments(self) -> Dict[str, Any]:
-        note_urls = self.crawl_opts.note_ids or self.extra.get("note_urls") or []
-        if not note_urls:
-            raise ValueError("note_urls 不能为空")
+        targets = self.crawl_opts.note_ids or self.extra.get("note_ids") or []
+        if not targets:
+            raise ValueError("note_ids 不能为空")
 
         semaphore = Semaphore(self.crawl_opts.max_concurrency)
         comments: Dict[str, List[Dict[str, Any]]] = {}
 
-        for url in note_urls:
-            info = parse_note_info_from_note_url(url)
-            note_detail = await self._get_note_detail(info.note_id, info.xsec_source, info.xsec_token, semaphore)
+        for item in targets:
+            item = str(item or "").strip()
+            if not item:
+                continue
+            if item.startswith("http://") or item.startswith("https://"):
+                info = parse_note_info_from_note_url(item)
+                note_id, xsec_source, xsec_token = info.note_id, info.xsec_source, info.xsec_token
+            else:
+                note_id, xsec_source, xsec_token = item, "", ""
+
+            note_detail = await self._get_note_detail(note_id, xsec_source, xsec_token, semaphore)
             if not note_detail:
                 continue
 
@@ -294,21 +364,31 @@ class XiaoHongShuCrawler(AbstractCrawler):
 
     async def close(self):
         """关闭浏览器上下文"""
+        if self._closed:
+            return
         try:
             if self.browser_context:
                 await self.browser_context.close()
             logger.info("[XiaoHongShuCrawler.close] Browser context closed")
         except TargetClosedError:
-            logger.warning("[XiaoHongShuCrawler.close] Browser context was already closed")
+            # 上下文已关闭时静默处理，避免多余告警日志
+            logger.debug("[XiaoHongShuCrawler.close] Browser context already closed")
         except Exception as e:
-            logger.error(f"[XiaoHongShuCrawler.close] Error during close: {e}")
-            # 不要重新抛出异常，避免影响调用方
+            logger.debug(f"[XiaoHongShuCrawler.close] Ignore close error: {e}")
+        finally:
+            self._closed = True
+            self.browser_context = None
+            self.client = None
 
     async def _ensure_login_state(self) -> None:
         state = await login_service.refresh_platform_state(Platform.XIAOHONGSHU.value, force=False)
         if state.is_logged_in:
             logger.info("[xhs.login] 使用缓存登录状态")
             return
+
+        # 在 MCP 工具场景下不自动触发登录，直接返回登录过期
+        if self.extra.get("no_auto_login"):
+            raise LoginExpiredError("登录过期，Cookie失效")
 
         login = XiaoHongShuLogin(
             login_type=self.login_opts.login_type.value,
@@ -350,13 +430,47 @@ class XiaoHongShuCrawler(AbstractCrawler):
         semaphore = Semaphore(self.crawl_opts.max_concurrency)
         tasks = []
         for item in items:
-            note_id = item.get("id") or item.get("note_id")
-            if not note_id:
+            note_info = self._extract_note_info_from_search_item(item)
+            if not note_info:
                 continue
-            xsec_token = item.get("xsec_token", "")
-            xsec_source = item.get("xsec_source", "")
+            note_id, xsec_source, xsec_token = note_info
             tasks.append(self._get_note_detail(str(note_id), xsec_source, xsec_token, semaphore))
         return await asyncio.gather(*tasks)
+
+    def _extract_note_info_from_search_item(self, item: Dict[str, Any]) -> Optional[tuple[str, str, str]]:
+        """Best-effort extraction of note_id and xsec fields from a search item.
+
+        The search API may return different shapes. We support:
+        - Top-level note with fields: id/note_id, xsec_token, xsec_source
+        - Nested under 'note' or 'note_card'
+        - Only accept items that look like note results (model_type contains 'note')
+        """
+        model_type = str(item.get("model_type", "")).lower()
+        # Skip non-note items early when model_type is present
+        if model_type and "note" not in model_type:
+            return None
+
+        # Candidates to inspect in order
+        candidates: List[Dict[str, Any]] = [item]
+        if isinstance(item.get("note"), dict):
+            candidates.append(item.get("note") or {})
+        if isinstance(item.get("note_card"), dict):
+            nc = item.get("note_card") or {}
+            candidates.append(nc)
+            # Some responses use 'display_note' inside note_card
+            if isinstance(nc.get("display_note"), dict):
+                candidates.append(nc.get("display_note") or {})
+
+        note_id = ""
+        xsec_token = ""
+        xsec_source = ""
+        for cand in candidates:
+            note_id = cand.get("note_id") or cand.get("id") or note_id
+            xsec_token = cand.get("xsec_token", xsec_token)
+            xsec_source = cand.get("xsec_source", xsec_source)
+        if not note_id:
+            return None
+        return str(note_id), str(xsec_source or ""), str(xsec_token or "")
 
     async def _get_note_detail(
         self,
@@ -381,9 +495,20 @@ class XiaoHongShuCrawler(AbstractCrawler):
                 if not detail:
                     logger.warning(f"[xhs.detail] 获取笔记失败 note_id={note_id}")
                     return None
-
-            detail["xsec_token"] = xsec_token
-            detail["xsec_source"] = xsec_source
+            # Normalize essential fields for downstream schemas
+            # Ensure note_id exists (feed note_card may miss it)
+            if not detail.get("note_id"):
+                detail["note_id"] = note_id
+            # Normalize xsec token/source (prefer snake_case)
+            xsec_token_val = detail.get("xsec_token") or detail.get("xsecToken") or xsec_token
+            xsec_source_val = detail.get("xsec_source") or detail.get("xsecSource") or xsec_source
+            detail["xsec_token"] = xsec_token_val or ""
+            detail["xsec_source"] = xsec_source_val or ""
+            # Cleanup camelCase duplicates to avoid confusion
+            if "xsecToken" in detail:
+                detail.pop("xsecToken", None)
+            if "xsecSource" in detail:
+                detail.pop("xsecSource", None)
             return detail
 
     async def _batch_fetch_comments(self, details: List[Dict[str, Any]], max_comments: int) -> None:

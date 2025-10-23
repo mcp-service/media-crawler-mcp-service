@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+import asyncio
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -13,6 +14,7 @@ from starlette.responses import JSONResponse
 
 from app.api.endpoints.base import MCPBlueprint
 from app.config.settings import Platform, global_settings
+from app.providers.cache.redis_cache import async_redis_storage
 from app.core.login import login_service
 from app.core.login.models import PlatformLoginState
 from app.providers.logger import get_logger
@@ -72,13 +74,25 @@ async def get_data_status(request):
 
         for platform_dir in data_path.iterdir():
             if platform_dir.is_dir():
+                # 非递归：仅统计平台目录根及特定子目录(json/csv)下的直系文件
                 files = list(platform_dir.glob("*.json")) + list(platform_dir.glob("*.csv"))
+                json_dir = platform_dir / "json"
+                csv_dir = platform_dir / "csv"
+                if json_dir.exists() and json_dir.is_dir():
+                    files += list(json_dir.glob("*.json"))
+                if csv_dir.exists() and csv_dir.is_dir():
+                    files += list(csv_dir.glob("*.csv"))
+
                 size = sum(f.stat().st_size for f in files if f.is_file())
+                latest_file = "无"
+                if files:
+                    newest = max(files, key=lambda f: f.stat().st_mtime)
+                    latest_file = newest.name
 
                 platform_stats[platform_dir.name] = {
                     "files_count": len(files),
                     "total_size_mb": round(size / 1024 / 1024, 2),
-                    "latest_file": max([f.name for f in files], default="无") if files else "无",
+                    "latest_file": latest_file,
                 }
 
                 total_files += len(files)
@@ -105,6 +119,33 @@ async def get_services_status(request):
     try:
         mcp_port = global_settings.app.port
 
+        async def _probe_tcp(host: str, port: int, timeout: float = 1.0) -> bool:
+            try:
+                reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=timeout)
+                writer.close()
+                try:
+                    await writer.wait_closed()
+                except Exception:
+                    pass
+                return True
+            except Exception:
+                return False
+
+        # Redis: 优先用 PING 校验，其次 TCP 端口存活
+        redis_status = "unknown"
+        try:
+            pong = await async_redis_storage.ping()  # type: ignore
+            redis_status = "running" if pong else "unknown"
+        except Exception:
+            alive = await _probe_tcp(global_settings.redis.host, int(global_settings.redis.port))
+            redis_status = "running" if alive else "down"
+
+        # PostgreSQL: 尝试 TCP 端口探测（无需引入驱动）
+        db_host = global_settings.database.host
+        db_port = int(global_settings.database.port)
+        db_alive = await _probe_tcp(db_host, db_port)
+        db_status = "running" if db_alive else "down"
+
         data = {
             "mcp_service": {
                 "name": "MCP工具服务",
@@ -114,15 +155,15 @@ async def get_services_status(request):
             },
             "database": {
                 "name": "PostgreSQL数据库",
-                "host": global_settings.database.host,
-                "port": global_settings.database.port,
-                "status": "unknown",
+                "host": db_host,
+                "port": db_port,
+                "status": db_status,
             },
             "redis": {
                 "name": "Redis缓存",
                 "host": global_settings.redis.host,
                 "port": global_settings.redis.port,
-                "status": "unknown",
+                "status": redis_status,
             },
         }
         return JSONResponse(content=data)

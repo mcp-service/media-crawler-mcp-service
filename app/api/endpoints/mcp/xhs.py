@@ -19,6 +19,7 @@ from app.api.scheme.xhs_scheme import (
 )
 from app.config.settings import Platform
 from app.core.mcp_tools import xhs as xhs_tools
+from app.core.login.exceptions import LoginExpiredError
 from app.providers.logger import get_logger
 
 logger = get_logger()
@@ -63,6 +64,8 @@ async def xhs_search_http(request):
     try:
         result = await xhs_tools.xhs_search(**req.to_service_params())
         return jsonify_response(_as_dict(result))
+    except LoginExpiredError:
+        return jsonify_response({}, status_response=(error_codes.INVALID_TOKEN[0], "登录过期，Cookie失效"))
     except Exception as exc:  # pragma: no cover - runtime safeguard
         logger.error(f"[xhs.search] failed: {exc}")
         return _server_error(f"小红书搜索失败: {exc}")
@@ -79,6 +82,8 @@ async def xhs_detail_http(request):
     try:
         result = await xhs_tools.xhs_detail(**req.to_service_params())
         return jsonify_response(_as_dict(result))
+    except LoginExpiredError:
+        return jsonify_response({}, status_response=(error_codes.INVALID_TOKEN[0], "登录过期，Cookie失效"))
     except Exception as exc:
         logger.error("[xhs.detail] failed: %s", exc)
         return _server_error(f"小红书详情抓取失败: {exc}")
@@ -95,6 +100,8 @@ async def xhs_creator_http(request):
     try:
         result = await xhs_tools.xhs_creator(**req.to_service_params())
         return jsonify_response(_as_dict(result))
+    except LoginExpiredError:
+        return jsonify_response({}, status_response=(error_codes.INVALID_TOKEN[0], "登录过期，Cookie失效"))
     except Exception as exc:
         logger.error("[xhs.creator] failed: %s", exc)
         return _server_error(f"小红书创作者抓取失败: {exc}")
@@ -111,6 +118,8 @@ async def xhs_comments_http(request):
     try:
         result = await xhs_tools.xhs_comments(**req.to_service_params())
         return jsonify_response(_as_dict(result))
+    except LoginExpiredError:
+        return jsonify_response({}, status_response=(error_codes.INVALID_TOKEN[0], "登录过期，Cookie失效"))
     except Exception as exc:
         logger.error("[xhs.comments] failed: %s", exc)
         return _server_error(f"小红书评论抓取失败: {exc}")
@@ -125,7 +134,7 @@ bp.tool(
 
 bp.tool(
     "xhs_detail",
-    description="小红书笔记详情",
+    description="小红书笔记详情（必传：node_id, xsec_token；xsec_source 未传默认 pc_search）",
     http_path="/detail",
     http_methods=["POST"],
 )(xhs_tools.xhs_detail)

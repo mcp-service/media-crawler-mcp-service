@@ -15,6 +15,7 @@ from app.core.crawler import (
 )
 from app.core.crawler.platforms.xhs.crawler import XiaoHongShuCrawler
 from app.core.login import login_service
+from app.core.login.exceptions import LoginExpiredError
 from app.providers.logger import get_logger
 
 logger = get_logger()
@@ -109,7 +110,10 @@ async def search(
     **kwargs,
 ) -> Dict[str, Any]:
     login_cookie = await login_service.get_cookie(Platform.XIAOHONGSHU.value)
-    
+    if not login_cookie:
+        # MCP 工具不进行自动登录，直接返回登录过期
+        raise LoginExpiredError("登录过期，Cookie失效")
+
     # 从kwargs中获取分页参数，使用page_size作为max_notes
     page_size = kwargs.get("page_size", 20)
     
@@ -121,7 +125,7 @@ async def search(
         max_comments=0,  # 搜索不获取评论
         headless=headless,
         enable_save_media=enable_save_media,
-        extra={**kwargs, "login_cookie": login_cookie},
+        extra={**kwargs, "login_cookie": login_cookie, "no_auto_login": True},
     )
     crawler = XiaoHongShuCrawler(context)
     try:
@@ -154,7 +158,9 @@ async def search_with_time_range(
 
 async def get_detail(
     *,
-    note_urls: List[str],
+    node_id: str,
+    xsec_token: str,
+    xsec_source: Optional[str] = "",
     enable_comments: bool = True,
     max_comments_per_note: int = 50,
     headless: Optional[bool] = None,
@@ -162,15 +168,17 @@ async def get_detail(
     **kwargs,
 ) -> Dict[str, Any]:
     login_cookie = await login_service.get_cookie(Platform.XIAOHONGSHU.value)
+    if not login_cookie:
+        raise LoginExpiredError("登录过期，Cookie失效")
     context = _build_context(
         crawler_type=CrawlerType.DETAIL,
-        note_urls=note_urls,
+        note_urls=[{"note_id": node_id, "xsec_token": xsec_token or "", "xsec_source": xsec_source or ""}],
         enable_comments=enable_comments,
-        max_notes=len(note_urls),
+        max_notes=1,
         max_comments=max_comments_per_note,
         headless=headless,
         enable_save_media=enable_save_media,
-        extra={**kwargs, "login_cookie": login_cookie},
+        extra={**kwargs, "login_cookie": login_cookie, "no_auto_login": True},
     )
     crawler = XiaoHongShuCrawler(context)
     try:
@@ -189,6 +197,8 @@ async def get_creator(
     **kwargs,
 ) -> Dict[str, Any]:
     login_cookie = await login_service.get_cookie(Platform.XIAOHONGSHU.value)
+    if not login_cookie:
+        raise LoginExpiredError("登录过期，Cookie失效")
     context = _build_context(
         crawler_type=CrawlerType.CREATOR,
         creator_ids=creator_ids,
@@ -197,7 +207,7 @@ async def get_creator(
         max_comments=max_comments_per_note,
         headless=headless,
         enable_save_media=enable_save_media,
-        extra={**kwargs, "login_cookie": login_cookie},
+        extra={**kwargs, "login_cookie": login_cookie, "no_auto_login": True},
     )
     crawler = XiaoHongShuCrawler(context)
     try:
@@ -208,21 +218,23 @@ async def get_creator(
 
 async def fetch_comments(
     *,
-    note_urls: List[str],
+    note_ids: List[str],
     max_comments: int = 50,
     headless: Optional[bool] = None,
     **kwargs,
 ) -> Dict[str, Any]:
     login_cookie = await login_service.get_cookie(Platform.XIAOHONGSHU.value)
+    if not login_cookie:
+        raise LoginExpiredError("登录过期，Cookie失效")
     context = _build_context(
         crawler_type=CrawlerType.COMMENTS,
-        note_urls=note_urls,
+        note_urls=note_ids,
         enable_comments=True,
-        max_notes=len(note_urls),
+        max_notes=len(note_ids),
         max_comments=max_comments,
         headless=headless,
         enable_save_media=False,
-        extra={**kwargs, "login_cookie": login_cookie},
+        extra={**kwargs, "login_cookie": login_cookie, "no_auto_login": True},
     )
     crawler = XiaoHongShuCrawler(context)
     try:

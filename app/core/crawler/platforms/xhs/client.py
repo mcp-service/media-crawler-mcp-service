@@ -70,25 +70,77 @@ class XiaoHongShuClient:
         note_type: SearchNoteType,
         search_id: Optional[str] = None,
     ) -> Dict:
+        # API expects integer code for note_type, not string labels
+        note_type_code = self._normalize_note_type(note_type)
+
         payload = {
             "keyword": keyword,
             "page": page,
             "page_size": 20,
             "sort": sort.value,
-            "note_type": note_type.value,
+            "note_type": note_type_code,
             "search_id": search_id or get_search_id(),
         }
         return await self._post("/api/sns/web/v1/search/notes", payload)
 
-    async def get_note_by_id(self, note_id: str, xsec_source: str, xsec_token: str) -> Optional[Dict]:
-        params = {
-            "note_id": note_id,
-            "xsec_source": xsec_source,
-            "xsec_token": xsec_token,
-            "image_info": True,
-        }
+    def _normalize_note_type(self, note_type: Union[SearchNoteType, str, int]) -> int:
+        """Convert note_type to API expected integer codes.
+
+        Mapping (based on PC web API behavior):
+        - 0: all
+        - 1: video
+        - 2: image
+        """
+        mapping = {"all": 0, "video": 1, "image": 2}
+        if isinstance(note_type, SearchNoteType):
+            return mapping.get(note_type.value, 0)
+        if isinstance(note_type, int):
+            return note_type
         try:
-            return await self._get("/api/sns/web/v1/note/detail", params)
+            # accept numeric strings
+            return int(str(note_type))
+        except (TypeError, ValueError):
+            s = str(note_type).lower().strip()
+            return mapping.get(s, 0)
+
+    async def get_note_by_id(self, note_id: str, xsec_source: str, xsec_token: str) -> Optional[Dict]:
+        """Fetch note detail using API, with MediaCrawler's feed fallback.
+
+        Strategy:
+        1) Try feed endpoint (/api/sns/web/v1/feed) with source_note_id (more tolerant)
+        2) Fallback to note/detail GET
+        3) HTML extraction fallback handled by caller
+        """
+        # 1) feed endpoint (MediaCrawler behavior)
+        feed_data: Dict[str, Any] = {
+            "source_note_id": note_id,
+            "image_formats": ["jpg", "webp", "avif"],
+            "extra": {"need_body_topic": 1},
+        }
+        # Default xsec_source when blank (observed as pc_search in MediaCrawler)
+        xs = xsec_source or "pc_search"
+        if xs:
+            feed_data["xsec_source"] = xs
+        if xsec_token:
+            feed_data["xsec_token"] = xsec_token
+        try:
+            feed_res = await self._post_once("/api/sns/web/v1/feed", feed_data)
+            if isinstance(feed_res, dict) and feed_res.get("items"):
+                first = feed_res["items"][0]
+                note_card = first.get("note_card") or {}
+                if note_card:
+                    return note_card
+        except DataFetchError:
+            pass
+
+        # 2) fallback to note/detail GET
+        params: Dict[str, Any] = {"note_id": note_id, "image_formats": "jpg,webp,avif"}
+        if xsec_source:
+            params["xsec_source"] = xsec_source
+        if xsec_token:
+            params["xsec_token"] = xsec_token
+        try:
+            return await self._get_once("/api/sns/web/v1/note/detail", params)
         except DataFetchError:
             return None
 
@@ -99,15 +151,75 @@ class XiaoHongShuClient:
         xsec_token: str,
         enable_cookie: bool = False,
     ) -> Optional[Dict]:
-        url = (
-            f"{self._domain}/explore/{note_id}"
-            f"?xsec_token={xsec_token}&xsec_source={xsec_source}"
-        )
+        # 仅在提供 xsec 参数时追加查询串，避免空值触发 404 跳转
+        url = f"{self._domain}/explore/{note_id}"
+        if xsec_token:
+            source = xsec_source or "pc_search"
+            url = f"{url}?xsec_token={xsec_token}&xsec_source={source}"
         headers = dict(self.base_headers)
         if not enable_cookie:
             headers.pop("Cookie", None)
-        html = await self._request("GET", url, headers=headers, return_response=True)
-        return self._extractor.extract_note_detail_from_html(note_id, html)
+        html = await self._request_html(url, headers=headers)
+        detail: Optional[Dict] = None
+        if html and "__INITIAL_STATE__" in html:
+            detail = self._extractor.extract_note_detail_from_html(note_id, html)
+        if not detail:
+            # 回退：Playwright 渲染并直接从 window.__INITIAL_STATE__ 提取
+            detail = await self._extract_note_via_page(url, note_id)
+        logger.debug(f"[xhs.client] fetched html for note {note_id} length={len(html) if html else 0}")
+        return detail
+
+    async def _get_html_via_page(self, url: str) -> str:
+        try:
+            await self.page.goto(url, wait_until="domcontentloaded")
+            try:
+                await self.page.wait_for_function(
+                    "() => typeof window.__INITIAL_STATE__ === 'object'",
+                    timeout=1500,
+                )
+            except Exception:
+                pass
+            return await self.page.content()
+        except Exception:
+            return ""
+
+    async def _extract_note_via_page(self, url: str, note_id: str) -> Optional[Dict]:
+        try:
+            await self.page.goto(url, wait_until="domcontentloaded")
+            try:
+                await self.page.wait_for_function("() => !!window.__INITIAL_STATE__", timeout=2000)
+            except Exception:
+                pass
+            state = await self.page.evaluate("() => window.__INITIAL_STATE__ || null")
+            if not state:
+                return None
+            try:
+                return (
+                    (state.get("note") or {})
+                    .get("noteDetailMap", {})
+                    .get(note_id, {})
+                    .get("note")
+                )
+            except Exception:
+                return None
+        except Exception:
+            return None
+
+    async def _request_html(self, url: str, headers: Optional[Dict[str, str]] = None) -> str:
+        try:
+            async with httpx.AsyncClient(follow_redirects=True, timeout=self.timeout, proxy=self.proxy) as client:
+                resp = await client.get(url, headers=headers)
+                logger.debug(f"url {url} status={resp.status_code}")
+                if resp.status_code == 200:
+                    return resp.text
+                return ""
+        except Exception:
+            return ""
+
+    async def _post_once(self, path: str, data: Dict) -> Dict:
+        url = f"{self._host}{path}"
+        headers = await self._prepare_headers(url, data)
+        return await self._request_once("POST", url, headers=headers, json=data)
 
     async def get_all_notes_by_creator(
         self,
@@ -161,9 +273,11 @@ class XiaoHongShuClient:
                 "note_id": note_id,
                 "cursor": cursor,
                 "image_formats": "jpg,webp,avif",
-                "top_comment": True,
+                "top_comment_id": "",
+                "xsec_token": xsec_token,
             }
-            response = await self._get("/api/sns/web/v2/comment/list", params)
+            # 使用单次 GET，避免在 404 情况下重试三次
+            response = await self._get_once("/api/sns/web/v2/comment/page", params)
             comments = response.get("comments") or []
             if not comments:
                 break
@@ -198,6 +312,9 @@ class XiaoHongShuClient:
         return await self._request("GET", url, headers=headers, params=params)
 
     async def _post(self, path: str, data: Dict) -> Dict:
+        # 避免对 feed 端点进行多次重试，直接走单次请求
+        if path == "/api/sns/web/v1/feed":
+            return await self._post_once(path, data)
         url = f"{self._host}{path}"
         headers = await self._prepare_headers(url, data)
         return await self._request("POST", url, headers=headers, json=data)
@@ -231,14 +348,20 @@ class XiaoHongShuClient:
         return_response = kwargs.pop("return_response", False)
         async with httpx.AsyncClient(proxy=self.proxy) as client:
             response = await client.request(method, url, timeout=self.timeout, **kwargs)
-
+            logger.debug(f"url {url} status={response.status_code}")
         if response.status_code in (461, 471):
             raise DataFetchError("触发风控验证码")
 
         if return_response:
             return response.text
 
-        data = response.json()
+        if response.status_code != 200:
+            raise DataFetchError(f"http {response.status_code}")
+
+        try:
+            data = response.json()
+        except Exception as exc:
+            raise DataFetchError(f"invalid response: {exc}")
         if data.get("success"):
             return data.get("data", data.get("success"))
 
@@ -246,6 +369,32 @@ class XiaoHongShuClient:
             raise IPBlockError("网络连接异常，请检查网络设置或稍后再试")
 
         raise DataFetchError(data.get("msg", "unknown error"))
+
+    async def _request_once(self, method: str, url: str, **kwargs) -> Union[str, Dict]:
+        """Single-attempt request without tenacity retry, used for endpoints
+        where retries are not helpful (e.g., 404 for note detail)."""
+        return_response = kwargs.pop("return_response", False)
+        async with httpx.AsyncClient(proxy=self.proxy) as client:
+            response = await client.request(method, url, timeout=self.timeout, **kwargs)
+            logger.debug(f"url {url} status={response.status_code}")
+        if response.status_code in (461, 471):
+            raise DataFetchError("触发风控验证码")
+        if return_response:
+            return response.text
+        try:
+            data = response.json()
+        except Exception as exc:
+            raise DataFetchError(f"invalid response: {exc}")
+        if data.get("success"):
+            return data.get("data", data.get("success"))
+        if data.get("code") == self._ip_error_code:
+            raise IPBlockError("网络连接异常，请检查网络设置或稍后再试")
+        raise DataFetchError(data.get("msg", "unknown error"))
+
+    async def _get_once(self, path: str, params: Optional[Dict] = None) -> Dict:
+        url = f"{self._host}{path}"
+        headers = await self._prepare_headers(url, params)
+        return await self._request_once("GET", url, headers=headers, params=params)
 
 
 __all__ = ["XiaoHongShuClient"]

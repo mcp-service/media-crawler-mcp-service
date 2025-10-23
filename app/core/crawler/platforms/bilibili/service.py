@@ -20,6 +20,7 @@ from app.core.crawler import (
 )
 from app.core.crawler.platforms.bilibili.crawler import BilibiliCrawler
 from app.core.login import login_service
+from app.core.login.exceptions import LoginExpiredError
 from app.providers.logger import get_logger
 
 
@@ -147,6 +148,8 @@ async def search(
     total_limit = limit if limit is not None else page_size
 
     login_cookie = await login_service.get_cookie(Platform.BILIBILI.value)
+    if not login_cookie:
+        raise LoginExpiredError("登录过期，Cookie失效")
 
     context = _build_common_context(
         crawler_type=CrawlerType.SEARCH,
@@ -156,7 +159,7 @@ async def search(
         max_notes=total_limit,
         max_comments_per_note=0,
         enable_save_media=enable_save_media,
-        extra=extra,
+        extra={**extra, "no_auto_login": True},
         login_cookie=login_cookie,
     )
 
@@ -194,6 +197,8 @@ async def search_with_time_range(
     total_limit = limit if limit is not None else page_size
 
     login_cookie = await login_service.get_cookie(Platform.BILIBILI.value)
+    if not login_cookie:
+        raise LoginExpiredError("登录过期，Cookie失效")
 
     context = _build_common_context(
         crawler_type=CrawlerType.SEARCH,
@@ -203,7 +208,7 @@ async def search_with_time_range(
         max_notes=total_limit,
         max_comments_per_note=0,
         enable_save_media=enable_save_media,
-        extra=extra,
+        extra={**extra, "no_auto_login": True},
         login_cookie=login_cookie,
     )
 
@@ -231,6 +236,8 @@ async def get_detail(
     extra = dict(kwargs) if kwargs else {}
 
     login_cookie = await login_service.get_cookie(Platform.BILIBILI.value)
+    if not login_cookie:
+        raise LoginExpiredError("登录过期，Cookie失效")
 
     context = _build_common_context(
         crawler_type=CrawlerType.DETAIL,
@@ -240,7 +247,7 @@ async def get_detail(
         max_notes=len(video_ids),
         max_comments_per_note=0,
         enable_save_media=enable_save_media,
-        extra=extra,
+        extra={**extra, "no_auto_login": True},
         login_cookie=login_cookie,
     )
 
@@ -270,6 +277,8 @@ async def get_creator(
     extra["page_size"] = page_size
 
     login_cookie = await login_service.get_cookie(Platform.BILIBILI.value)
+    if not login_cookie:
+        raise LoginExpiredError("登录过期，Cookie失效")
 
     context = _build_common_context(
         crawler_type=CrawlerType.CREATOR,
@@ -279,7 +288,7 @@ async def get_creator(
         max_notes=1,
         max_comments_per_note=0,
         enable_save_media=enable_save_media,
-        extra=extra,
+        extra={**extra, "no_auto_login": True},
         login_cookie=login_cookie,
     )
 
@@ -307,6 +316,8 @@ async def fetch_comments(
     extra["fetch_sub_comments"] = fetch_sub_comments
 
     login_cookie = await login_service.get_cookie(Platform.BILIBILI.value)
+    if not login_cookie:
+        raise LoginExpiredError("登录过期，Cookie失效")
 
     context = _build_common_context(
         crawler_type=CrawlerType.COMMENTS,
@@ -316,7 +327,7 @@ async def fetch_comments(
         max_notes=len(video_ids),
         max_comments_per_note=max_comments,
         enable_save_media=None,
-        extra=extra,
+        extra={**extra, "no_auto_login": True},
         login_cookie=login_cookie,
     )
 
