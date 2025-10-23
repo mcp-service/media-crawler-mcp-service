@@ -16,8 +16,10 @@ from app.core.login.models import LoginSession, LoginStartPayload, PlatformLogin
 from app.providers.logger import get_logger
 
 from app.core.crawler.platforms.bilibili.client import BilibiliClient
+from app.core.login.browser_manager import get_browser_manager
 
 logger = get_logger()
+browser_manager = get_browser_manager()
 
 
 class BilibiliLogin(AbstractLogin):
@@ -202,26 +204,26 @@ class BilibiliLogin(AbstractLogin):
             state.last_checked_at = time.time()
             return state
 
-        playwright = await async_playwright().start()
         browser_context: Optional[BrowserContext] = None
+        playwright: Optional[any] = None
         try:
-            chromium = playwright.chromium
-            browser_context = await chromium.launch_persistent_context(
-                user_data_dir=str(data_dir),
+            # 使用浏览器管理器获取临时上下文
+            browser_context, playwright = await browser_manager.get_context_for_check(
+                platform=self.platform,
+                user_data_dir=data_dir,
                 headless=self._headless,
                 viewport=self._viewport,
                 user_agent=self._user_agent,
-                accept_downloads=True,
             )
 
             # 检查Cookie
             cookies = await browser_context.cookies()
             cookie_str = "; ".join(f"{c['name']}={c['value']}" for c in cookies)
             cookie_dict = {c["name"]: c["value"] for c in cookies}
-            
+
             has_sessdata = bool(cookie_dict.get("SESSDATA"))
             has_userid = bool(cookie_dict.get("DedeUserID"))
-            
+
             if not (has_sessdata and has_userid):
                 state.is_logged_in = False
                 state.cookie_str = cookie_str
@@ -233,11 +235,11 @@ class BilibiliLogin(AbstractLogin):
 
             # 验证登录状态
             is_logged_in = await self._verify_login_status(cookie_str, cookie_dict, browser_context)
-            
+
             state.is_logged_in = is_logged_in
             state.cookie_str = cookie_str
             state.cookie_dict = cookie_dict
-            
+
             if is_logged_in:
                 state.user_info = {
                     "uid": cookie_dict.get("DedeUserID", ""),
@@ -252,10 +254,10 @@ class BilibiliLogin(AbstractLogin):
             else:
                 state.user_info = {}
                 state.message = "未登录"
-                
+
             state.last_checked_at = time.time()
             return state
-            
+
         except Exception as exc:
             logger.error(f"[登录管理] 检查 Bilibili 登录状态失败: {exc}")
             return await self.create_failed_state(f"状态检查失败: {exc}")
@@ -265,10 +267,11 @@ class BilibiliLogin(AbstractLogin):
                     await browser_context.close()
                 except Exception:
                     pass
-            try:
-                await playwright.stop()
-            except Exception:
-                pass
+            if playwright:
+                try:
+                    await playwright.stop()
+                except Exception:
+                    pass
 
     async def _build_api_client(self) -> Optional[BilibiliClient]:
         """构建API客户端"""
@@ -426,11 +429,15 @@ async def start_login(service, session: LoginSession, payload: LoginStartPayload
         except Exception as exc:
             logger.warning(f"[登录管理] 清理旧二维码目录失败: {exc}")
 
-    # 检查现有登录状态
+    # 检查现有登录状态（仅在非Cookie登录且非二维码登录时）
     cookie_candidate = (payload.cookie or "").strip()
-    if not cookie_candidate:
+
+    # 如果是二维码登录，则跳过现有状态检查，直接生成新二维码
+    # 如果已提供Cookie，则尝试Cookie登录
+    # 如果什么都没提供，才检查现有状态
+    if not cookie_candidate and payload.login_type != "qrcode":
         try:
-            current_state = await service.refresh_platform_state(session.platform, force=True)
+            current_state = await service.refresh_platform_state(session.platform, force=False)
         except Exception as exc:
             current_state = None
             logger.warning(f"[登录管理] 检查现有登录状态失败，继续登录流程: {exc}")
@@ -443,25 +450,28 @@ async def start_login(service, session: LoginSession, payload: LoginStartPayload
                 await service.persist_session(session)
                 return session.to_public_dict()
 
-    # 启动浏览器
-    playwright = await async_playwright().start()
-    chromium = playwright.chromium
+    # 使用浏览器管理器启动浏览器
     user_data_dir = get_user_data_dir()
-    user_data_dir.parent.mkdir(parents=True, exist_ok=True)
-
     browser_cfg = global_settings.browser
-    viewport = {"width": int(browser_cfg.viewport_width or 1280), 
+    viewport = {"width": int(browser_cfg.viewport_width or 1280),
                "height": int(browser_cfg.viewport_height or 800)}
-    browser_context = await chromium.launch_persistent_context(
-        user_data_dir=str(user_data_dir),
-        headless=browser_cfg.headless,
-        viewport=viewport,
-        user_agent=getattr(browser_cfg, "user_agent", 
-                          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                          "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"),
-        accept_downloads=True,
-    )
-    context_page = await browser_context.new_page()
+
+    try:
+        browser_context, context_page, playwright = await browser_manager.acquire_context(
+            platform=Platform.BILIBILI.value,
+            user_data_dir=user_data_dir,
+            headless=browser_cfg.headless,
+            viewport=viewport,
+            user_agent=getattr(browser_cfg, "user_agent",
+                              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                              "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"),
+        )
+    except Exception as exc:
+        logger.error(f"[登录管理] 获取浏览器实例失败: {exc}")
+        session.status = "failed"
+        session.message = f"浏览器启动失败: {exc}"
+        await service.persist_session(session)
+        return session.to_public_dict()
 
     # 创建登录对象
     login_obj = BilibiliLogin(
@@ -484,6 +494,7 @@ async def start_login(service, session: LoginSession, payload: LoginStartPayload
         if cookie_candidate:
             success = await _handle_cookie_login(session, login_obj, cookie_candidate, payload, service)
             if success:
+                await browser_manager.release_context(Platform.BILIBILI.value, keep_alive=True)
                 return session.to_public_dict()
 
         # 处理二维码登录
@@ -501,6 +512,7 @@ async def start_login(service, session: LoginSession, payload: LoginStartPayload
         session.message = f"登录失败: {exc}"
         await service.persist_session(session)
         await _cleanup_session_resources(session)
+        await browser_manager.release_context(Platform.BILIBILI.value, keep_alive=False)
         return session.to_public_dict()
 
 
@@ -718,13 +730,15 @@ async def _cleanup_session_resources(session: LoginSession):
     """清理会话资源"""
     if session.browser_context:
         try:
-            await session.browser_context.close()
+            # 注意：不关闭 browser_context，因为它由 browser_manager 管理
+            # await session.browser_context.close()
             session.browser_context = None
         except Exception:
             pass
     if session.playwright:
         try:
-            await session.playwright.stop()
+            # 注意：不停止 playwright，因为它由 browser_manager 管理
+            # await session.playwright.stop()
             session.playwright = None
         except Exception:
             pass
@@ -742,21 +756,24 @@ async def fetch_login_state(service) -> PlatformLoginState:
             last_checked_at=time.time()
         )
 
-    playwright = await async_playwright().start()
+    browser_context: Optional[BrowserContext] = None
+    playwright: Optional[any] = None
     try:
         browser_cfg = global_settings.browser
-        viewport = {"width": int(browser_cfg.viewport_width or 1280), 
+        viewport = {"width": int(browser_cfg.viewport_width or 1280),
                    "height": int(browser_cfg.viewport_height or 800)}
-        browser_context = await playwright.chromium.launch_persistent_context(
-            user_data_dir=str(user_data_dir),
+
+        # 使用浏览器管理器获取临时上下文
+        browser_context, playwright = await browser_manager.get_context_for_check(
+            platform=Platform.BILIBILI.value,
+            user_data_dir=user_data_dir,
             headless=True,
             viewport=viewport,
             user_agent=getattr(browser_cfg, "user_agent", "Mozilla/5.0"),
-            accept_downloads=True,
         )
-        
+
         context_page = await browser_context.new_page()
-        
+
         # 创建临时登录对象进行状态检查
         temp_login = BilibiliLogin(
             service=service,
@@ -765,26 +782,41 @@ async def fetch_login_state(service) -> PlatformLoginState:
             context_page=context_page
         )
         temp_login.playwright = playwright
-        
+
         return await temp_login.fetch_login_state()
-        
+
     finally:
-        try:
-            await playwright.stop()
-        except Exception:
-            pass
+        if context_page:
+            try:
+                await context_page.close()
+            except Exception:
+                pass
+        if browser_context:
+            try:
+                await browser_context.close()
+            except Exception:
+                pass
+        if playwright:
+            try:
+                await playwright.stop()
+            except Exception:
+                pass
 
 
 async def logout(service) -> None:
     """退出登录 - 服务接口"""
     await service.cleanup_platform_sessions(Platform.BILIBILI.value, drop=True)
+
+    # 强制清理浏览器管理器中的实例
+    await browser_manager.force_cleanup(Platform.BILIBILI.value)
+
     data_dir = get_user_data_dir()
     if data_dir.exists():
         try:
             await asyncio.to_thread(shutil.rmtree, data_dir)
         except Exception as exc:
             logger.warning(f"[登录管理] 清理浏览器数据目录失败: {exc}")
-    
+
     qr_parent = Path("browser_data")
     if qr_parent.exists():
         for qr_dir in qr_parent.glob(f"{Platform.BILIBILI.value}_*"):

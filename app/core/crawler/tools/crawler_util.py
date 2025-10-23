@@ -38,6 +38,8 @@ async def find_login_qrcode(page: Page, selector: str) -> str:
             selector=selector,
         )
         login_qrcode_img = str(await elements.get_property("src"))  # type: ignore
+        logger.info(f"[find_login_qrcode] QR code src attribute: {login_qrcode_img[:100]}...")
+
         if "http://" in login_qrcode_img or "https://" in login_qrcode_img:
             async with httpx.AsyncClient(follow_redirects=True) as client:
                 logger.info(f"[find_login_qrcode] get qrcode by url:{login_qrcode_img}")
@@ -47,10 +49,23 @@ async def find_login_qrcode(page: Page, selector: str) -> str:
                     base64_image = base64.b64encode(image_data).decode('utf-8')
                     return base64_image
                 raise Exception(f"fetch login image url failed, response message:{resp.text}")
+
+        # 处理 data:image/png;base64,... 格式
+        if login_qrcode_img.startswith("data:image"):
+            if "," in login_qrcode_img:
+                # 提取纯 base64 部分（去掉 data:image/png;base64, 前缀）
+                base64_data = login_qrcode_img.split(",", 1)[1]
+                logger.info(f"[find_login_qrcode] Extracted base64 from data URL, length: {len(base64_data)}")
+                return base64_data
+            else:
+                logger.warning(f"[find_login_qrcode] Invalid data URL format: {login_qrcode_img[:50]}")
+                return ""
+
+        # 如果已经是纯 base64，直接返回
         return login_qrcode_img
 
     except Exception as e:
-        print(e)
+        logger.error(f"[find_login_qrcode] Failed to get QR code: {e}")
         return ""
 
 

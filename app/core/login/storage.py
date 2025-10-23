@@ -125,10 +125,10 @@ class RedisLoginStorage:
     async def get_platform_state(self, platform: str) -> Optional[PlatformLoginState]:
         data = await self.get_platform_state_raw(platform)
         if not data:
-            self.logger.info(f"[调试] {platform} 存储中没有状态数据")
+            self.logger.debug(f"{platform} 存储中没有状态数据")
             return None
         state = PlatformLoginState.from_storage_dict(data)
-        self.logger.info(f"[调试] {platform} 从存储加载状态: is_logged_in={state.is_logged_in}, message='{state.message}'")
+        self.logger.debug(f" {platform} 从存储加载状态: is_logged_in={state.is_logged_in}, message='{state.message}'")
         return state
 
     async def remove_platform_state(self, platform: str) -> None:

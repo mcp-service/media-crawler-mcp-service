@@ -35,8 +35,18 @@ class LoginService:
             Platform.BILIBILI.value: bili_login,
             Platform.XIAOHONGSHU.value: xhs_login,
         }
+        # 平台级别的登录锁，防止同一平台重复发起登录请求（防抖）
+        self._platform_login_locks: Dict[str, asyncio.Lock] = {}
+        self._platform_locks_access = asyncio.Lock()
 
     # === 基础能力 ===
+
+    async def _get_platform_login_lock(self, platform: str) -> asyncio.Lock:
+        """获取平台登录锁（防抖）"""
+        async with self._platform_locks_access:
+            if platform not in self._platform_login_locks:
+                self._platform_login_locks[platform] = asyncio.Lock()
+            return self._platform_login_locks[platform]
 
     def get_supported_platforms(self) -> List[str]:
         """获取支持的登录平台"""
@@ -83,58 +93,81 @@ class LoginService:
     async def start_login(self, payload: LoginStartPayload) -> Dict[str, Any]:
         """启动登录流程"""
         platform = payload.platform
-        platform_module = self._get_platform_module(platform)
 
-        # 如果不是 cookie 登录，先检查当前状态是否已登录，或可用缓存 Cookie
-        if payload.login_type != LoginType.COOKIE.value:
-            try:
-                # 先尝试获取缓存状态，避免触发风控检查
-                current_state = await self.refresh_platform_state(platform, force=False)
-            except Exception as exc:
-                logger.warning(f"[登录管理] 刷新 {platform} 登录状态失败，继续登录流程: {exc}")
-                current_state = None
-            else:
-                if current_state and current_state.is_logged_in:
+        # 获取平台登录锁，防止同一平台重复登录（防抖）
+        platform_lock = await self._get_platform_login_lock(platform)
+
+        # 尝试获取锁，如果已被占用则返回错误
+        if platform_lock.locked():
+            # 检查是否有正在进行的登录会话
+            session_ids = await self._storage.list_session_ids_by_platform(platform)
+            for sid in session_ids:
+                existing_session = await self._storage.get_session(sid)
+                if existing_session and existing_session.status in {"starting", "started", "waiting", "processing"}:
+                    logger.warning(f"[登录管理] {platform} 已有登录会话正在进行中: {sid}")
                     return {
-                        "status": "success",
+                        "status": "failed",
                         "platform": platform,
                         "login_type": payload.login_type,
-                        "message": "已检测到登录状态，无需重新登录",
+                        "message": f"登录正在进行中，请稍后重试（会话ID: {sid[:8]}...）",
                         "session_id": None,
                         "qr_code_base64": None,
                         "qrcode_timestamp": 0.0,
                     }
-                if current_state and current_state.cookie_str and not payload.cookie:
-                    payload.cookie = current_state.cookie_str
-                    payload.login_type = LoginType.COOKIE.value
 
-        session_id = str(uuid.uuid4())
-        session = LoginSession(id=session_id, platform=platform, login_type=payload.login_type)
+        async with platform_lock:
+            platform_module = self._get_platform_module(platform)
 
-        # 清理旧会话，但保留历史记录
-        await self.cleanup_platform_sessions(
-            platform,
-            drop=False,
-            reason="已启动新的登录流程，旧的登录会话已终止",
-        )
+            # 如果不是 cookie 登录，先检查当前状态是否已登录，或可用缓存 Cookie
+            if payload.login_type != LoginType.COOKIE.value:
+                try:
+                    # 先尝试获取缓存状态，避免触发风控检查
+                    current_state = await self.refresh_platform_state(platform, force=False)
+                except Exception as exc:
+                    logger.warning(f"[登录管理] 刷新 {platform} 登录状态失败，继续登录流程: {exc}")
+                    current_state = None
+                else:
+                    if current_state and current_state.is_logged_in:
+                        return {
+                            "status": "success",
+                            "platform": platform,
+                            "login_type": payload.login_type,
+                            "message": "已检测到登录状态，无需重新登录",
+                            "session_id": None,
+                            "qr_code_base64": None,
+                            "qrcode_timestamp": 0.0,
+                        }
+                    if current_state and current_state.cookie_str and not payload.cookie:
+                        payload.cookie = current_state.cookie_str
+                        payload.login_type = LoginType.COOKIE.value
 
-        await self._register_active_session(session)
-        await self.persist_session(session)
+            session_id = str(uuid.uuid4())
+            session = LoginSession(id=session_id, platform=platform, login_type=payload.login_type)
 
-        try:
-            # 直接调用平台登录模块
-            response = await platform_module.start_login(self, session, payload)
-            await self.persist_session(session)
-            return response
-        except Exception as exc:
-            logger.error(f"[登录管理] 启动登录失败: {exc}")
-            await self.cleanup_session(
-                session_id,
-                remove_resources=True,
-                drop=True,
-                reason="登录启动失败",
+            # 清理旧会话，但保留历史记录
+            await self.cleanup_platform_sessions(
+                platform,
+                drop=False,
+                reason="已启动新的登录流程，旧的登录会话已终止",
             )
-            raise LoginServiceError(f"启动登录失败: {exc}") from exc
+
+            await self._register_active_session(session)
+            await self.persist_session(session)
+
+            try:
+                # 直接调用平台登录模块
+                response = await platform_module.start_login(self, session, payload)
+                await self.persist_session(session)
+                return response
+            except Exception as exc:
+                logger.error(f"[登录管理] 启动登录失败: {exc}")
+                await self.cleanup_session(
+                    session_id,
+                    remove_resources=True,
+                    drop=True,
+                    reason="登录启动失败",
+                )
+                raise LoginServiceError(f"启动登录失败: {exc}") from exc
 
     # === 状态查询 ===
 
@@ -201,20 +234,20 @@ class LoginService:
         """列出所有平台的登录状态"""
         async def _collect(platform: str) -> Dict[str, Any]:
             platform_module = self._get_platform_module(platform)
-            logger.info(f"[调试] 开始收集 {platform} 平台状态")
+            logger.debug(f"开始收集 {platform} 平台状态")
             
             try:
                 # 优先从存储中读取状态，避免触发风控检查
                 state = await self._storage.get_platform_state(platform)
-                logger.info(f"[调试] {platform} 从存储读取状态: {state.is_logged_in if state else 'None'}")
+                logger.debug(f"{platform} 从存储读取状态: {state.is_logged_in if state else 'None'}")
                 
                 if not state:
                     # 只有在没有缓存状态时才刷新（但不强制）
-                    logger.info(f"[调试] {platform} 没有缓存，调用 refresh_platform_state")
+                    logger.debug(f"{platform} 没有缓存，调用 refresh_platform_state")
                     state = await self.refresh_platform_state(platform, force=False)
-                    logger.info(f"[调试] {platform} refresh 后状态: {state.is_logged_in}")
+                    logger.debug(f"{platform} refresh 后状态: {state.is_logged_in}")
                 else:
-                    logger.info(f"[调试] {platform} 使用缓存状态，last_checked: {state.last_checked_at}, is_logged_in: {state.is_logged_in}")
+                    logger.debug(f"{platform} 使用缓存状态，last_checked: {state.last_checked_at}, is_logged_in: {state.is_logged_in}")
                     
             except Exception as exc:
                 logger.warning(f"[登录管理] 获取 {platform} 登录状态失败: {exc}")
@@ -237,7 +270,7 @@ class LoginService:
                 "last_login": last_login,
                 "session_path": str(platform_module.get_user_data_dir()) if state.is_logged_in else None,
             }
-            logger.info(f"[调试] {platform} 最终返回结果: {result}")
+            logger.debug(f"{platform} 最终返回结果: {result}")
             return result
 
         tasks = [asyncio.create_task(_collect(platform)) for platform in self.get_supported_platforms()]

@@ -5,3 +5,4 @@ media_crawler/
 MediaCrawler/
 browser_data/
 nul
+*.pyc

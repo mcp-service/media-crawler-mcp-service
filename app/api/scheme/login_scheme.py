@@ -52,7 +52,7 @@ class StartLoginResponse(BaseModel):
     platform: str
     login_type: str
     message: str = ""
-    session_id: str
+    session_id: Optional[str] = None
     qr_code_base64: Optional[str] = None
     qrcode_timestamp: float = 0.0
 

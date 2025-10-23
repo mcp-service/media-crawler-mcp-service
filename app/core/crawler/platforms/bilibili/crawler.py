@@ -25,6 +25,7 @@ from app.core.crawler.tools.time_util import get_current_timestamp
 from app.config.settings import Platform, CrawlerType, global_settings
 from app.core.login import login_service
 from app.core.login.exceptions import LoginExpiredError
+from app.core.login.browser_manager import get_browser_manager
 
 from .client import BilibiliClient
 from .exception import DataFetchError
@@ -32,6 +33,7 @@ from .field import SearchOrderType
 from .login import BilibiliLogin
 
 logger = get_logger()
+browser_manager = get_browser_manager()
 
 
 class BilibiliCrawler(AbstractCrawler):
@@ -92,14 +94,20 @@ class BilibiliCrawler(AbstractCrawler):
         if self.extra.get('enable_ip_proxy', False):
             logger.warning("[BilibiliCrawler.start] IP proxy is not yet supported in refactored version")
 
-        async with async_playwright() as playwright:
-            # 启动浏览器
-            chromium = playwright.chromium
-            self.browser_context = await self.launch_browser(
-                chromium,
-                playwright_proxy,
-                self.user_agent,
-                headless=self.browser.headless
+        # 使用浏览器管理器获取浏览器上下文
+        user_data_dir = Path("browser_data") / self.platform_code
+        viewport = {
+            "width": self.browser.viewport_width,
+            "height": self.browser.viewport_height,
+        }
+
+        try:
+            self.browser_context, self.context_page, playwright = await browser_manager.acquire_context(
+                platform=self.platform_code,
+                user_data_dir=user_data_dir,
+                headless=self.browser.headless,
+                viewport=viewport,
+                user_agent=self.user_agent,
             )
 
             # 加载反爬脚本（相对于当前文件路径）
@@ -109,7 +117,6 @@ class BilibiliCrawler(AbstractCrawler):
             else:
                 logger.warning(f"[BilibiliCrawler.start] stealth.min.js not found at {stealth_js_path}")
 
-            self.context_page = await self.browser_context.new_page()
             await self.context_page.goto(self.index_url)
 
             # 创建 Bilibili 客户端
@@ -174,6 +181,9 @@ class BilibiliCrawler(AbstractCrawler):
 
             logger.info(f"[BilibiliCrawler.start] Bilibili Crawler finished, result keys: {result.keys() if result else 'empty'}")
             return result
+        finally:
+            # 释放浏览器上下文引用（保持实例存活）
+            await browser_manager.release_context(self.platform_code, keep_alive=True)
 
     async def search(self) -> Dict:
         """

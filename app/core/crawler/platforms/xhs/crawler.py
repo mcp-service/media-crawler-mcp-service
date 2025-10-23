@@ -19,6 +19,7 @@ from app.core.crawler.store import xhs as xhs_store
 from app.core.crawler.tools import crawler_util, time_util
 from app.core.login import login_service
 from app.core.login.exceptions import LoginExpiredError
+from app.core.login.browser_manager import get_browser_manager
 from app.providers.logger import get_logger
 
 from .client import XiaoHongShuClient
@@ -32,6 +33,7 @@ from .help import (
 from .login import XiaoHongShuLogin
 
 logger = get_logger()
+browser_manager = get_browser_manager()
 
 
 class XiaoHongShuCrawler(AbstractCrawler):
@@ -55,17 +57,23 @@ class XiaoHongShuCrawler(AbstractCrawler):
 
     async def start(self) -> Dict[str, Any]:
         logger.info(f"[xhs.crawler] start crawler type={self.ctx.crawler_type.value}")
-        async with async_playwright() as playwright:
-            chromium = playwright.chromium
 
-            self.browser_context = await self.launch_browser(
-                chromium=chromium,
-                playwright_proxy=None,
-                user_agent=self.user_agent,
+        # 使用浏览器管理器获取浏览器上下文
+        user_data_dir = Path("browser_data") / Platform.XIAOHONGSHU.value
+        viewport = {
+            "width": self.browser_opts.viewport_width,
+            "height": self.browser_opts.viewport_height,
+        }
+
+        try:
+            self.browser_context, self.context_page, playwright = await browser_manager.acquire_context(
+                platform=Platform.XIAOHONGSHU.value,
+                user_data_dir=user_data_dir,
                 headless=self.browser_opts.headless,
+                viewport=viewport,
+                user_agent=self.user_agent,
             )
 
-            self.context_page = await self.browser_context.new_page()
             await self.context_page.goto("https://www.xiaohongshu.com")
 
             await self._ensure_login_state()
@@ -82,6 +90,9 @@ class XiaoHongShuCrawler(AbstractCrawler):
                 return await self.fetch_comments()
 
             raise RuntimeError(f"Unsupported crawler type: {crawler_type}")
+        finally:
+            # 释放浏览器上下文引用（保持实例存活）
+            await browser_manager.release_context(Platform.XIAOHONGSHU.value, keep_alive=True)
 
     async def search(self) -> Dict[str, Any]:
         keywords = self.crawl_opts.keywords or ""
@@ -155,6 +166,8 @@ class XiaoHongShuCrawler(AbstractCrawler):
 
                     collected.append({
                         "note_id": str(note_id),
+                        "xsec_token": xsec_token,
+                        "xsec_source": xsec_source,
                         "title": title,
                         "note_url": f"https://www.xiaohongshu.com/explore/{note_id}",
                         "user": {
@@ -167,9 +180,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
                             "collected_count": _to_int(interact.get("collected_count")),
                             "comment_count": _to_int(interact.get("comment_count")),
                             "share_count": _to_int(interact.get("shared_count")),
-                        },
-                        "xsec_token": xsec_token,
-                        "xsec_source": xsec_source,
+                        }
                     })
                     if len(collected) >= limit:
                         break

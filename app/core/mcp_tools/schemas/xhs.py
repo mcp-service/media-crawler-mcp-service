@@ -26,11 +26,11 @@ class XhsNoteBase(BaseModel):
 
 
 class XhsNoteDetail(XhsNoteBase):
+    xsec_token: Optional[str] = Field(None, description="xsec token")
+    xsec_source: Optional[str] = Field(None, description="xsec source")
     image_list: List[Dict[str, Any]] = Field(default_factory=list, description="图片列表")
     video_url: Optional[str] = Field(None, description="视频 URL 列表（逗号分隔）")
     tag_list: List[str] = Field(default_factory=list, description="标签列表")
-    xsec_token: Optional[str] = Field(None, description="xsec token")
-    xsec_source: Optional[str] = Field(None, description="xsec source")
 
 
 class XhsNoteSearchResult(BaseModel):
