@@ -53,8 +53,9 @@ class XiaoHongShuClient:
 
     async def pong(self) -> bool:
         """Check login state by calling nav API."""
-        url = f"{self._domain}/api/sns/web/v1/homefeed"
-        headers = await self._prepare_headers(url, None)
+        path = "/api/sns/web/v1/homefeed"
+        headers = await self._prepare_headers(path, None)
+        url = f"{self._domain}{path}"
         try:
             await self._request("GET", url, headers=headers)
             return True
@@ -226,8 +227,9 @@ class XiaoHongShuClient:
             return ""
 
     async def _post_once(self, path: str, data: Dict) -> Dict:
+        # 注意：_prepare_headers 传入的是 path (URI) 而不是完整 URL
+        headers = await self._prepare_headers(path, data)
         url = f"{self._host}{path}"
-        headers = await self._prepare_headers(url, data)
         return await self._request_once("POST", url, headers=headers, json=data)
 
     async def get_all_notes_by_creator(
@@ -316,16 +318,23 @@ class XiaoHongShuClient:
         return self._extractor.extract_creator_info_from_html(html)
 
     async def _get(self, path: str, params: Optional[Dict] = None) -> Dict:
-        url = f"{self._host}{path}"
-        headers = await self._prepare_headers(url, params)
-        return await self._request("GET", url, headers=headers, params=params)
+        # 构建完整 URI（包含查询参数）用于签名
+        final_path = path
+        if params:
+            from urllib.parse import urlencode
+            final_path = f"{path}?{urlencode(params)}"
+        # 注意：_prepare_headers 传入的是 URI (路径) 而不是完整 URL
+        headers = await self._prepare_headers(final_path, None)
+        url = f"{self._host}{final_path}"
+        return await self._request("GET", url, headers=headers)
 
     async def _post(self, path: str, data: Dict) -> Dict:
         # 避免对 feed 端点进行多次重试，直接走单次请求
         if path == "/api/sns/web/v1/feed":
             return await self._post_once(path, data)
+        # 注意：_prepare_headers 传入的是 path (URI) 而不是完整 URL
+        headers = await self._prepare_headers(path, data)
         url = f"{self._host}{path}"
-        headers = await self._prepare_headers(url, data)
         return await self._request("POST", url, headers=headers, json=data)
 
     async def _prepare_headers(self, url: str, data: Optional[Dict]) -> Dict[str, str]:
@@ -401,9 +410,15 @@ class XiaoHongShuClient:
         raise DataFetchError(data.get("msg", "unknown error"))
 
     async def _get_once(self, path: str, params: Optional[Dict] = None) -> Dict:
-        url = f"{self._host}{path}"
-        headers = await self._prepare_headers(url, params)
-        return await self._request_once("GET", url, headers=headers, params=params)
+        # 构建完整 URI（包含查询参数）用于签名
+        final_path = path
+        if params:
+            from urllib.parse import urlencode
+            final_path = f"{path}?{urlencode(params)}"
+        # 注意：_prepare_headers 传入的是 URI (路径) 而不是完整 URL
+        headers = await self._prepare_headers(final_path, None)
+        url = f"{self._host}{final_path}"
+        return await self._request_once("GET", url, headers=headers)
 
 
 __all__ = ["XiaoHongShuClient"]

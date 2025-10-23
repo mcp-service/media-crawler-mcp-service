@@ -11,7 +11,7 @@ from starlette.responses import JSONResponse
 
 from app.api.endpoints.base import MCPBlueprint
 from app.api.scheme import error_codes, jsonify_response
-from app.api.scheme.bilibili_scheme import (
+from app.api.scheme.request.bilibili_scheme import (
     BiliCommentsRequest,
     BiliCreatorRequest,
     BiliDetailRequest,

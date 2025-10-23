@@ -11,7 +11,7 @@ from starlette.responses import JSONResponse
 
 from app.api.endpoints.base import MCPBlueprint
 from app.api.scheme import error_codes, jsonify_response
-from app.api.scheme.xhs_scheme import (
+from app.api.scheme.request.xhs_scheme import (
     XhsCommentsRequest,
     XhsCreatorRequest,
     XhsDetailRequest,
@@ -85,7 +85,7 @@ async def xhs_detail_http(request):
     except LoginExpiredError:
         return jsonify_response({}, status_response=(error_codes.INVALID_TOKEN[0], "登录过期，Cookie失效"))
     except Exception as exc:
-        logger.error("[xhs.detail] failed: %s", exc)
+        logger.error(f"[xhs.detail] failed: {exc}")
         return _server_error(f"小红书详情抓取失败: {exc}")
 
 

@@ -9,7 +9,7 @@ from pydantic import ValidationError
 from starlette.responses import JSONResponse
 
 from app.api.endpoints.base import MCPBlueprint
-from app.api.scheme.login_scheme import (
+from app.api.scheme.request.login_scheme import (
     LoginStatusResponse,
     LogoutResponse,
     PlatformSessionInfo,

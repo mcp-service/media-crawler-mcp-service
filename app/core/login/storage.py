@@ -24,7 +24,7 @@ class RedisLoginStorage:
     PLATFORM_STATE_KEY_PREFIX = "login:platform:state:"
     PLATFORM_INDEX_KEY = "login:platform:index"
 
-    def __init__(self, session_ttl: int = 86400, platform_ttl: int = 7 * 86400):  # 平台状态改为 7 天
+    def __init__(self, session_ttl: int = 86400, platform_ttl: int = 365 * 86400):  # 平台状态改为 365 天（1年）
         self.session_ttl = session_ttl
         self.platform_ttl = platform_ttl
         self.logger = get_logger()

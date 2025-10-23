@@ -47,7 +47,8 @@ MediaCrawler MCP Service 是面向个人的数据获取工具集，通过 MCP（
 
 当前已实现与进行中：
 - 已完成：B 站搜索/详情/创作者/评论（`bili_search`/`bili_detail`/`bili_creator`/`bili_comments`）
-- 进行中：小红书 / 抖音 / 快手 / 知乎 / 贴吧 / 微博等
+- 已完成：小红书搜索/详情/创作者/评论（`xhs_search`/`xhs_detail`/`xhs_creator`/`xhs_comments`）
+- 进行中：抖音 / 快手 / 知乎 / 贴吧 / 微博等
 
 ## 快速开始
 
@@ -78,11 +79,11 @@ poetry run python main.py    # 默认端口 9090
 
 ## 管理界面与登录
 
-1) 打开管理界面 `http://localhost:9090/admin`
-    ![index .png](docs/index.png)
-2) 进入“登录管理”，选择平台（如 B 站）
+### 1) 打开管理界面 `http://localhost:9090/admin`
+   ![index .png](docs/index.png)
+### 2) 进入“登录管理”，选择平台（如 B 站）
    ![登录界面](docs/login.png)
-3) 支持“二维码登录”或“Cookie 登录”，状态会持久化
+### 3) 支持“二维码登录”或“Cookie 登录”，状态会持久化
    ![登录状态](docs/login-state.png)
 
 ## 在 AI 助手中使用
@@ -132,19 +133,38 @@ poetry run python main.py    # 默认端口 9090
 }
 ```
 
-- `xhs_detail`（小红书笔记详情，原子化参数；xsec_token 必传）
+- `xhs_detail`（小红书笔记详情，不含评论；xsec_token 必传）
 ```json
 {
-  "node_id": "68f9b8b20000000004010353",
+  "note_id": "68f9b8b20000000004010353",
   "xsec_token": "从搜索结果或分享链接中获取（必传）",
-  "xsec_source": "可选，未传时默认 pc_search",
-  "enable_comments": true,
-  "max_comments_per_note": 50
+  "xsec_source": "可选，未传时默认 pc_search"
 }
 ```
+
+- `xhs_creator`（小红书创作者作品，不含评论）
+```json
+{
+  "creator_ids": ["user123", "user456"]
+}
+```
+
+- `xhs_comments`（小红书笔记评论，单条获取）
+```json
+{
+  "note_id": "68f9b8b20000000004010353",
+  "xsec_token": "从搜索结果获取（必传）",
+  "xsec_source": "可选，未传时默认 pc_search",
+  "max_comments": 50
+}
+```
+
 说明：
-- 小红书网页端对详情访问存在更严格的风控与授权校验，调用 `xhs_detail` 必须传入 `xsec_token`（来源于 `xhs_search` 的返回或分享链接）。
-- 当未传 `xsec_source` 时，服务会默认使用 `pc_search`；仍无法访问时请检查登录态、token 是否过期或笔记是否限制浏览。
+- **xsec_token 是必传参数**：小红书网页端对详情和评论访问存在严格的风控校验，`xhs_detail` 和 `xhs_comments` 都必须传入 `xsec_token`（可从 `xhs_search` 返回结果中获取，或从分享链接解析）。
+- **原子化设计**：`xhs_comments` 仅支持单条笔记查询，不支持批量，符合 MCP 工具原子化原则。
+- **数据完整性**：所有工具返回的数据已包含完整的用户信息（user_id、nickname、avatar）和交互数据（点赞、收藏、评论、分享数），支持中文数字格式解析（如"3万"自动转为 30000）。
+- **评论获取已独立**：`xhs_detail` 仅返回笔记详情，需要评论时请单独调用 `xhs_comments` 工具。
+- 当未传 `xsec_source` 时，服务会默认使用 `pc_search`；仍无法访问时请检查登录态、token 是否过期或笔记是否被限制浏览。
 
 ## 架构与技术选择
 

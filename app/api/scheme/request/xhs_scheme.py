@@ -11,7 +11,6 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 class _XhsBaseRequest(BaseModel):
     headless: Optional[bool] = Field(None, description="是否使用无头浏览器")
     save_media: Optional[bool] = Field(None, description="是否保存媒体资源")
-    options: Dict[str, Any] = Field(default_factory=dict, description="额外参数")
 
     model_config = ConfigDict(extra="forbid")
 
@@ -20,11 +19,9 @@ class _XhsBaseRequest(BaseModel):
         if self.headless is not None:
             params["headless"] = self.headless
 
-        extras = dict(self.options)
         if self.save_media is not None:
-            extras.setdefault("enable_save_media", self.save_media)
+            params["save_media"] = self.save_media
 
-        params.update({k: v for k, v in extras.items() if v is not None})
         return params
 
 
@@ -44,27 +41,23 @@ class XhsSearchRequest(_XhsBaseRequest):
     def to_service_params(self) -> Dict[str, Any]:
         params = {
             "keywords": self.keywords,
+            "page_num": self.page_num,
+            "page_size": self.page_size,
         }
         params.update(self.to_common_params())
-        # 添加分页参数到 extra
-        extra = params.setdefault("options", {})
-        extra["page_num"] = self.page_num
-        extra["page_size"] = self.page_size
         return params
 
 
 class XhsDetailRequest(_XhsBaseRequest):
     # 注意：接口不做向后兼容；xsec_token 必传
-    node_id: str = Field(..., description="笔记ID")
+    note_id: str = Field(..., description="笔记ID")
     xsec_token: str = Field(..., description="xsec token（必传，来自搜索或分享链接）")
     xsec_source: Optional[str] = Field(default="", description="xsec source（可选，未传默认 pc_search）")
-    enable_comments: bool = Field(True, description="是否抓取评论", examples=[True, False])
-    max_comments_per_note: int = Field(50, ge=0, description="单条笔记最大评论数", examples=[50, 100])
 
     @model_validator(mode="after")
     def sanitize(self) -> "XhsDetailRequest":
-        self.node_id = self.node_id.strip()
-        if not self.node_id:
+        self.note_id = self.note_id.strip()
+        if not self.note_id:
             raise ValueError("node_id 不能为空")
         self.xsec_token = (self.xsec_token or "").strip()
         if not self.xsec_token:
@@ -73,11 +66,9 @@ class XhsDetailRequest(_XhsBaseRequest):
 
     def to_service_params(self) -> Dict[str, Any]:
         params = {
-            "node_id": self.node_id,
+            "note_id": self.note_id,
             "xsec_token": self.xsec_token,
             "xsec_source": self.xsec_source or "",
-            "enable_comments": self.enable_comments,
-            "max_comments_per_note": self.max_comments_per_note,
         }
         params.update(self.to_common_params())
         return params
@@ -85,8 +76,6 @@ class XhsDetailRequest(_XhsBaseRequest):
 
 class XhsCreatorRequest(_XhsBaseRequest):
     creator_ids: List[str] = Field(..., min_length=1, description="创作者 ID 或主页 URL 列表", examples=[["user123"], ["user123", "user456"]])
-    enable_comments: bool = Field(False, description="是否抓取评论", examples=[False, True])
-    max_comments_per_note: int = Field(0, ge=0, description="单条笔记最大评论数", examples=[0, 20])
 
     @model_validator(mode="after")
     def sanitize_ids(self) -> "XhsCreatorRequest":
@@ -99,28 +88,32 @@ class XhsCreatorRequest(_XhsBaseRequest):
     def to_service_params(self) -> Dict[str, Any]:
         params = {
             "creator_ids": self.creator_ids,
-            "enable_comments": self.enable_comments,
-            "max_comments_per_note": self.max_comments_per_note,
         }
         params.update(self.to_common_params())
         return params
 
 
 class XhsCommentsRequest(_XhsBaseRequest):
-    note_ids: List[str] = Field(..., min_length=1, description="笔记 ID 列表（也兼容传 URL）", examples=[["68f9b8b20000000004010353"], ["https://www.xiaohongshu.com/explore/68f9b8b20000000004010353"]])
-    max_comments: int = Field(50, ge=1, description="单条笔记最大评论数", examples=[50, 100])
+    note_id: str = Field(..., description="笔记ID")
+    xsec_token: str = Field(..., description="xsec token（必传，从搜索结果获取）")
+    xsec_source: Optional[str] = Field(default="", description="xsec source（可选，未传默认 pc_search）")
+    max_comments: int = Field(50, ge=1, description="最大评论数", examples=[50, 100])
 
     @model_validator(mode="after")
-    def sanitize_urls(self) -> "XhsCommentsRequest":
-        cleaned = [item.strip() for item in self.note_ids if item and item.strip()]
-        if not cleaned:
-            raise ValueError("note_ids 不能为空")
-        self.note_ids = cleaned
+    def sanitize(self) -> "XhsCommentsRequest":
+        self.note_id = self.note_id.strip()
+        if not self.note_id:
+            raise ValueError("note_id 不能为空")
+        self.xsec_token = (self.xsec_token or "").strip()
+        if not self.xsec_token:
+            raise ValueError("xsec_token 不能为空")
         return self
 
     def to_service_params(self) -> Dict[str, Any]:
         params = {
-            "note_ids": self.note_ids,
+            "note_id": self.note_id,
+            "xsec_token": self.xsec_token,
+            "xsec_source": self.xsec_source or "",
             "max_comments": self.max_comments,
         }
         params.update(self.to_common_params())

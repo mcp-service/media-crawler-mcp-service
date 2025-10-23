@@ -300,9 +300,10 @@ class LoginService:
             # 如果缓存时间小于 TTL，直接返回
             if cache_age < self.STATUS_CACHE_TTL:
                 return cached_state
-            # 如果是已登录状态且缓存时间不超过 1 小时，也直接返回（避免频繁风控检查）
-            if cached_state.is_logged_in and cache_age < 3600:
-                logger.debug(f"[登录管理] {platform} 已登录状态缓存仍有效，跳过检查")
+            # 如果是已登录状态，永久信任缓存（避免频繁风控检查）
+            # 只有在force=True或用户主动调用logout时才会重新验证
+            if cached_state.is_logged_in:
+                logger.debug(f"[登录管理] {platform} 已登录状态，使用缓存（避免风控）")
                 return cached_state
 
         platform_module = self._get_platform_module(platform)

@@ -158,24 +158,23 @@ async def search_with_time_range(
 
 async def get_detail(
     *,
-    node_id: str,
+    note_id: str,
     xsec_token: str,
     xsec_source: Optional[str] = "",
-    enable_comments: bool = True,
-    max_comments_per_note: int = 50,
     headless: Optional[bool] = None,
     enable_save_media: Optional[bool] = None,
     **kwargs,
 ) -> Dict[str, Any]:
+    """获取小红书笔记详情（不包含评论）。"""
     login_cookie = await login_service.get_cookie(Platform.XIAOHONGSHU.value)
     if not login_cookie:
         raise LoginExpiredError("登录过期，Cookie失效")
     context = _build_context(
         crawler_type=CrawlerType.DETAIL,
-        note_urls=[{"note_id": node_id, "xsec_token": xsec_token or "", "xsec_source": xsec_source or ""}],
-        enable_comments=enable_comments,
+        note_urls=[{"note_id": note_id, "xsec_token": xsec_token or "", "xsec_source": xsec_source or ""}],
+        enable_comments=False,  # 详情不获取评论
         max_notes=1,
-        max_comments=max_comments_per_note,
+        max_comments=0,  # 不获取评论
         headless=headless,
         enable_save_media=enable_save_media,
         extra={**kwargs, "login_cookie": login_cookie, "no_auto_login": True},
@@ -190,21 +189,20 @@ async def get_detail(
 async def get_creator(
     *,
     creator_ids: List[str],
-    enable_comments: bool = False,
-    max_comments_per_note: int = 0,
     headless: Optional[bool] = None,
     enable_save_media: Optional[bool] = None,
     **kwargs,
 ) -> Dict[str, Any]:
+    """获取小红书创作者的作品（不包含评论）。"""
     login_cookie = await login_service.get_cookie(Platform.XIAOHONGSHU.value)
     if not login_cookie:
         raise LoginExpiredError("登录过期，Cookie失效")
     context = _build_context(
         crawler_type=CrawlerType.CREATOR,
         creator_ids=creator_ids,
-        enable_comments=enable_comments,
+        enable_comments=False,  # 创作者作品不获取评论
         max_notes=len(creator_ids),
-        max_comments=max_comments_per_note,
+        max_comments=0,  # 不获取评论
         headless=headless,
         enable_save_media=enable_save_media,
         extra={**kwargs, "login_cookie": login_cookie, "no_auto_login": True},
@@ -218,23 +216,30 @@ async def get_creator(
 
 async def fetch_comments(
     *,
-    note_ids: List[str],
+    note_id: str,
+    xsec_token: str,
+    xsec_source: str = "",
     max_comments: int = 50,
     headless: Optional[bool] = None,
     **kwargs,
 ) -> Dict[str, Any]:
+    """获取单条笔记的评论。"""
     login_cookie = await login_service.get_cookie(Platform.XIAOHONGSHU.value)
     if not login_cookie:
         raise LoginExpiredError("登录过期，Cookie失效")
+
+    # 构造单个笔记信息
+    note_info = {"note_id": note_id, "xsec_token": xsec_token, "xsec_source": xsec_source or ""}
+
     context = _build_context(
         crawler_type=CrawlerType.COMMENTS,
-        note_urls=note_ids,
+        note_urls=[note_info],
         enable_comments=True,
-        max_notes=len(note_ids),
+        max_notes=1,
         max_comments=max_comments,
         headless=headless,
         enable_save_media=False,
-        extra={**kwargs, "login_cookie": login_cookie, "no_auto_login": True},
+        extra={**kwargs, "login_cookie": login_cookie, "no_auto_login": True, "note_ids": [note_info]},
     )
     crawler = XiaoHongShuCrawler(context)
     try:

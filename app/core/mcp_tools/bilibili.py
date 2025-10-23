@@ -7,7 +7,7 @@ import json
 from typing import List, Optional
 
 from app.core.crawler.platforms.bilibili import service as bilibili_core
-from .schemas.bilibili import (
+from app.api.scheme.response import (
     BilibiliSearchResult,
     BilibiliDetailResult,
     BilibiliVideoSimple,
@@ -150,8 +150,6 @@ async def bili_search(
     keywords: str,
     page_size: int = 1,
     page_num: int = 1,
-    limit: Optional[int] = None,
-    headless: Optional[bool] = None,
     save_media: bool = False,
 ) -> str:
     """
@@ -161,17 +159,12 @@ async def bili_search(
         keywords: 搜索关键词，多个关键词用逗号分隔。
         page_size: 单页作品数量。
         page_num: 页码（从 1 开始，不循环）。
-        limit: 返回作品数量上限，未传则默认为 page_size（单页）。
-        headless: 是否无头模式。
         save_media: 是否保存媒体文件。
     """
-    total_limit = limit if limit is not None else page_size
     raw_result = await bilibili_core.search(
         keywords=keywords,
         page_size=page_size,
         page_num=page_num,
-        limit=total_limit,
-        headless=headless,
         enable_save_media=save_media,
     )
     
@@ -186,26 +179,25 @@ async def bili_search_time_range(
     end_day: str,
     page_size: int = 1,
     page_num: int = 1,
-    limit: Optional[int] = None,
-    max_notes_per_day: int = 50,
-    daily_limit: bool = False,
-    headless: Optional[bool] = None,
     save_media: bool = False,
 ) -> str:
     """
     按时间范围搜索 Bilibili 视频，返回简化的结果。
+
+    Args:
+        keywords: 搜索关键词，多个关键词用逗号分隔。
+        start_day: 起始时间 YYYY/MM/DD
+        end_day: 结束时间 YYYY/MM/DD
+        page_size: 单页作品数量。
+        page_num: 页码（从 1 开始，不循环）。
+        save_media: 是否保存媒体文件。
     """
-    total_limit = limit if limit is not None else page_size
     raw_result = await bilibili_core.search_with_time_range(
         keywords=keywords,
         start_day=start_day,
         end_day=end_day,
         page_size=page_size,
         page_num=page_num,
-        limit=total_limit,
-        max_notes_per_day=max_notes_per_day,
-        daily_limit=daily_limit,
-        headless=headless,
         enable_save_media=save_media,
     )
     
@@ -216,15 +208,17 @@ async def bili_search_time_range(
 
 async def bili_detail(
     video_ids: List[str],
-    headless: Optional[bool] = None,
     save_media: bool = False,
 ) -> str:
     """
     获取指定视频详情，返回完整的结果。
+
+    Args:
+        video_ids: 视频id列表。
+        save_media: 是否保存媒体文件。
     """
     raw_result = await bilibili_core.get_detail(
         video_ids=video_ids,
-        headless=headless,
         enable_save_media=save_media,
     )
     
@@ -236,7 +230,6 @@ async def bili_creator(
     creator_ids: List[str],
     page_num: int = 1,
     page_size: int = 30,
-    headless: Optional[bool] = None,
     save_media: bool = False,
 ) -> str:
     """
@@ -246,7 +239,6 @@ async def bili_creator(
         creator_ids: 创作者ID列表，例如: ["99801185", "12345678"]
         page_num: 页码，从1开始，默认 1
         page_size: 每页视频数量，默认 30
-        headless: 是否使用无头浏览器，None 使用全局配置
         save_media: 是否保存媒体资源（图片、视频），默认 False
 
     Returns:
@@ -265,7 +257,6 @@ async def bili_creator(
                 creator_id=creator_id,
                 page_num=page_num,
                 page_size=page_size,
-                headless=headless,
                 enable_save_media=save_media,
             )
             

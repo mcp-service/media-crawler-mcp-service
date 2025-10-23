@@ -302,21 +302,21 @@ class XiaoHongShuCrawler(AbstractCrawler):
         comments: Dict[str, List[Dict[str, Any]]] = {}
 
         for item in targets:
-            item = str(item or "").strip()
-            if not item:
-                continue
-            if item.startswith("http://") or item.startswith("https://"):
-                info = parse_note_info_from_note_url(item)
-                note_id, xsec_source, xsec_token = info.note_id, info.xsec_source, info.xsec_token
-            else:
-                note_id, xsec_source, xsec_token = item, "", ""
-
-            note_detail = await self._get_note_detail(note_id, xsec_source, xsec_token, semaphore)
-            if not note_detail:
+            # 只支持字典格式
+            if not isinstance(item, dict):
+                logger.warning(f"[xhs.comments] 不支持的格式，跳过: {type(item)}")
                 continue
 
-            note_id = note_detail.get("note_id")
+            note_id = str(item.get("note_id", "")).strip()
+            xsec_token = str(item.get("xsec_token", "") or "")
+            xsec_source = str(item.get("xsec_source", "") or "")
+
             if not note_id:
+                logger.warning("[xhs.comments] note_id 为空，跳过")
+                continue
+
+            if not xsec_token:
+                logger.warning(f"[xhs.comments] xsec_token 为空，跳过 note_id={note_id}")
                 continue
 
             comments[note_id] = []
@@ -324,13 +324,17 @@ class XiaoHongShuCrawler(AbstractCrawler):
             async def _collector(note: str, payload: List[Dict[str, Any]]):
                 comments[note].extend(payload)
 
-            await self.client.get_note_all_comments(
-                note_id=note_id,
-                xsec_token=note_detail.get("xsec_token", ""),
-                crawl_interval=self.crawl_opts.crawl_interval,
-                callback=_collector,
-                max_count=self.crawl_opts.max_comments_per_note or 50,
-            )
+            try:
+                await self.client.get_note_all_comments(
+                    note_id=note_id,
+                    xsec_token=xsec_token,
+                    crawl_interval=self.crawl_opts.crawl_interval,
+                    callback=_collector,
+                    max_count=self.crawl_opts.max_comments_per_note or 50,
+                )
+            except Exception as exc:
+                logger.error(f"[xhs.comments] 获取评论失败 note_id={note_id}: {exc}")
+                continue
 
         return {
             "comments": comments,
@@ -422,7 +426,14 @@ class XiaoHongShuCrawler(AbstractCrawler):
             "content-type": "application/json;charset=UTF-8",
             "origin": "https://www.xiaohongshu.com",
             "pragma": "no-cache",
+            "priority": "u=1, i",
             "referer": "https://www.xiaohongshu.com/",
+            "sec-ch-ua": '"Chromium";v="136", "Google Chrome";v="136", "Not.A/Brand";v="99"',
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"Windows"',
+            "sec-fetch-dest": "empty",
+            "sec-fetch-mode": "cors",
+            "sec-fetch-site": "same-site",
             "user-agent": self.user_agent,
             "Cookie": cookie_str,
         }

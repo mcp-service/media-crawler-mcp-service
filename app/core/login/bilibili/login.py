@@ -344,9 +344,11 @@ class BilibiliLogin(AbstractLogin):
             logger.info(f"[BilibiliLogin._check_login_via_page] Raw evaluate result: {result}")
         return False
 
-    async def _verify_login_status(self, cookie_str: str, cookie_dict: Dict[str, str], 
+    async def _verify_login_status(self, cookie_str: str, cookie_dict: Dict[str, str],
                                  browser_context: BrowserContext) -> bool:
-        """验证登录状态"""
+        """验证登录状态（增强风控容错）"""
+        has_key_cookies = bool(cookie_dict.get("SESSDATA") and cookie_dict.get("DedeUserID"))
+
         try:
             # 先尝试API验证
             bili_client = BilibiliClient(
@@ -365,46 +367,60 @@ class BilibiliLogin(AbstractLogin):
             logger.debug(f"[登录管理] Bilibili API 检查结果: {is_logged_in}")
             return is_logged_in
         except Exception as api_exc:
+            error_msg = str(api_exc)
             logger.debug(f"[登录管理] Bilibili API 检查失败: {api_exc}")
-            
+
+            # ⚠️ 风控错误（412/461/412/风控/banned）→ 保守判断为已登录
+            is_risk_control = any(keyword in error_msg for keyword in ["412", "461", "471", "风控", "banned", "risk"])
+            if has_key_cookies and is_risk_control:
+                logger.info(f"[登录管理] 检测到风控，但Cookie存在，保守判断为已登录")
+                return True
+
             # API失败时，尝试页面检查
             page = None
             try:
                 page = await browser_context.new_page()
-                await page.goto("https://www.bilibili.com/", 
+                await page.goto("https://www.bilibili.com/",
                               wait_until="domcontentloaded", timeout=10000)
-                
+
                 result = await page.evaluate(
                     """
                     async () => {
                         try {
-                            const resp = await fetch("https://api.bilibili.com/x/web-interface/nav", 
+                            const resp = await fetch("https://api.bilibili.com/x/web-interface/nav",
                                                     { credentials: "include" });
                             if (resp.status !== 200) return { success: false, status: resp.status };
                             const data = await resp.json();
-                            return { 
-                                success: true, 
+                            return {
+                                success: true,
                                 isLogin: data?.data?.isLogin || false,
                                 code: data?.code || -1
                             };
-                        } catch (error) { 
-                            return { success: false, error: String(error) }; 
+                        } catch (error) {
+                            return { success: false, error: String(error) };
                         }
                     }
                     """
                 )
-                
+
                 if isinstance(result, dict) and result.get("success"):
                     is_logged_in = bool(result.get("isLogin", False))
                     logger.debug(f"[登录管理] Bilibili 页面检查结果: {is_logged_in}")
                     return is_logged_in
                 else:
-                    # 页面检查失败，基于Cookie保守判断
-                    return True  # 有关键Cookie就认为可能已登录
-                    
+                    # 页面检查失败，但有关键Cookie → 保守判断为已登录
+                    if has_key_cookies:
+                        logger.info(f"[登录管理] 页面检查失败，但Cookie存在，保守判断为已登录")
+                        return True
+                    return False
+
             except Exception as page_exc:
-                logger.debug(f"[登录管理] 页面加载失败，基于 Cookie 判断: {page_exc}")
-                return True  # 有关键Cookie就认为可能已登录
+                logger.debug(f"[登录管理] 页面加载失败: {page_exc}")
+                # 页面检查异常，但有关键Cookie → 保守判断为已登录
+                if has_key_cookies:
+                    logger.info(f"[登录管理] 页面检查异常，但Cookie存在，保守判断为已登录")
+                    return True
+                return False
             finally:
                 if page:
                     try:

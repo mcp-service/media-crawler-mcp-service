@@ -8,20 +8,96 @@ from typing import List, Optional
 
 from app.core.crawler.platforms.xhs import service as xhs_service
 from app.providers.logger import get_logger
-from .schemas.xhs import XhsCommentsResult, XhsNoteDetail, XhsNoteSearchResult
+from app.api.scheme.response.xhs import XhsCommentsResult, XhsNoteDetail, XhsNoteSearchResult
 
 logger = get_logger()
+
+
+def _parse_count(value) -> Optional[int]:
+    """
+    解析小红书的数量字符串，支持 "3万"、"1.3万" 等格式。
+
+    Args:
+        value: 可能是整数、字符串或 None
+
+    Returns:
+        整数或 None
+
+    Examples:
+        "3万" -> 30000
+        "1.3万" -> 13000
+        "123" -> 123
+        123 -> 123
+        None -> None
+    """
+    if value is None:
+        return None
+
+    # 如果已经是整数，直接返回
+    if isinstance(value, int):
+        return value
+
+    # 转换为字符串处理
+    s = str(value).strip()
+    if not s:
+        return None
+
+    try:
+        # 处理 "万" 单位
+        if "万" in s:
+            s = s.replace("万", "")
+            return int(float(s) * 10000)
+        # 直接解析数字
+        return int(s)
+    except (ValueError, TypeError):
+        return None
+
+
+def _flatten_note(note: dict) -> dict:
+    """
+    将 crawler 返回的嵌套结构扁平化为 XhsNoteDetail 所需的格式。
+
+    Crawler 返回的结构：
+    {
+        "note_id": "xxx",
+        "user": {"user_id": "xxx", "nickname": "xxx", "avatar": "xxx"},
+        "interact_info": {"liked_count": 123, ...}
+    }
+
+    XhsNoteDetail 需要的结构：
+    {
+        "note_id": "xxx",
+        "user_id": "xxx",
+        "nickname": "xxx",
+        "avatar": "xxx",
+        "liked_count": 123,
+        ...
+    }
+    """
+    flattened = dict(note)
+
+    # 提取 user 信息到顶层
+    user = note.get("user", {})
+    if isinstance(user, dict):
+        flattened["user_id"] = user.get("user_id") or user.get("userId")
+        flattened["nickname"] = user.get("nickname") or user.get("nick_name")
+        flattened["avatar"] = user.get("avatar")
+
+    # 提取 interact_info 信息到顶层，并转换数量字符串
+    interact = note.get("interact_info", {}) or note.get("interactInfo", {})
+    if isinstance(interact, dict):
+        flattened["liked_count"] = _parse_count(interact.get("liked_count") or interact.get("likedCount"))
+        flattened["comment_count"] = _parse_count(interact.get("comment_count") or interact.get("commentCount"))
+        flattened["share_count"] = _parse_count(interact.get("share_count") or interact.get("shareCount"))
+        flattened["collected_count"] = _parse_count(interact.get("collected_count") or interact.get("collectedCount"))
+
+    return flattened
 
 async def xhs_search(
     keywords: str,
     page_num: int = 1,
     page_size: int = 20,
-    headless: Optional[bool] = None,
     save_media: bool = False,
-    login_phone: Optional[str] = None,
-    login_cookie: Optional[str] = None,
-    save_login_state: bool = True,
-    options: Optional[dict] = None,
 ) -> str:
     """
     搜索小红书笔记，返回结构化的搜索结果。
@@ -30,30 +106,16 @@ async def xhs_search(
         keywords: 搜索关键词，多个关键词用逗号分隔。
         page_num: 页码，从1开始。
         page_size: 每页数量。
-        headless: 是否使用无头浏览器。
         save_media: 是否保存媒体资源（图片、视频）。
-        login_phone: 登录手机号。
-        login_cookie: 登录Cookie字符串，格式如 "key1=value1; key2=value2"。
-        save_login_state: 是否保存登录状态。
-        options: 额外选项字典。
     """
-    extra = options.copy() if options else {}
-    if login_phone is not None:
-        extra["login_phone"] = login_phone
-    if login_cookie is not None:
-        extra["login_cookie"] = login_cookie
-    extra["save_login_state"] = save_login_state
-    extra["page_num"] = page_num
-    extra["page_size"] = page_size
-    
     result = await xhs_service.search(
         keywords=keywords,
-        headless=headless,
+        page_num=page_num,
+        page_size=page_size,
         enable_save_media=save_media,
-        **extra,
     )
     payload = XhsNoteSearchResult(
-        notes=[XhsNoteDetail(**note) for note in result.get("notes", [])],
+        notes=[_flatten_note(note) for note in result.get("notes", [])],
         total_count=result.get("total_count", 0),
         crawl_info=result.get("crawl_info", {}),
     )
@@ -61,58 +123,35 @@ async def xhs_search(
 
 
 async def xhs_detail(
-    node_id: str,
+    note_id: str,
     xsec_token: str,
     xsec_source: Optional[str] = None,
-    enable_comments: bool = True,
-    max_comments_per_note: int = 50,
-    headless: Optional[bool] = None,
-    save_media: bool = False,
-    login_phone: Optional[str] = None,
-    login_cookie: Optional[str] = None,
-    save_login_state: bool = True,
+    save_media: bool = False
 ) -> str:
     """
-    获取小红书笔记详情，返回结构化的详情信息（原子化参数）。
+    获取小红书笔记详情，返回结构化的详情信息（不包含评论，评论请使用 xhs_comments）。
 
     Args:
-        node_id: 笔记ID
+        note_id: 笔记ID
         xsec_token: 必传，推荐从搜索结果或分享链接中获取
         xsec_source: 可选，未提供时服务会默认 pc_search
-        enable_comments: 是否抓取评论，默认 True
-        max_comments_per_note: 单条笔记最大评论数，默认 50
-        headless: 是否使用无头浏览器，None 使用全局配置
         save_media: 是否保存媒体资源（图片、视频），默认 False
-        login_phone: 登录手机号，可选
-        login_cookie: 登录Cookie字符串，可选，格式如: "key1=value1; key2=value2"
-        save_login_state: 是否保存登录状态，默认 True
 
     Returns:
         JSON字符串，包含笔记详情列表、总数量和抓取信息
 
     Example:
-        node_id="68f9b8b20000000004010353", enable_comments=True, max_comments_per_note=20
+        node_id="68f9b8b20000000004010353", xsec_token="从搜索结果获取"
     """
-    extra = {}
-    if login_phone is not None:
-        extra["login_phone"] = login_phone
-    if login_cookie is not None:
-        extra["login_cookie"] = login_cookie
-    extra["save_login_state"] = save_login_state
-    
     result = await xhs_service.get_detail(
-        node_id=node_id,
+        note_id=note_id,
         xsec_token=xsec_token,
         xsec_source=xsec_source,
-        enable_comments=enable_comments,
-        max_comments_per_note=max_comments_per_note,
-        headless=headless,
         enable_save_media=save_media,
-        **extra,
     )
     logger.debug(f"[xhs-detail] result {result}")
     payload = XhsNoteSearchResult(
-        notes=[XhsNoteDetail(**note) for note in result.get("notes", [])],
+        notes=[_flatten_note(note) for note in result.get("notes", [])],
         total_count=result.get("total_count", 0),
         crawl_info=result.get("crawl_info", {}),
     )
@@ -121,88 +160,54 @@ async def xhs_detail(
 
 async def xhs_creator(
     creator_ids: List[str],
-    enable_comments: bool = False,
-    max_comments_per_note: int = 0,
-    headless: Optional[bool] = None,
     save_media: bool = False,
-    login_phone: Optional[str] = None,
-    login_cookie: Optional[str] = None,
-    save_login_state: bool = True,
 ) -> str:
     """
     获取小红书创作者的作品，返回创作者信息和作品列表。
 
     Args:
         creator_ids: 创作者ID列表，例如: ["user123", "user456"]
-        enable_comments: 是否抓取作品评论，默认 False
-        max_comments_per_note: 单条作品最大评论数，仅在 enable_comments=True 时有效，默认 0
-        headless: 是否使用无头浏览器，None 使用全局配置
         save_media: 是否保存媒体资源（图片、视频），默认 False
-        login_phone: 登录手机号，可选
-        login_cookie: 登录Cookie字符串，可选，格式如: "key1=value1; key2=value2"
-        save_login_state: 是否保存登录状态，默认 True
 
     Returns:
         JSON字符串，包含创作者信息和作品列表
 
     Example:
-        creator_ids=["user12345"], enable_comments=False, save_media=True
+        creator_ids=["user12345"], save_media=True
     """
-    extra = {}
-    if login_phone is not None:
-        extra["login_phone"] = login_phone
-    if login_cookie is not None:
-        extra["login_cookie"] = login_cookie
-    extra["save_login_state"] = save_login_state
-    
     result = await xhs_service.get_creator(
         creator_ids=creator_ids,
-        enable_comments=enable_comments,
-        max_comments_per_note=max_comments_per_note,
-        headless=headless,
         enable_save_media=save_media,
-        **extra,
     )
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 
 async def xhs_comments(
-    note_ids: List[str],
-    max_comments: int = 50,
-    headless: Optional[bool] = None,
-    login_phone: Optional[str] = None,
-    login_cookie: Optional[str] = None,
-    save_login_state: bool = True,
+    note_id: str,
+    xsec_token: str,
+    xsec_source: Optional[str] = None,
+    max_comments: int = 50
 ) -> str:
     """
-    获取小红书笔记评论，返回结构化的评论信息。
+    获取单条小红书笔记的评论，返回结构化的评论信息。
 
     Args:
-        note_ids: 笔记ID列表，亦支持混传URL（会自动解析为ID）
+        note_id: 笔记ID
+        xsec_token: 必传，从搜索结果中获取
+        xsec_source: 可选，未提供时默认 pc_search
         max_comments: 最大评论数量，默认 50
-        headless: 是否使用无头浏览器，None 使用全局配置
-        login_phone: 登录手机号，可选
-        login_cookie: 登录Cookie字符串，可选，格式如: "key1=value1; key2=value2"
-        save_login_state: 是否保存登录状态，默认 True
 
     Returns:
         JSON字符串，包含评论列表、总数量和抓取信息
 
     Example:
-        note_ids=["68f9b8b20000000004010353"], max_comments=100
+        note_id="68f9b8b20000000004010353", xsec_token="ABxxx", max_comments=100
     """
-    extra = {}
-    if login_phone is not None:
-        extra["login_phone"] = login_phone
-    if login_cookie is not None:
-        extra["login_cookie"] = login_cookie
-    extra["save_login_state"] = save_login_state
-    
     result = await xhs_service.fetch_comments(
-        note_ids=note_ids,
+        note_id=note_id,
+        xsec_token=xsec_token,
+        xsec_source=xsec_source or "",
         max_comments=max_comments,
-        headless=headless,
-        **extra,
     )
     payload = XhsCommentsResult(
         comments=result.get("comments", {}),
