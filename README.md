@@ -1,6 +1,8 @@
 # MediaCrawler MCP 服务
 
-让 AI 原生使用社媒数据的MCP服务。将传统 CLI 爬虫升级为 MCP 标准工具，让 Claude / ChatGPT 直连调用，一次配置，长期可用。
+![img2.png](docs/mcp.png)
+
+让 AI 原生使用社媒数据的MCP服务。爬虫部分参考了[MediaCrawler](https://github.com/NanmiCoder/MediaCrawler)，将其 CLI 爬虫升级为 MCP 标准工具，让 Claude / ChatGPT 直连调用，一次配置，长期可用。
 
 ![index .png](docs/index.png)
 
@@ -30,29 +32,70 @@
 MediaCrawler MCP Service 是面向个人的数据获取工具集，通过 MCP（Model Context Protocol）把社媒公开信息变成 AI 助手可直接调用的标准化工具。核心能力包括“登录外部化管理”“任务级配置隔离”“浏览器上下文复用”和“结构化数据输出”。
 
 
-为什么与众不同？
-- 从脚本到标准：从一次性脚本变成可复用的 MCP 工具
-- 登录完全外部化：可视化界面 + 二维码/Cookie 双模式，状态持久
-- 真·工程化：分层解耦、Pydantic 模型、状态缓存与风控友好
-- 文本格式友好: 需要AI分析，所以要返回文本友好的格式，不是大量无用的嵌套数据
-![bili-detail.png](docs/bili-detail.png)
-## 核心特性
-- 一次配置，AI 原生调用（Claude/ChatGPT）
-- 登录外部化：跨重启保持，支持多平台
-- 任务级配置隔离，消除全局变量竞争
-- 平台级浏览器实例隔离：每个平台独立浏览器上下文，Login 和 Crawler 自动复用同一实例，避免资源浪费与状态干扰
-- Playwright 浏览器上下文复用，秒级响应
-- Pydantic 结构化输出，易于分析与存档
-- 内建状态缓存与风控友好策略
+## 关键优势：
 
-当前已实现与进行中：
-- 已完成：B 站搜索/详情/创作者/评论（`bili_search`/`bili_detail`/`bili_creator`/`bili_comments`）
-- 已完成：小红书搜索/详情/创作者/评论（`xhs_search`/`xhs_detail`/`xhs_creator`/`xhs_comments`）
-- 进行中：抖音 / 快手 / 知乎 / 贴吧 / 微博等
+### 从脚本到标准：可复用的 MCP 工具
+
+> media-crawler-mcp-service 打破了传统的临时脚本模式，转变为 可复用的标准化 MCP 工具。它支持多平台数据抓取，功能模块化设计让扩展和维护变得更加高效，不再需要重复编写脚本。
+
+### 登录完全外部化：可视化界面 + 二维码/Cookie 双模式，状态持久
+
+> 采用 外部化登录机制，提供 可视化界面 和 二维码/Cookie 双模式，让身份验证更加灵活。支持 登录状态持久化，避免频繁登录操作，提升了数据抓取的稳定性与便捷性。
+
+### 真·工程化：分层解耦、Pydantic 模型、状态缓存与风控友好
+
+> 采用 分层解耦架构 和 Pydantic 模型，保证了高效的数据验证和一致性。状态缓存 和 风控设计 让系统更加稳定，减少了负载并提高了抓取效率。
+
+### 文本格式友好：适合 AI 分析，不返回冗余嵌套数据
+![bili-detail.png](docs/bili-detail.png)
+> 与其他同类型MCP相比，media-crawler-mcp-service 返回的抓取数据 简洁、无冗余，特别适合 AI 分析。避免复杂的嵌套数据，让 AI 模型可以更轻松、更高效地处理数据。
+
+| 特性                     | `media-crawler-mcp-service`        | **MediaCrawler**     | **Bowenwin MCP Server**  |
+|------------------------|-----------------------------------|-------------------------|-----------------------------|
+| **从脚本到标准**        | ✅ 可复用的 MCP 工具               | ❌ 仅支持一次性脚本，不可复用   | ✅ 支持部分模块化，但不完全标准化  |
+| **登录方式**            | ✅ 可视化界面 + 二维码/Cookie 双模式 | ❌ 基础登录模式，缺乏灵活性      | ❌ 登录功能不完善，手动操作较多    |
+| **工程化设计**          | ✅ 分层解耦、Pydantic 模型、状态缓存 | ❌ 架构不清晰，紧耦合          | ❌ 缺乏工程化设计，模块化不清晰    |
+| **数据格式**            | ✅ 文本友好，适合 AI 分析           | ❌ 返回复杂的 JSON 数据，难以处理 | ❌ 数据结构混乱，不适合 AI 分析    |
+| **社区支持**            | ✅ 持续迭代，社区支持               | ❌ 社区活跃度低，支持有限        | ❌ 无社区支持，项目已不再更新     |
+
+
+## 项目开发 Todo List
+
+### 已完成
+- [x] 独立化登陆模块
+- [x] B 站搜索/详情/创作者/评论
+  - `bili_search`
+  - `bili_detail`
+  - `bili_creator`
+  - `bili_comments`
+
+- [x] 小红书搜索/详情/创作者/评论
+  - `xhs_search`
+  - `xhs_detail`
+  - `xhs_creator`
+  - `xhs_comments`
+
+### 进行中
+- [ ] 抖音
+- [ ] 快手
+- [ ] 知乎
+- [ ] 贴吧
+- [ ] 微博
+- [ ] 其他外部api
+- [ ] JWT 鉴权：简单集成并实现安全的身份验证机制
+- [ ] MCP/Resource，MCP/prompt的编写
+- [ ] 增加部分渠道的文章发布功能
+- [ ] **最佳 n8n 实践编写（欢迎共创）**：根据真是业务需求编写用到此mcp的 n8n 工作流并进行实际编写与优化。
+
+**非目标**：
+- 不做复杂权限管理，MCP一般作为个人本地服务/企业内部服务，接入企业内部网关鉴权更合理，这里不做复杂封装。
+- 不做多账号池/多租户/分布式集群等复杂特性
+- 保持架构清晰，提供可扩展点，鼓励他人自行按需扩展
+
 
 ## 快速开始
 
-环境要求：Python 3.8+ · Redis · Chrome/Chromium ·（可选）Node.js 16+
+环境要求：Python 3.13+ · Redis · Chrome/Chromium ·（可选）Node.js 16+
 
 1) 克隆与安装依赖
 ```bash
@@ -88,7 +131,31 @@ poetry run python main.py    # 默认端口 9090
 
 ## 在 AI 助手中使用
 
-你可以直接在 Claude/ChatGPT 中配置mcp链接（还没做鉴权，大家可以本地先试用，后续会新增基础鉴权）, 让其调用 MCP 工具：
+## 在 AI 助手中使用
+
+### 多端点架构支持
+
+从版本 2.0 开始，支持多 MCP 端点架构，每个平台提供独立的 MCP 连接：
+
+```
+主服务端点：    /mcp        - 服务级工具（health, list_tools等）  
+小红书端点：    /mcp/xhs    - 小红书专用工具
+B站端点：      /mcp/bili   - B站专用工具  
+统一爬虫端点：  /mcp/crawl  - 跨平台统一工具
+```
+
+**连接方式：**
+- **完整服务**: `http://localhost:9090/mcp` (包含所有平台工具)
+- **小红书专用**: `http://localhost:9090/mcp/xhs` (仅小红书工具)
+- **B站专用**: `http://localhost:9090/mcp/bili` (仅B站工具)
+- **统一爬虫**: `http://localhost:9090/mcp/crawl` (跨平台工具)
+
+**使用建议：**
+- 如需特定平台功能，连接对应子端点获得更纯净的工具集
+- 如需跨平台分析，使用统一爬虫端点或主端点
+- 在管理界面的 MCP Inspector 中可切换不同端点进行调试
+
+你可以直接在 Claude/ChatGPT 中配置对应的 MCP 链接：
 ```
 示例对话：
 “帮我搜索 Python 机器学习相关的 B 站视频，并分析受欢迎程度与创作者。”
@@ -97,7 +164,17 @@ poetry run python main.py    # 默认端口 9090
 
 ## 工具总览
 
-管理页的 MCP Tools Inspector 可查看所有已注册工具，并进行在线调试。
+管理页的 MCP Tools Inspector 支持多端点切换，可查看不同端点的工具并进行在线调试。
+
+### 端点工具分布
+
+**主服务端点** (`/mcp`)：
+- `service_info` - 服务信息
+- `service_health` - 健康检查  
+- `list_tools` - 工具列表
+- `tool_info` - 工具详情
+
+**B站端点** (`/mcp/bili`)：
 
 - `bili_search`（推荐，快速搜索）
 ```json
@@ -123,6 +200,19 @@ poetry run python main.py    # 默认端口 9090
 ```
 
 ![工具测试](docs/tools-test.png)
+
+**小红书端点** (`/mcp/xhs`)：
+- `xhs_search` - 小红书关键词搜索
+- `xhs_detail` - 小红书笔记详情  
+- `xhs_creator` - 小红书创作者作品
+- `xhs_comments` - 小红书笔记评论
+
+**统一爬虫端点** (`/mcp/crawl`)：
+- `crawl_search` - 跨平台搜索
+- `crawl_detail` - 跨平台详情
+- `crawl_creator` - 跨平台创作者
+
+### 工具使用示例
 
 - `xhs_search`（小红书关键词搜索，返回本页摘要，不拉详情）
 ```json
@@ -213,11 +303,6 @@ poetry run python main.py    # 默认端口 9090
 - 性能：每次冷启动 → 浏览器常驻复用（3-5s → 0.1s）
 - 设计：全局变量 → 任务级配置隔离 + 平台级浏览器隔离
 - 输出：原始结果 → Pydantic 结构化
-
-**非目标（明确约束）**：
-- 面向个人效率的单用户/单账号使用场景
-- 不做多账号池/多租户/分布式集群等复杂特性
-- 保持架构清晰，提供可扩展点，鼓励他人自行按需扩展
 
 ## Roadmap
 - 小红书 / 抖音 / 快手 / 知乎 / 微博 / 贴吧 适配
