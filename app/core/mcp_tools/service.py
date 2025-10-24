@@ -6,7 +6,6 @@ from __future__ import annotations
 import json
 from datetime import datetime
 
-from app.api.endpoints.base import get_tools_summary
 from app.config.settings import global_settings
 
 
@@ -17,7 +16,7 @@ async def service_info() -> str:
         "version": global_settings.app.version,
         "description": "AI工具服务",
         "status": "running",
-        "tools_count": get_tools_summary()["total_tools"],
+        "tools_count": 8,  # 4个B站工具 + 4个小红书工具
     }
     return json.dumps(info, ensure_ascii=False, indent=2)
 
@@ -34,28 +33,38 @@ async def service_health() -> str:
 
 async def list_tools() -> str:
     """获取所有工具列表。"""
-    summary = get_tools_summary()["categories"]
-    return json.dumps(summary, ensure_ascii=False, indent=2)
+    # 现在使用fastmcp原生格式，直接返回已知的工具分类
+    tools_categories = {
+        "B站MCP": ["search", "crawler_detail", "crawler_creator", "search_time_range_http", "crawler_comments"],
+        "小红书MCP": ["search", "crawler_detail", "crawler_creator", "crawler_comments"]
+    }
+    return json.dumps(tools_categories, ensure_ascii=False, indent=2)
 
 
 async def tool_info(tool_name: str) -> str:
     """获取特定工具信息。"""
-    tools = get_tools_summary()["categories"]
-    for category, tool_list in tools.items():
-        if tool_name in tool_list:
-            info = {
-                "tool": tool_name,
-                "category": category,
-                "description": f"{tool_name} 工具",
-                "available": True,
-            }
-            return json.dumps(info, ensure_ascii=False, indent=2)
-
-    info = {
-        "tool": tool_name,
-        "available": False,
-        "message": "工具不存在",
+    # 工具映射
+    tools_map = {
+        "search": {"category": "通用", "description": "搜索功能"},
+        "crawler_detail": {"category": "通用", "description": "获取详情信息"},
+        "crawler_creator": {"category": "通用", "description": "获取创作者信息"},
+        "search_time_range_http": {"category": "B站MCP", "description": "按时间范围搜索"},
+        "crawler_comments": {"category": "通用", "description": "获取评论信息"}
     }
+    
+    if tool_name in tools_map:
+        info = {
+            "tool": tool_name,
+            "category": tools_map[tool_name]["category"],
+            "description": tools_map[tool_name]["description"],
+            "available": True,
+        }
+    else:
+        info = {
+            "tool": tool_name,
+            "available": False,
+            "message": "工具不存在",
+        }
     return json.dumps(info, ensure_ascii=False, indent=2)
 
 

@@ -1,7 +1,5 @@
 # MediaCrawler MCP 服务
 
-![img2.png](docs/mcp.png)
-
 让 AI 原生使用社媒数据的MCP服务。爬虫部分参考了[MediaCrawler](https://github.com/NanmiCoder/MediaCrawler)，将其 CLI 爬虫升级为 MCP 标准工具，让 Claude / ChatGPT 直连调用，一次配置，长期可用。
 
 ![index .png](docs/index.png)
@@ -34,6 +32,8 @@ MediaCrawler MCP Service 是面向个人的数据获取工具集，通过 MCP（
 
 ## 关键优势：
 
+![bili-detail.png](docs/bili-detail.png)
+
 ### 从脚本到标准：可复用的 MCP 工具
 
 > media-crawler-mcp-service 打破了传统的临时脚本模式，转变为 可复用的标准化 MCP 工具。它支持多平台数据抓取，功能模块化设计让扩展和维护变得更加高效，不再需要重复编写脚本。
@@ -47,7 +47,7 @@ MediaCrawler MCP Service 是面向个人的数据获取工具集，通过 MCP（
 > 采用 分层解耦架构 和 Pydantic 模型，保证了高效的数据验证和一致性。状态缓存 和 风控设计 让系统更加稳定，减少了负载并提高了抓取效率。
 
 ### 文本格式友好：适合 AI 分析，不返回冗余嵌套数据
-![bili-detail.png](docs/bili-detail.png)
+
 > 与其他同类型MCP相比，media-crawler-mcp-service 返回的抓取数据 简洁、无冗余，特别适合 AI 分析。避免复杂的嵌套数据，让 AI 模型可以更轻松、更高效地处理数据。
 
 | 特性                     | `media-crawler-mcp-service`        | **MediaCrawler**     | **Bowenwin MCP Server**  |

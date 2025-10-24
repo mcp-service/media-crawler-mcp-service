@@ -1,22 +1,25 @@
 # -*- coding: utf-8 -*-
-"""FastMCP API 服务模块 - 集成蓝图、工具与资源。"""
+"""FastMCP API 服务模块 - 集成子服务、工具与资源。"""
 
 from __future__ import annotations
 
-from importlib import import_module
+from app.config.settings import Platform, global_settings
 
 from fastmcp import FastMCP
 from starlette.applications import Starlette
-
-from app.api.endpoints.base import get_registered_blueprints, get_tools_summary
-from app.config.settings import Platform, global_settings
+from starlette.middleware.cors import CORSMiddleware
 from app.providers.logger import get_logger, init_logger
-from app.core.mcp_tools import list_tools, service_health, service_info, tool_info
+from app.api.endpoints.admin import admin_router, config_router, mcp_inspector_router, status_router
+from app.api.endpoints.mcp import bili_mcp, xhs_mcp
+
+
+import asyncio
 
 
 def create_app() -> Starlette:
     """创建 FastMCP 应用并返回 ASGI 应用。"""
 
+    # 初始化日志
     init_logger(
         name=global_settings.app.name,
         level=global_settings.logger.level,
@@ -28,83 +31,49 @@ def create_app() -> Starlette:
     )
     logger = get_logger()
 
-    app = FastMCP(
+    # 创建主应用
+    main_app = FastMCP(
         name=global_settings.app.name,
         version=global_settings.app.version,
     )
 
-    _import_common_endpoints()
-    _import_platform_endpoints()
+    # 挂载子应用到主应用 - 使用 asyncio.run 来处理异步调用
+    async def setup_servers():
+        await main_app.import_server(xhs_mcp, 'xhs')
+        await main_app.import_server(bili_mcp, 'bili')
+        await main_app.import_server(admin_router)
+        await main_app.import_server(config_router)
+        await main_app.import_server(mcp_inspector_router)
+        await main_app.import_server(status_router)
+        logger.info(f"✅ MCP tools {await main_app.get_tools()}")
 
-    http_app = app.http_app(path="/mcp")
-    blueprints = list(get_registered_blueprints())
-    for blueprint in blueprints:
-        blueprint.install(app, http_app)
-        logger.info(
-            f"🧩 已安装蓝图 {blueprint.name} "
-            f"(prefix={blueprint.prefix} "
-            f"http_routes={len(blueprint.routes)} "
-            f"mcp_tools={len(blueprint.tools)})"
-        )
-    logger.info(f"✅ 蓝图安装完成，共 {len(blueprints)} 个")
+    asyncio.run(setup_servers())
 
+    # 注册服务工具和资源
     from app.core.prompts import register_prompts
     from app.core.resources import register_resources
 
-    register_prompts(app)
-    register_resources(app)
+    register_prompts(main_app)
+    register_resources(main_app)
+
+    main_asgi = main_app.http_app(path='/mcp')
+    
+    # 添加 CORS 中间件支持 OPTIONS 请求
+    main_asgi.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
     logger.info("✅ MCP Prompts 和 Resources 注册成功")
-
-    # 直接注册服务级工具（非蓝图，避免无意义的统计干扰）
-    service_tools = {
-        "service_info": service_info,
-        "service_health": service_health,
-        "list_tools": list_tools,
-        "tool_info": tool_info,
-    }
-    for tool_name, handler in service_tools.items():
-        app.tool(name=tool_name)(handler)
-    logger.info(f"✅ 服务工具注册成功: {', '.join(sorted(service_tools))}")
-
-    # 全局工具注册汇总（基于已注册蓝图）
-    summary = get_tools_summary()
-    logger.info(
-        f"✅ 工具注册完成: 蓝图={summary['blueprints_count']} 个, MCP工具总数={summary['total_tools']}"
-    )
-
+    logger.info("✅ 子服务挂载完成: 小红书MCP(/mcp/xhs), B站MCP(/mcp/bili)")
+    logger.info("✅ CORS 中间件已添加，支持 OPTIONS 请求")
     logger.info(f"✅ {global_settings.app.name} ASGI 应用创建完成")
-    return http_app
+    return main_asgi
 
 
-def _import_common_endpoints() -> None:
-    """导入通用端点模块，触发蓝图注册。"""
-    modules = (
-        "app.api.endpoints.login.login_endpoint",
-        "app.api.endpoints.admin.admin_page_endpoint",
-        "app.api.endpoints.admin.config_endpoint",
-        "app.api.endpoints.admin.status_endpoint",
-        "app.api.endpoints.admin.mcp_inspector_endpoint",
-    )
-    for module_name in modules:
-        import_module(module_name)
+# 创建应用并返回
+main_asgi = create_app()
 
-
-def _import_platform_endpoints() -> None:
-    """按配置导入平台端点模块。"""
-    platform_modules = {
-        Platform.BILIBILI: "app.api.endpoints.mcp.bilibili",
-        Platform.XIAOHONGSHU: "app.api.endpoints.mcp.xhs",
-    }
-
-    enabled_platforms = getattr(global_settings.platform, "enabled_platforms", [])
-    for platform in enabled_platforms:
-        for enum_item, module_name in platform_modules.items():
-            code = enum_item.value
-            current = (
-                platform.value
-                if isinstance(platform, Platform)
-                else str(platform)
-            )
-            if current == code:
-                import_module(module_name)
-                break

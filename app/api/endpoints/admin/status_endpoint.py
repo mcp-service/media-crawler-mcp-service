@@ -12,7 +12,7 @@ from typing import Dict, Optional
 import psutil
 from starlette.responses import JSONResponse
 
-from app.api.endpoints.base import MCPBlueprint
+from fastmcp import FastMCP
 from app.config.settings import Platform, global_settings
 from app.providers.cache.redis_cache import async_redis_storage
 from app.core.login import login_service
@@ -21,15 +21,10 @@ from app.providers.logger import get_logger
 
 
 logger = get_logger()
-bp = MCPBlueprint(
-    prefix="/api/status",
-    name="status",
-    tags=["状态监控"],
-    category="admin",
-)
+status_router = FastMCP(name="状态监控路由")
 
 
-@bp.route("/system", methods=["GET"])
+@status_router.custom_route("/system", methods=["GET"])
 async def get_system_status(request):
     """获取系统状态"""
     try:
@@ -50,7 +45,7 @@ async def get_system_status(request):
         return JSONResponse(content={"detail": str(exc)}, status_code=500)
 
 
-@bp.route("/data", methods=["GET"])
+@status_router.custom_route("/data", methods=["GET"])
 async def get_data_status(request):
     """获取爬取数据统计"""
     try:
@@ -113,7 +108,7 @@ async def get_data_status(request):
         return JSONResponse(content={"detail": str(exc)}, status_code=500)
 
 
-@bp.route("/services", methods=["GET"])
+@status_router.custom_route("/services", methods=["GET"])
 async def get_services_status(request):
     """获取服务状态"""
     try:
@@ -173,7 +168,7 @@ async def get_services_status(request):
         return JSONResponse(content={"detail": str(exc)}, status_code=500)
 
 
-@bp.route("/platforms", methods=["GET"])
+@status_router.custom_route("/platforms", methods=["GET"])
 async def get_platforms_status(request):
     """获取平台状态"""
     try:
@@ -227,7 +222,7 @@ async def get_platforms_status(request):
         return JSONResponse(content={"detail": str(exc)}, status_code=500)
 
 
-@bp.route("/summary", methods=["GET"])
+@status_router.custom_route("/summary", methods=["GET"])
 async def get_status_summary(request):
     """获取状态概述"""
     try:
@@ -274,4 +269,4 @@ async def get_status_summary(request):
         return JSONResponse(content={"detail": str(exc)}, status_code=500)
 
 
-__all__ = ["bp"]
+__all__ = ["status_router"]

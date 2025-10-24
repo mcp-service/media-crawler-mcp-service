@@ -8,7 +8,7 @@ import uuid
 from pydantic import ValidationError
 from starlette.responses import JSONResponse
 
-from app.api.endpoints.base import MCPBlueprint
+from fastmcp import FastMCP
 from app.api.scheme.request.login_scheme import (
     LoginStatusResponse,
     LogoutResponse,
@@ -25,15 +25,10 @@ from app.providers.logger import get_logger
 logger = get_logger()
 service = login_service
 
-bp = MCPBlueprint(
-    prefix="/api/login",
-    name="login",
-    tags=["登录管理", "平台认证"],
-    category="admin",
-)
+login_router = FastMCP(name="登录管理路由")
 
 
-@bp.route("/platforms", methods=["GET"])
+@login_router.get("/platforms")
 async def login_get_platforms(request):
     try:
         platforms = service.get_supported_platforms()
@@ -52,7 +47,7 @@ async def login_get_platforms(request):
         return JSONResponse(content={"detail": str(exc)}, status_code=500)
 
 
-@bp.route("/start", methods=["POST"])
+@login_router.post("/start")
 async def login_start(request):
     try:
         payload = await request.json()
@@ -78,7 +73,7 @@ async def login_start(request):
         return JSONResponse(content={"detail": "启动登录失败"}, status_code=500)
 
 
-@bp.route("/status/{platform}", methods=["GET"])
+@login_router.get("/status/{platform}")
 async def login_status(request):
     platform = request.path_params.get("platform", "")
     try:
@@ -95,7 +90,7 @@ async def login_status(request):
         return JSONResponse(content={"detail": "获取登录状态失败"}, status_code=500)
 
 
-@bp.route("/logout/{platform}", methods=["POST"])
+@login_router.post("/logout/{platform}")
 async def login_logout(request):
     platform = request.path_params.get("platform", "")
     try:
@@ -112,7 +107,7 @@ async def login_logout(request):
         return JSONResponse(content={"detail": "退出登录失败"}, status_code=500)
 
 
-@bp.route("/session/{session_id}", methods=["GET"])
+@login_router.get("/session/{session_id}")
 async def login_session_status(request):
     session_id = request.path_params.get("session_id", "")
 
@@ -135,7 +130,7 @@ async def login_session_status(request):
         return JSONResponse(content={"detail": "获取会话状态失败"}, status_code=500)
 
 
-@bp.route("/sessions", methods=["GET"])
+@login_router.get("/sessions")
 async def login_sessions(request):
     try:
         result = await service.list_sessions()
@@ -149,4 +144,4 @@ async def login_sessions(request):
         return JSONResponse(content={"detail": "获取会话列表失败"}, status_code=500)
 
 
-__all__ = ["bp"]
+__all__ = ["login_router"]

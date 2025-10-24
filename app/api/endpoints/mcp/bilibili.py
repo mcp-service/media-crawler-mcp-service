@@ -9,7 +9,6 @@ from typing import Any, Dict
 from pydantic import ValidationError
 from starlette.responses import JSONResponse
 
-from app.api.endpoints.base import MCPBlueprint
 from app.api.scheme import error_codes, jsonify_response
 from app.api.scheme.request.bilibili_scheme import (
     BiliCommentsRequest,
@@ -22,15 +21,11 @@ from app.config.settings import Platform
 from app.core.mcp_tools import bilibili as bili_tools
 from app.core.login.exceptions import LoginExpiredError
 from app.providers.logger import get_logger
-
+from fastmcp import FastMCP
 
 logger = get_logger()
-bp = MCPBlueprint(
-    prefix=f"/{Platform.BILIBILI.value}",
-    name=Platform.BILIBILI.value,
-    tags=["bili"],
-    category=Platform.BILIBILI.value,
-)
+
+bili_mcp = FastMCP(name="B站MCP")
 
 
 def _validation_error(exc: ValidationError) -> JSONResponse:
@@ -55,8 +50,8 @@ def _server_error(message: str) -> JSONResponse:
     )
 
 
-@bp.route("/search", methods=["POST"])
-async def bili_search_http(request):
+@bili_mcp.tool(description="搜索 Bilibili 视频",)
+async def search(request):
     try:
         payload = await request.json()
     except Exception:
@@ -77,8 +72,8 @@ async def bili_search_http(request):
         return _server_error(f"bilibili 搜索失败: {exc}")
 
 
-@bp.route("/detail", methods=["POST"])
-async def bili_detail_http(request):
+@bili_mcp.tool(description="获取 Bilibili 视频详情")
+async def crawler_detail(request):
     try:
         payload = await request.json()
     except Exception:
@@ -99,8 +94,8 @@ async def bili_detail_http(request):
         return _server_error(f"bilibili 详情获取失败: {exc}")
 
 
-@bp.route("/creator", methods=["POST"])
-async def bili_creator_http(request):
+@bili_mcp.tool(description="获取 Bilibili UP 主视频")
+async def crawler_creator(request):
     try:
         payload = await request.json()
     except Exception:
@@ -121,8 +116,8 @@ async def bili_creator_http(request):
         return _server_error(f"bilibili 创作者抓取失败: {exc}")
 
 
-@bp.route("/search/time-range", methods=["POST"])
-async def bili_search_time_range_http(request):
+@bili_mcp.tool(description="按时间范围搜索 Bilibili 视频")
+async def search_time_range_http(request):
     try:
         payload = await request.json()
     except Exception:
@@ -143,8 +138,8 @@ async def bili_search_time_range_http(request):
         return _server_error(f"bilibili 时间范围搜索失败: {exc}")
 
 
-@bp.route("/comments", methods=["POST"])
-async def bili_comments_http(request):
+@bili_mcp.tool(description="按视频 ID 抓取 Bilibili 评论")
+async def crawler_comments(request):
     try:
         payload = await request.json()
     except Exception:
@@ -165,41 +160,6 @@ async def bili_comments_http(request):
         return _server_error(f"bilibili 评论抓取失败: {exc}")
 
 
-bp.tool(
-    "bili_search",
-    description="搜索 Bilibili 视频",
-    http_path="/search",
-    http_methods=["POST"],
-)(bili_tools.bili_search)
-
-bp.tool(
-    "bili_detail",
-    description="获取 Bilibili 视频详情",
-    http_path="/detail",
-    http_methods=["POST"],
-)(bili_tools.bili_detail)
-
-bp.tool(
-    "bili_creator",
-    description="获取 Bilibili UP 主视频",
-    http_path="/creator",
-    http_methods=["POST"],
-)(bili_tools.bili_creator)
-
-bp.tool(
-    "bili_search_time_range",
-    description="按时间范围搜索 Bilibili 视频",
-    http_path="/search/time-range",
-    http_methods=["POST"],
-)(bili_tools.bili_search_time_range)
-
-bp.tool(
-    "bili_comments",
-    description="按视频 ID 抓取 Bilibili 评论",
-    http_path="/comments",
-    http_methods=["POST"],
-)(bili_tools.bili_comments)
-
 
 def _to_tool_params(params: Dict[str, Any]) -> Dict[str, Any]:
     """Adjust parameter names so they match tool signatures."""
@@ -219,4 +179,4 @@ def _as_dict(result: str | Dict[str, Any]) -> Dict[str, Any]:
         return {"raw": result}
 
 
-__all__ = ["bp"]
+__all__ = ["bili_mcp"]

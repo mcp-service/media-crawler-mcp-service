@@ -7,20 +7,19 @@ from starlette.responses import HTMLResponse
 from starlette.staticfiles import StaticFiles
 from starlette.templating import Jinja2Templates
 
-from app.api.endpoints.base import MCPBlueprint
+from fastmcp import FastMCP
 from app.providers.logger import get_logger
 
 
 logger = get_logger()
-bp = MCPBlueprint(prefix="/admin", name="admin_page", tags=["管理界面"], category="admin")
+admin_router = FastMCP(name="管理界面路由")
 
 _admin_dir = Path(__file__).parent.parent.parent.parent / "admin"
 _templates = Jinja2Templates(directory=str(_admin_dir / "templates"))
 
 
-@bp.route("", methods=["GET"])
-@bp.route("/", methods=["GET"])
-@bp.route("/dashboard", methods=["GET"])
+
+@admin_router.custom_route("/dashboard", methods=["GET"])
 async def admin_dashboard(request):
     """管理首页 - 仪表板"""
     try:
@@ -34,7 +33,7 @@ async def admin_dashboard(request):
         return HTMLResponse(content=f"<h1>Error</h1><p>{exc}</p>", status_code=500)
 
 
-@bp.route("/config", methods=["GET"])
+@admin_router.custom_route("/config", methods=["GET"])
 async def admin_config_page(request):
     """配置管理页面"""
     try:
@@ -48,7 +47,7 @@ async def admin_config_page(request):
         return HTMLResponse(content=f"<h1>Error</h1><p>{exc}</p>", status_code=500)
 
 
-@bp.route("/login", methods=["GET"])
+@admin_router.custom_route("/login", methods=["GET"])
 async def admin_login_page(request):
     """登录管理页面"""
     try:
@@ -62,7 +61,7 @@ async def admin_login_page(request):
         return HTMLResponse(content=f"<h1>Error</h1><p>{exc}</p>", status_code=500)
 
 
-@bp.route("/inspector", methods=["GET"])
+@admin_router.custom_route("/inspector", methods=["GET"])
 async def admin_inspector_page(request):
     """MCP 工具调试页面"""
     try:
@@ -76,6 +75,4 @@ async def admin_inspector_page(request):
         return HTMLResponse(content=f"<h1>Error</h1><p>{exc}</p>", status_code=500)
 
 
-bp.mount("/static", StaticFiles(directory=str(_admin_dir / "static")), name="static")
-
-__all__ = ["bp"]
+__all__ = ["admin_router"]

@@ -8,8 +8,7 @@ from typing import Any, Dict
 
 from pydantic import ValidationError
 from starlette.responses import JSONResponse
-
-from app.api.endpoints.base import MCPBlueprint
+from fastmcp import FastMCP
 from app.api.scheme import error_codes, jsonify_response
 from app.api.scheme.request.xhs_scheme import (
     XhsCommentsRequest,
@@ -23,13 +22,8 @@ from app.core.login.exceptions import LoginExpiredError
 from app.providers.logger import get_logger
 
 logger = get_logger()
-bp = MCPBlueprint(
-    prefix=f"/{Platform.XIAOHONGSHU.value}",
-    name=Platform.XIAOHONGSHU.value,
-    tags=["xhs"],
-    category=Platform.XIAOHONGSHU.value,
-)
 
+xhs_mcp = FastMCP(name="小红书MCP")
 
 def _validation_error(exc: ValidationError) -> JSONResponse:
     return JSONResponse(
@@ -53,8 +47,8 @@ def _server_error(message: str) -> JSONResponse:
     )
 
 
-@bp.route("/search", methods=["POST"])
-async def xhs_search_http(request):
+@xhs_mcp.tool(description="小红书关键词搜索")
+async def search(request):
     payload = await _safe_json(request)
     try:
         req = XhsSearchRequest.model_validate(payload)
@@ -71,8 +65,8 @@ async def xhs_search_http(request):
         return _server_error(f"小红书搜索失败: {exc}")
 
 
-@bp.route("/detail", methods=["POST"])
-async def xhs_detail_http(request):
+@xhs_mcp.tool(description="获取小红书笔记详情（必传：node_id, xsec_token；xsec_source 未传默认 pc_search）")
+async def crawler_detail(request):
     payload = await _safe_json(request)
     try:
         req = XhsDetailRequest.model_validate(payload)
@@ -89,8 +83,8 @@ async def xhs_detail_http(request):
         return _server_error(f"小红书详情抓取失败: {exc}")
 
 
-@bp.route("/creator", methods=["POST"])
-async def xhs_creator_http(request):
+@xhs_mcp.tool(description="获取小红书创作者作品")
+async def crawler_creator(request):
     payload = await _safe_json(request)
     try:
         req = XhsCreatorRequest.model_validate(payload)
@@ -107,8 +101,8 @@ async def xhs_creator_http(request):
         return _server_error(f"小红书创作者抓取失败: {exc}")
 
 
-@bp.route("/comments", methods=["POST"])
-async def xhs_comments_http(request):
+@xhs_mcp.tool(description="小红书笔记评论")
+async def crawler_comments(request):
     payload = await _safe_json(request)
     try:
         req = XhsCommentsRequest.model_validate(payload)
@@ -123,35 +117,6 @@ async def xhs_comments_http(request):
     except Exception as exc:
         logger.error("[xhs.comments] failed: %s", exc)
         return _server_error(f"小红书评论抓取失败: {exc}")
-
-
-bp.tool(
-    "xhs_search",
-    description="小红书关键词搜索",
-    http_path="/search",
-    http_methods=["POST"],
-)(xhs_tools.xhs_search)
-
-bp.tool(
-    "xhs_detail",
-    description="小红书笔记详情（必传：node_id, xsec_token；xsec_source 未传默认 pc_search）",
-    http_path="/detail",
-    http_methods=["POST"],
-)(xhs_tools.xhs_detail)
-
-bp.tool(
-    "xhs_creator",
-    description="小红书创作者作品",
-    http_path="/creator",
-    http_methods=["POST"],
-)(xhs_tools.xhs_creator)
-
-bp.tool(
-    "xhs_comments",
-    description="小红书笔记评论",
-    http_path="/comments",
-    http_methods=["POST"],
-)(xhs_tools.xhs_comments)
 
 
 async def _safe_json(request) -> Dict[str, Any]:
@@ -170,4 +135,4 @@ def _as_dict(result: str | Dict[str, Any]) -> Dict[str, Any]:
         return {"raw": result}
 
 
-__all__ = ["bp"]
+__all__ = ["xhs_mcp"]

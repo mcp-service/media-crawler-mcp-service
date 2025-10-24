@@ -10,18 +10,13 @@ from typing import List
 from pydantic import BaseModel
 from starlette.responses import JSONResponse
 
-from app.api.endpoints.base import MCPBlueprint
+from fastmcp import FastMCP
 from app.config.settings import Platform, global_settings
 from app.providers.logger import get_logger
 
 
 logger = get_logger()
-bp = MCPBlueprint(
-    prefix="/api/config",
-    name="config",
-    tags=["配置管理"],
-    category="admin",
-)
+config_router = FastMCP(name="配置管理路由")
 
 
 class PlatformConfigUpdate(BaseModel):
@@ -40,7 +35,7 @@ class CrawlerConfigUpdate(BaseModel):
     save_data_option: str = "json"
 
 
-@bp.route("/platforms", methods=["GET"])
+@config_router.custom_route("/platforms", methods=["GET"])
 async def get_platform_config(request):
     """获取平台配置"""
     try:
@@ -70,7 +65,7 @@ async def get_platform_config(request):
         return JSONResponse(content={"detail": str(exc)}, status_code=500)
 
 
-@bp.route("/platforms", methods=["PUT"])
+@config_router.custom_route("/platforms", methods=["PUT"])
 async def update_platform_config(request):
     """
     更新平台配置
@@ -127,7 +122,7 @@ async def update_platform_config(request):
         return JSONResponse(content={"detail": str(exc)}, status_code=500)
 
 
-@bp.route("/crawler", methods=["GET"])
+@config_router.custom_route("/crawler", methods=["GET"])
 async def get_crawler_config(request):
     """获取爬虫配置"""
     try:
@@ -145,7 +140,7 @@ async def get_crawler_config(request):
         return JSONResponse(content={"detail": str(exc)}, status_code=500)
 
 
-@bp.route("/crawler", methods=["PUT"])
+@config_router.custom_route("/crawler", methods=["PUT"])
 async def update_crawler_config(request):
     """
     更新爬虫配置
@@ -203,7 +198,7 @@ async def update_crawler_config(request):
         return JSONResponse(content={"detail": str(exc)}, status_code=500)
 
 
-@bp.route("/database", methods=["GET"])
+@config_router.custom_route("/database", methods=["GET"])
 async def get_database_config(request):
     """获取数据库配置（隐藏敏感信息）"""
     try:
@@ -223,7 +218,7 @@ async def get_database_config(request):
         return JSONResponse(content={"detail": str(exc)}, status_code=500)
 
 
-@bp.route("/current", methods=["GET"])
+@config_router.custom_route("/current", methods=["GET"])
 async def get_current_config(request):
     """获取当前完整配置"""
     try:
@@ -254,4 +249,4 @@ async def get_current_config(request):
         return JSONResponse(content={"detail": str(exc)}, status_code=500)
 
 
-__all__ = ["bp"]
+__all__ = ["config_router"]

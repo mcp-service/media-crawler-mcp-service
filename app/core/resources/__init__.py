@@ -182,27 +182,35 @@ def register_resources(app: FastMCP) -> None:
         获取所有可用的API端点文档
         """
         import json
-        from app.api.endpoints.base import get_registered_blueprints
 
-        endpoints_info = []
-        for blueprint in get_registered_blueprints():
-            routes = [
-                {
-                    "path": route_info.path,
-                    "methods": route_info.methods or [],
-                    "kind": route_info.kind,
-                }
-                for route_info in blueprint.routes_info
-            ]
-            endpoints_info.append(
-                {
-                    "name": blueprint.name,
-                    "category": blueprint.category,
-                    "prefix": blueprint.prefix,
-                    "tags": blueprint.tags,
-                    "routes": routes,
-                }
-            )
+        # 现在使用fastmcp原生格式，直接返回已知的端点信息
+        endpoints_info = [
+            {
+                "name": "bili_mcp",
+                "category": "B站MCP",
+                "prefix": "/bili",
+                "tags": ["哔哩哔哩", "视频", "MCP工具"],
+                "routes": [
+                    {"path": "/bili/search", "methods": ["POST"], "kind": "tool"},
+                    {"path": "/bili/crawler_detail", "methods": ["POST"], "kind": "tool"},
+                    {"path": "/bili/crawler_creator", "methods": ["POST"], "kind": "tool"},
+                    {"path": "/bili/search_time_range_http", "methods": ["POST"], "kind": "tool"},
+                    {"path": "/bili/crawler_comments", "methods": ["POST"], "kind": "tool"}
+                ]
+            },
+            {
+                "name": "xhs_mcp",
+                "category": "小红书MCP", 
+                "prefix": "/xhs",
+                "tags": ["小红书", "笔记", "MCP工具"],
+                "routes": [
+                    {"path": "/xhs/search", "methods": ["POST"], "kind": "tool"},
+                    {"path": "/xhs/crawler_detail", "methods": ["POST"], "kind": "tool"},
+                    {"path": "/xhs/crawler_creator", "methods": ["POST"], "kind": "tool"},
+                    {"path": "/xhs/crawler_comments", "methods": ["POST"], "kind": "tool"}
+                ]
+            }
+        ]
 
         return json.dumps(
             {
