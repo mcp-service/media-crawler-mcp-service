@@ -385,9 +385,14 @@ async def start_login(service, session: LoginSession, payload: LoginStartPayload
         return session.to_public_dict()
 
 
-async def _handle_cookie_login(session: LoginSession, login_obj: XiaoHongShuLogin, 
+async def _handle_cookie_login(session: LoginSession, login_obj: XiaoHongShuLogin,
                              cookie_candidate: str, payload: LoginStartPayload, service) -> bool:
-    """处理Cookie登录"""
+    """处理Cookie登录
+
+    返回值：
+    - True: Cookie 登录完成（成功或失败），无需继续其他登录方式
+    - False: Cookie 登录失败，需要继续原始登录方式（如二维码）
+    """
     session.login_type = "cookie"
     session.status = "processing"
     session.message = "检测到 Cookie，正在尝试 Cookie 登录..."
@@ -396,12 +401,14 @@ async def _handle_cookie_login(session: LoginSession, login_obj: XiaoHongShuLogi
     login_obj.cookie_str = cookie_candidate
     try:
         await login_obj.login_by_cookies()
-        
+
         # 验证登录状态
         login_success = await login_obj.has_valid_cookie()
-        
+
         if login_success:
+            # Cookie 登录成功，直接完成
             await _save_login_success(session, login_obj, service)
+            await _cleanup_browser_resources(session)
             return True
 
         # Cookie登录失败，如果原始请求是二维码登录，则回退

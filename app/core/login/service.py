@@ -118,7 +118,7 @@ class LoginService:
         async with platform_lock:
             platform_module = self._get_platform_module(platform)
 
-            # 如果不是 cookie 登录，先检查当前状态是否已登录，或可用缓存 Cookie
+            # 如果不是 cookie 登录，先检查当前状态是否已登录
             if payload.login_type != LoginType.COOKIE.value:
                 try:
                     # 先尝试获取缓存状态，避免触发风控检查
@@ -137,9 +137,11 @@ class LoginService:
                             "qr_code_base64": None,
                             "qrcode_timestamp": 0.0,
                         }
+                    # 如果有缓存的 cookie，优先尝试 cookie 登录（避免风控）
+                    # 但不修改 payload.login_type，而是通过 session metadata 传递
                     if current_state and current_state.cookie_str and not payload.cookie:
                         payload.cookie = current_state.cookie_str
-                        payload.login_type = LoginType.COOKIE.value
+                        logger.info(f"[登录管理] 检测到缓存 Cookie，将先尝试 cookie 登录（如失败会降级到 {payload.login_type}）")
 
             session_id = str(uuid.uuid4())
             session = LoginSession(id=session_id, platform=platform, login_type=payload.login_type)
