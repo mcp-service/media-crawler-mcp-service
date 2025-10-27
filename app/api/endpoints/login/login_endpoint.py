@@ -7,8 +7,6 @@ import uuid
 
 from pydantic import ValidationError
 from starlette.responses import JSONResponse
-
-from fastmcp import FastMCP
 from app.api.scheme.request.login_scheme import (
     LoginStatusResponse,
     LogoutResponse,
@@ -20,15 +18,14 @@ from app.api.scheme.request.login_scheme import (
 from app.config.settings import global_settings
 from app.core.login import LoginServiceError, login_service
 from app.providers.logger import get_logger
-
+from app.api.endpoints import main_app
 
 logger = get_logger()
 service = login_service
 
-login_router = FastMCP(name="登录管理路由")
 
-
-@login_router.get("/platforms")
+@main_app.custom_route("/platforms", methods=["GET"])
+@main_app.custom_route("/api/login/platforms", methods=["GET"])
 async def login_get_platforms(request):
     try:
         platforms = service.get_supported_platforms()
@@ -47,7 +44,8 @@ async def login_get_platforms(request):
         return JSONResponse(content={"detail": str(exc)}, status_code=500)
 
 
-@login_router.post("/start")
+@main_app.custom_route("/start", methods=["POST"])
+@main_app.custom_route("/api/login/start", methods=["POST"])
 async def login_start(request):
     try:
         payload = await request.json()
@@ -73,7 +71,8 @@ async def login_start(request):
         return JSONResponse(content={"detail": "启动登录失败"}, status_code=500)
 
 
-@login_router.get("/status/{platform}")
+@main_app.custom_route("/status/{platform}", methods=["GET"])
+@main_app.custom_route("/api/login/status/{platform}", methods=["GET"])
 async def login_status(request):
     platform = request.path_params.get("platform", "")
     try:
@@ -90,7 +89,8 @@ async def login_status(request):
         return JSONResponse(content={"detail": "获取登录状态失败"}, status_code=500)
 
 
-@login_router.post("/logout/{platform}")
+@main_app.custom_route("/logout/{platform}", methods=["POST"])
+@main_app.custom_route("/api/login/logout/{platform}", methods=["POST"])
 async def login_logout(request):
     platform = request.path_params.get("platform", "")
     try:
@@ -107,7 +107,8 @@ async def login_logout(request):
         return JSONResponse(content={"detail": "退出登录失败"}, status_code=500)
 
 
-@login_router.get("/session/{session_id}")
+@main_app.custom_route("/session/{session_id}", methods=["GET"])
+@main_app.custom_route("/api/login/session/{session_id}", methods=["GET"])
 async def login_session_status(request):
     session_id = request.path_params.get("session_id", "")
 
@@ -130,7 +131,8 @@ async def login_session_status(request):
         return JSONResponse(content={"detail": "获取会话状态失败"}, status_code=500)
 
 
-@login_router.get("/sessions")
+@main_app.custom_route("/sessions", methods=["GET"])
+@main_app.custom_route("/api/login/sessions", methods=["GET"])
 async def login_sessions(request):
     try:
         result = await service.list_sessions()
@@ -142,6 +144,3 @@ async def login_sessions(request):
     except Exception as exc:
         logger.error(f"获取会话列表失败: {exc}")
         return JSONResponse(content={"detail": "获取会话列表失败"}, status_code=500)
-
-
-__all__ = ["login_router"]

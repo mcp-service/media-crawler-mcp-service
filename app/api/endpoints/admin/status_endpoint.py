@@ -18,13 +18,11 @@ from app.providers.cache.redis_cache import async_redis_storage
 from app.core.login import login_service
 from app.core.login.models import PlatformLoginState
 from app.providers.logger import get_logger
-
+from app.api.endpoints import main_app
 
 logger = get_logger()
-status_router = FastMCP(name="状态监控路由")
 
-
-@status_router.custom_route("/system", methods=["GET"])
+@main_app.custom_route("/api/status/system", methods=["GET"])
 async def get_system_status(request):
     """获取系统状态"""
     try:
@@ -44,8 +42,7 @@ async def get_system_status(request):
         logger.error(f"[状态监控] 获取系统状态失败: {exc}")
         return JSONResponse(content={"detail": str(exc)}, status_code=500)
 
-
-@status_router.custom_route("/data", methods=["GET"])
+@main_app.custom_route("/api/status/data", methods=["GET"])
 async def get_data_status(request):
     """获取爬取数据统计"""
     try:
@@ -108,7 +105,7 @@ async def get_data_status(request):
         return JSONResponse(content={"detail": str(exc)}, status_code=500)
 
 
-@status_router.custom_route("/services", methods=["GET"])
+@main_app.custom_route("/api/status/services", methods=["GET"])
 async def get_services_status(request):
     """获取服务状态"""
     try:
@@ -168,7 +165,7 @@ async def get_services_status(request):
         return JSONResponse(content={"detail": str(exc)}, status_code=500)
 
 
-@status_router.custom_route("/platforms", methods=["GET"])
+@main_app.custom_route("/api/status/platforms", methods=["GET"])
 async def get_platforms_status(request):
     """获取平台状态"""
     try:
@@ -222,7 +219,7 @@ async def get_platforms_status(request):
         return JSONResponse(content={"detail": str(exc)}, status_code=500)
 
 
-@status_router.custom_route("/summary", methods=["GET"])
+@main_app.custom_route("/api/status/summary", methods=["GET"])
 async def get_status_summary(request):
     """获取状态概述"""
     try:
@@ -268,5 +265,3 @@ async def get_status_summary(request):
         logger.error(f"[状态监控] 获取状态概述失败: {exc}")
         return JSONResponse(content={"detail": str(exc)}, status_code=500)
 
-
-__all__ = ["status_router"]

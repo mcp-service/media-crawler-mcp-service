@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Media Crawler 控制台{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='/css/admin.css') }}?v=6">
+</head>
+<body class="admin-body">
+    <div class="admin-shell">
+        <!-- 侧边栏 -->
+        <aside class="admin-sidebar">
+            <div class="sidebar-header">
+                <div class="brand-logo">MC</div>
+                <h1 class="brand-title">Media Crawler</h1>
+            </div>
+            
+            <nav class="sidebar-nav">
+                {% set current_path = request.url.path %}
+                <a href="/dashboard" class="sidebar-nav__item {{ 'is-active' if current_path in ['/dashboard', '/admin', '/admin/'] else '' }}">
+                    <span class="sidebar-nav__icon">📊</span>
+                    <span class="sidebar-nav__text">状态监控</span>
+                </a>
+                <a href="/login" class="sidebar-nav__item {{ 'is-active' if current_path.startswith('/login') else '' }}">
+                    <span class="sidebar-nav__icon">🔐</span>
+                    <span class="sidebar-nav__text">登录管理</span>
+                </a>
+                <a href="/config" class="sidebar-nav__item {{ 'is-active' if current_path.startswith('/config') else '' }}">
+                    <span class="sidebar-nav__icon">⚙️</span>
+                    <span class="sidebar-nav__text">配置管理</span>
+                </a>
+                <a href="/inspector" class="sidebar-nav__item {{ 'is-active' if current_path.startswith('/inspector') else '' }}">
+                    <span class="sidebar-nav__icon">🔍</span>
+                    <span class="sidebar-nav__text">MCP 调试</span>
+                </a>
+            </nav>
+            
+            <div class="sidebar-footer">
+                <div class="system-status">
+                    <span class="status status-success">系统正常</span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- 主内容区 -->
+        <main class="admin-main">
+            <header class="page-header">
+                <div class="page-breadcrumb">
+                    {% block breadcrumb %}{% endblock %}
+                </div>
+                <div class="page-actions">
+                    {% block page_actions %}
+                        <button class="btn btn-secondary btn-sm" onclick="window.location.reload()" data-tooltip="刷新页面">
+                            🔄 刷新
+                        </button>
+                    {% endblock %}
+                </div>
+            </header>
+
+            <div class="page-content page-transition">
+                {% block content %}{% endblock %}
+            </div>
+        </main>
+    </div>
+
+    <!-- 通知容器会由JavaScript动态创建 -->
+
+    <script src="{{ url_for('static', path='/js/admin-enhanced.js') }}?v=6"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

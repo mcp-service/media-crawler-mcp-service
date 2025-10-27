@@ -7,9 +7,8 @@ import json
 from typing import Any, Dict
 
 from pydantic import ValidationError
-from starlette.responses import JSONResponse
 from fastmcp import FastMCP
-from app.api.scheme import error_codes, jsonify_response
+from app.api.scheme import error_codes
 from app.api.scheme.request.xhs_scheme import (
     XhsCommentsRequest,
     XhsCreatorRequest,
@@ -25,26 +24,20 @@ logger = get_logger()
 
 xhs_mcp = FastMCP(name="小红书MCP")
 
-def _validation_error(exc: ValidationError) -> JSONResponse:
-    return JSONResponse(
-        {
-            "code": error_codes.PARAM_ERROR[0],
-            "msg": error_codes.PARAM_ERROR[1],
-            "data": {"errors": exc.errors()},
-        },
-        status_code=400,
-    )
+def _validation_error(exc: ValidationError) -> Dict[str, Any]:
+    return {
+        "code": error_codes.PARAM_ERROR[0],
+        "msg": error_codes.PARAM_ERROR[1],
+        "data": {"errors": exc.errors()},
+    }
 
 
-def _server_error(message: str) -> JSONResponse:
-    return JSONResponse(
-        {
-            "code": error_codes.SERVER_ERROR[0],
-            "msg": message or error_codes.SERVER_ERROR[1],
-            "data": {},
-        },
-        status_code=500,
-    )
+def _server_error(message: str) -> Dict[str, Any]:
+    return {
+        "code": error_codes.SERVER_ERROR[0],
+        "msg": message or error_codes.SERVER_ERROR[1],
+        "data": {},
+    }
 
 
 @xhs_mcp.tool(description="小红书关键词搜索")
@@ -57,9 +50,17 @@ async def search(request):
 
     try:
         result = await xhs_tools.xhs_search(**req.to_service_params())
-        return jsonify_response(_as_dict(result))
+        return {
+            "code": error_codes.SUCCESS[0],
+            "msg": error_codes.SUCCESS[1],
+            "data": _as_dict(result),
+        }
     except LoginExpiredError:
-        return jsonify_response({}, status_response=(error_codes.INVALID_TOKEN[0], "登录过期，Cookie失效"))
+        return {
+            "code": error_codes.INVALID_TOKEN[0],
+            "msg": "登录过期，Cookie失效",
+            "data": {},
+        }
     except Exception as exc:  # pragma: no cover - runtime safeguard
         logger.error(f"[xhs.search] failed: {exc}")
         return _server_error(f"小红书搜索失败: {exc}")
@@ -75,9 +76,17 @@ async def crawler_detail(request):
 
     try:
         result = await xhs_tools.xhs_detail(**req.to_service_params())
-        return jsonify_response(_as_dict(result))
+        return {
+            "code": error_codes.SUCCESS[0],
+            "msg": error_codes.SUCCESS[1],
+            "data": _as_dict(result),
+        }
     except LoginExpiredError:
-        return jsonify_response({}, status_response=(error_codes.INVALID_TOKEN[0], "登录过期，Cookie失效"))
+        return {
+            "code": error_codes.INVALID_TOKEN[0],
+            "msg": "登录过期，Cookie失效",
+            "data": {},
+        }
     except Exception as exc:
         logger.error(f"[xhs.detail] failed: {exc}")
         return _server_error(f"小红书详情抓取失败: {exc}")
@@ -93,9 +102,17 @@ async def crawler_creator(request):
 
     try:
         result = await xhs_tools.xhs_creator(**req.to_service_params())
-        return jsonify_response(_as_dict(result))
+        return {
+            "code": error_codes.SUCCESS[0],
+            "msg": error_codes.SUCCESS[1],
+            "data": _as_dict(result),
+        }
     except LoginExpiredError:
-        return jsonify_response({}, status_response=(error_codes.INVALID_TOKEN[0], "登录过期，Cookie失效"))
+        return {
+            "code": error_codes.INVALID_TOKEN[0],
+            "msg": "登录过期，Cookie失效",
+            "data": {},
+        }
     except Exception as exc:
         logger.error("[xhs.creator] failed: %s", exc)
         return _server_error(f"小红书创作者抓取失败: {exc}")
@@ -111,9 +128,17 @@ async def crawler_comments(request):
 
     try:
         result = await xhs_tools.xhs_comments(**req.to_service_params())
-        return jsonify_response(_as_dict(result))
+        return {
+            "code": error_codes.SUCCESS[0],
+            "msg": error_codes.SUCCESS[1],
+            "data": _as_dict(result),
+        }
     except LoginExpiredError:
-        return jsonify_response({}, status_response=(error_codes.INVALID_TOKEN[0], "登录过期，Cookie失效"))
+        return {
+            "code": error_codes.INVALID_TOKEN[0],
+            "msg": "登录过期，Cookie失效",
+            "data": {},
+        }
     except Exception as exc:
         logger.error("[xhs.comments] failed: %s", exc)
         return _server_error(f"小红书评论抓取失败: {exc}")

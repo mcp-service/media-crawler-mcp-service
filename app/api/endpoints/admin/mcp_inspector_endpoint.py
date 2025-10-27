@@ -5,13 +5,11 @@ from starlette.responses import JSONResponse
 
 from fastmcp import FastMCP
 from app.providers.logger import get_logger
-
+from app.api.endpoints import main_app
 
 logger = get_logger()
-mcp_inspector_router = FastMCP(name="MCP工具调试路由")
 
-
-@mcp_inspector_router.custom_route("/tools", methods=["GET"])
+@main_app.custom_route("/api/admin/tools", methods=["GET"])
 async def list_tools(request):
     """获取已注册的 MCP 工具信息"""
     try:
@@ -44,6 +42,3 @@ async def list_tools(request):
     except Exception as exc:
         logger.error(f"[MCP Inspector] 获取工具信息失败: {exc}")
         return JSONResponse(content={"detail": str(exc)}, status_code=500)
-
-
-__all__ = ["mcp_inspector_router"]

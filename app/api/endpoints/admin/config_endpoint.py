@@ -13,10 +13,9 @@ from starlette.responses import JSONResponse
 from fastmcp import FastMCP
 from app.config.settings import Platform, global_settings
 from app.providers.logger import get_logger
-
+from app.api.endpoints import main_app
 
 logger = get_logger()
-config_router = FastMCP(name="配置管理路由")
 
 
 class PlatformConfigUpdate(BaseModel):
@@ -34,8 +33,7 @@ class CrawlerConfigUpdate(BaseModel):
     headless: bool = False
     save_data_option: str = "json"
 
-
-@config_router.custom_route("/platforms", methods=["GET"])
+@main_app.custom_route("/api/config/platforms", methods=["GET"])
 async def get_platform_config(request):
     """获取平台配置"""
     try:
@@ -64,8 +62,7 @@ async def get_platform_config(request):
         logger.error(f"[配置管理] 获取平台配置失败: {exc}")
         return JSONResponse(content={"detail": str(exc)}, status_code=500)
 
-
-@config_router.custom_route("/platforms", methods=["PUT"])
+@main_app.custom_route("/api/config/platforms", methods=["PUT"])
 async def update_platform_config(request):
     """
     更新平台配置
@@ -121,8 +118,7 @@ async def update_platform_config(request):
         logger.error(f"[配置管理] 更新平台配置失败: {exc}")
         return JSONResponse(content={"detail": str(exc)}, status_code=500)
 
-
-@config_router.custom_route("/crawler", methods=["GET"])
+@main_app.custom_route("/api/config/crawler", methods=["GET"])
 async def get_crawler_config(request):
     """获取爬虫配置"""
     try:
@@ -139,8 +135,7 @@ async def get_crawler_config(request):
         logger.error(f"[配置管理] 获取爬虫配置失败: {exc}")
         return JSONResponse(content={"detail": str(exc)}, status_code=500)
 
-
-@config_router.custom_route("/crawler", methods=["PUT"])
+@main_app.custom_route("/api/config/crawler", methods=["PUT"])
 async def update_crawler_config(request):
     """
     更新爬虫配置
@@ -198,7 +193,7 @@ async def update_crawler_config(request):
         return JSONResponse(content={"detail": str(exc)}, status_code=500)
 
 
-@config_router.custom_route("/database", methods=["GET"])
+@main_app.custom_route("/api/config/database", methods=["GET"])
 async def get_database_config(request):
     """获取数据库配置（隐藏敏感信息）"""
     try:
@@ -218,7 +213,7 @@ async def get_database_config(request):
         return JSONResponse(content={"detail": str(exc)}, status_code=500)
 
 
-@config_router.custom_route("/current", methods=["GET"])
+@main_app.custom_route("/api/config/current", methods=["GET"])
 async def get_current_config(request):
     """获取当前完整配置"""
     try:
@@ -248,5 +243,3 @@ async def get_current_config(request):
         logger.error(f"[配置管理] 获取当前配置失败: {exc}")
         return JSONResponse(content={"detail": str(exc)}, status_code=500)
 
-
-__all__ = ["config_router"]
