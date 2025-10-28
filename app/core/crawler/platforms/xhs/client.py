@@ -55,50 +55,40 @@ class XiaoHongShuClient:
         self.cookie_dict = {c["name"]: c["value"] for c in cookies}
 
     async def pong(self) -> bool:
-        """Check login using signed API call with browser fallback.
+        """Check login status by DOM presence like xiaohongshu-mcp.
 
-        1) Try signed GET /api/sns/web/v1/homefeed (mnsv2/_webmsxyw)
-        2) If signing/API blocked, fallback to page context heuristic
-           (web_session cookie or localStorage a1 present)
+        Navigate to /explore, wait for load, and check the user channel element:
+        `.main-container .user .link-wrapper .channel`
         """
-        path = "/api/sns/web/v1/homefeed"
         try:
-            headers = await self._prepare_headers(path, None)
-            url = f"{self._domain}{path}"
-            await self._request("GET", url, headers=headers)
-            return True
-        except DataFetchError as e:
-            logger.warning(f"[xhs.client] signed homefeed failed: {e}")
-        except Exception as e:
-            logger.warning(f"[xhs.client] signed homefeed error: {e}")
-
-        # Fallback: page context check (less strict but avoids false negatives during risk control)
-        try:
-            cur = ""
-            try:
-                cur = self.page.url or ""
-            except Exception:
-                cur = ""
-            if "xiaohongshu.com" not in cur:
-                try:
-                    await self.page.goto(self._domain, wait_until="domcontentloaded")
-                except Exception:
-                    pass
-            return await self.page.evaluate(
-                """
-                () => {
-                    try {
-                        const hasCookie = (document.cookie || '').includes('web_session=');
-                        const a1 = (window.localStorage && window.localStorage.getItem('a1')) || '';
-                        return Boolean(hasCookie || a1);
-                    } catch (e) {
-                        return false;
-                    }
-                }
-                """
-            )
+            await self.page.goto(f"{self._domain}/explore", wait_until="domcontentloaded")
         except Exception:
-            return False
+            # try landing page
+            try:
+                await self.page.goto(self._domain, wait_until="domcontentloaded")
+            except Exception:
+                pass
+
+        # small settle time to allow CSR to render header
+        try:
+            await self.page.wait_for_timeout(600)
+        except Exception:
+            pass
+
+        try:
+            count = await self.page.eval_on_selector_all(
+                ".main-container .user .link-wrapper .channel",
+                "els => els.length"
+            )
+            return bool(count and int(count) > 0)
+        except Exception:
+            # fallback to simple querySelector
+            try:
+                return await self.page.evaluate(
+                    "() => !!document.querySelector('.main-container .user .link-wrapper .channel')"
+                )
+            except Exception:
+                return False
 
     async def get_note_by_keyword(
         self,

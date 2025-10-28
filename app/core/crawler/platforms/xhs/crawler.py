@@ -24,9 +24,7 @@ from app.providers.logger import get_logger
 
 from .client import XiaoHongShuClient
 from .exception import DataFetchError
-from .field import SearchNoteType, SearchSortType
 from .help import (
-    get_search_id,
     parse_creator_info_from_url,
     parse_note_info_from_note_url,
 )
@@ -102,59 +100,58 @@ class XiaoHongShuCrawler(AbstractCrawler):
 
         limit = max(1, self.crawl_opts.max_notes_count)
         sleep_interval = float(self.extra.get("sleep_interval", self.crawl_opts.crawl_interval))
-        note_type = SearchNoteType(self.extra.get("note_type", SearchNoteType.ALL.value))
-        sort_type = SearchSortType(self.extra.get("sort_type", SearchSortType.GENERAL.value))
-        
-        # 支持分页参数传入，不再使用while循环
-        page_num = int(self.extra.get("page_num", self.crawl_opts.start_page or 1))
-        page_size = int(self.extra.get("page_size", 20))  # 每页数量
+        page_size = int(self.extra.get("page_size", 20))
 
         collected: List[Dict[str, Any]] = []
 
         for keyword in keyword_list:
             try:
-                search_id = get_search_id()
-                
-                logger.info(f"[xhs.search] keyword={keyword} page={page_num} page_size={page_size}")
-                payload = await self.client.get_note_by_keyword(
-                    keyword=keyword,
-                    page=page_num,
-                    page_size=page_size,
-                    sort=sort_type,
-                    note_type=note_type,
-                    search_id=search_id,
+                # Page-based search like xiaohongshu-mcp
+                search_url = f"https://www.xiaohongshu.com/search_result?keyword={keyword}&source=web_explore_feed"
+                logger.info(f"[xhs.search] goto search_result: {search_url}")
+                await self.context_page.goto(search_url, wait_until="domcontentloaded")
+                try:
+                    await self.context_page.wait_for_function("() => !!window.__INITIAL_STATE__ && !!window.__INITIAL_STATE__.search", timeout=8000)
+                except Exception:
+                    logger.warning("[xhs.search] __INITIAL_STATE__ not ready")
+
+                raw_json = await self.context_page.evaluate(
+                    """
+                    () => {
+                        try {
+                            const st = window.__INITIAL_STATE__;
+                            if (st && st.search && st.search.feeds) {
+                                const feeds = st.search.feeds;
+                                const val = feeds.value !== undefined ? feeds.value : feeds._value;
+                                if (val) return JSON.stringify(val);
+                            }
+                        } catch (e) {}
+                        return "";
+                    }
+                    """
                 )
-
-                logger.info(f"[xhs.search] API response payload keys: {payload.keys() if payload else 'None'}")
-                if not payload:
-                    logger.warning(f"[xhs.search] Empty payload for keyword={keyword}")
+                if not raw_json:
+                    logger.info(f"[xhs.search] no feeds for keyword={keyword}")
                     continue
 
-                items = [
-                    item
-                    for item in payload.get("items") or []
-                    if item.get("model_type") not in ("rec_query", "hot_query")
-                ]
-                
-                logger.info(f"[xhs.search] Filtered items count: {len(items)} for keyword={keyword}")
-                if not items:
-                    logger.info(f"[xhs.search] No items found for keyword={keyword} on page={page_num}")
+                import json as _json
+                try:
+                    feeds = _json.loads(raw_json)
+                except Exception as je:
+                    logger.error(f"[xhs.search] parse feeds json failed: {je}")
                     continue
 
-                # 限制每个关键词的结果数量（粗粒度：仅返回搜索摘要，不拉详情）
-                items = items[:min(page_size, limit - len(collected))]
-
-                for item in items:
-                    info = self._extract_note_info_from_search_item(item)
-                    if not info:
+                for item in feeds:
+                    if len(collected) >= limit:
+                        break
+                    note_id = str(item.get("id") or item.get("noteId") or "").strip()
+                    if not note_id:
                         continue
-                    note_id, xsec_source, xsec_token = info
-
-                    note_obj = (item.get("note_card") or item.get("note") or {})
-                    title = note_obj.get("display_title") or note_obj.get("title") or ""
-
+                    xsec_token = item.get("xsecToken", "")
+                    note_obj = item.get("noteCard") or item.get("note") or {}
+                    title = (note_obj.get("displayTitle") or note_obj.get("title") or "") if isinstance(note_obj, dict) else ""
                     user = note_obj.get("user", {}) if isinstance(note_obj, dict) else {}
-                    interact = note_obj.get("interact_info", {}) if isinstance(note_obj, dict) else {}
+                    inter = note_obj.get("interactInfo", {}) if isinstance(note_obj, dict) else {}
 
                     def _to_int(v):
                         try:
@@ -166,28 +163,23 @@ class XiaoHongShuCrawler(AbstractCrawler):
                                 return None
 
                     collected.append({
-                        "note_id": str(note_id),
+                        "note_id": note_id,
                         "xsec_token": xsec_token,
-                        "xsec_source": xsec_source,
+                        "xsec_source": "pc_feed",
                         "title": title,
                         "note_url": f"https://www.xiaohongshu.com/explore/{note_id}",
                         "user": {
-                            "user_id": user.get("user_id"),
-                            "nickname": user.get("nickname") or user.get("nick_name"),
+                            "user_id": user.get("userId") or user.get("user_id"),
+                            "nickname": user.get("nickname") or user.get("nickName") or user.get("nick_name"),
                             "avatar": user.get("avatar"),
                         },
                         "interact_info": {
-                            "liked_count": _to_int(interact.get("liked_count")),
-                            "collected_count": _to_int(interact.get("collected_count")),
-                            "comment_count": _to_int(interact.get("comment_count")),
-                            "share_count": _to_int(interact.get("shared_count")),
+                            "liked_count": _to_int(inter.get("likedCount")),
+                            "collected_count": _to_int(inter.get("collectedCount")),
+                            "comment_count": _to_int(inter.get("commentCount")),
+                            "share_count": _to_int(inter.get("sharedCount")),
                         }
                     })
-                    if len(collected) >= limit:
-                        break
-
-                if len(collected) >= limit:
-                    break
 
                 if sleep_interval > 0:
                     await asyncio.sleep(sleep_interval)
@@ -202,12 +194,12 @@ class XiaoHongShuCrawler(AbstractCrawler):
                 continue
 
         return {
-            "notes": collected,
-            "total_count": len(collected),
+            "notes": collected[:page_size],
+            "total_count": min(len(collected), page_size),
             "page_info": {
-                "current_page": page_num,
+                "current_page": 1,
                 "page_size": page_size,
-                "has_more": len(collected) == page_size  # 如果当前页满了，可能还有更多
+                "has_more": False
             },
             "crawl_info": self._build_crawl_info(),
         }
@@ -507,21 +499,16 @@ class XiaoHongShuCrawler(AbstractCrawler):
         semaphore: Semaphore,
     ) -> Optional[Dict[str, Any]]:
         async with semaphore:
-            try:
-                detail = await self.client.get_note_by_id(note_id, xsec_source, xsec_token)
-            except DataFetchError:
-                detail = None
-
+            # 对齐 xiaohongshu-mcp：仅通过 HTML/DOM 提取详情
+            detail = await self.client.get_note_by_id_from_html(
+                note_id,
+                xsec_source,
+                xsec_token,
+                enable_cookie=True,
+            )
             if not detail:
-                detail = await self.client.get_note_by_id_from_html(
-                    note_id,
-                    xsec_source,
-                    xsec_token,
-                    enable_cookie=True,
-                )
-                if not detail:
-                    logger.warning(f"[xhs.detail] 获取笔记失败 note_id={note_id}")
-                    return None
+                logger.warning(f"[xhs.detail] 获取笔记失败 note_id={note_id}")
+                return None
             # Normalize essential fields for downstream schemas
             # Ensure note_id exists (feed note_card may miss it)
             if not detail.get("note_id"):

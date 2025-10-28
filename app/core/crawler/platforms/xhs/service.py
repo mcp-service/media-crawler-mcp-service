@@ -17,8 +17,13 @@ from app.core.crawler.platforms.xhs.crawler import XiaoHongShuCrawler
 from app.core.login import login_service
 from app.core.login.exceptions import LoginExpiredError
 from app.providers.logger import get_logger
+from app.core.login.browser_manager import get_browser_manager
+from app.core.crawler.tools import crawler_util
+from app.core.login.xhs.login import get_user_data_dir as xhs_user_data_dir
+from .publish import XhsPublisher
 
 logger = get_logger()
+browser_manager = get_browser_manager()
 
 
 def _resolve_login_type(cookie: Optional[str], phone: Optional[str]) -> LoginType:
@@ -247,3 +252,121 @@ async def fetch_comments(
         return await crawler.start()
     finally:
         await crawler.close()
+
+
+async def publish_image(
+    *,
+    title: str,
+    content: str,
+    images: list[str],
+    tags: list[str] | None = None,
+    headless: bool | None = None,
+    **kwargs: Any,
+) -> Dict[str, Any]:
+    """发布小红书图文（对齐 xiaohongshu-mcp 逻辑）。"""
+    tags = tags or []
+
+    login_cookie = await login_service.get_cookie(Platform.XIAOHONGSHU.value)
+    if not login_cookie:
+        raise LoginExpiredError("登录过期，Cookie失效")
+
+    browser_cfg = global_settings.browser
+    viewport = {"width": browser_cfg.viewport_width, "height": browser_cfg.viewport_height}
+
+    context = None
+    page = None
+    playwright = None
+    try:
+        context, page, playwright = await browser_manager.acquire_context(
+            platform=Platform.XIAOHONGSHU.value,
+            user_data_dir=xhs_user_data_dir(),
+            headless=browser_cfg.headless if headless is None else headless,
+            viewport=viewport,
+            user_agent=browser_cfg.user_agent or crawler_util.get_user_agent(),
+        )
+    except Exception:
+        # Fallback: build via get_context_for_check
+        context, playwright = await browser_manager.get_context_for_check(
+            platform=Platform.XIAOHONGSHU.value,
+            user_data_dir=xhs_user_data_dir(),
+            headless=browser_cfg.headless if headless is None else headless,
+            viewport=viewport,
+            user_agent=browser_cfg.user_agent or crawler_util.get_user_agent(),
+        )
+        page = await context.new_page()
+
+    try:
+        publisher = XhsPublisher(page)
+        result = await publisher.publish_image_post(
+            title=title,
+            content=content,
+            images=images,
+            tags=tags,
+        )
+        return result
+    finally:
+        try:
+            if page:
+                await page.close()
+        except Exception:
+            pass
+        await browser_manager.release_context(Platform.XIAOHONGSHU.value, keep_alive=True)
+
+
+async def publish_video(
+    *,
+    title: str,
+    content: str,
+    video: str,
+    tags: list[str] | None = None,
+    headless: bool | None = None,
+    **kwargs: Any,
+) -> Dict[str, Any]:
+    """发布小红书视频（对齐 xiaohongshu-mcp 思路）。"""
+    tags = tags or []
+
+    login_cookie = await login_service.get_cookie(Platform.XIAOHONGSHU.value)
+    if not login_cookie:
+        raise LoginExpiredError("登录过期，Cookie失效")
+
+    browser_cfg = global_settings.browser
+    viewport = {"width": browser_cfg.viewport_width, "height": browser_cfg.viewport_height}
+
+    context = None
+    page = None
+    playwright = None
+    try:
+        context, page, playwright = await browser_manager.acquire_context(
+            platform=Platform.XIAOHONGSHU.value,
+            user_data_dir=xhs_user_data_dir(),
+            headless=browser_cfg.headless if headless is None else headless,
+            viewport=viewport,
+            user_agent=browser_cfg.user_agent or crawler_util.get_user_agent(),
+        )
+    except Exception:
+        # Fallback: build via get_context_for_check
+        context, playwright = await browser_manager.get_context_for_check(
+            platform=Platform.XIAOHONGSHU.value,
+            user_data_dir=xhs_user_data_dir(),
+            headless=browser_cfg.headless if headless is None else headless,
+            viewport=viewport,
+            user_agent=browser_cfg.user_agent or crawler_util.get_user_agent(),
+        )
+        page = await context.new_page()
+
+    try:
+        publisher = XhsPublisher(page)
+        result = await publisher.publish_video_post(
+            title=title,
+            content=content,
+            video=video,
+            tags=tags,
+        )
+        return result
+    finally:
+        try:
+            if page:
+                await page.close()
+        except Exception:
+            pass
+        await browser_manager.release_context(Platform.XIAOHONGSHU.value, keep_alive=True)

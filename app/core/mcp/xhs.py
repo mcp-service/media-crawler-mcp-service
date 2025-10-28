@@ -217,4 +217,41 @@ async def xhs_comments(
     return payload.model_dump_json(ensure_ascii=False, indent=2)
 
 
+async def xhs_publish(
+    title: str,
+    content: str,
+    images: list[str],
+    tags: list[str] | None = None,
+    headless: bool | None = None,
+) -> str:
+    """发布小红书图文内容（图文版）。"""
+    result = await xhs_service.publish_image(
+        title=title,
+        content=content,
+        images=images,
+        tags=tags or [],
+        headless=headless,
+    )
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+async def xhs_publish_video(
+    title: str,
+    content: str,
+    video: str,
+    tags: list[str] | None = None,
+    headless: bool | None = None,
+) -> str:
+    result = await xhs_service.publish_video(
+        title=title,
+        content=content,
+        video=video,
+        tags=tags or [],
+        headless=headless,
+    )
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
 __all__ = ["xhs_search", "xhs_detail", "xhs_creator", "xhs_comments"]
+__all__.append("xhs_publish")
+__all__.append("xhs_publish_video")

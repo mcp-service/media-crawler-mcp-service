@@ -14,6 +14,8 @@ from app.api.scheme.request.xhs_scheme import (
     XhsCreatorRequest,
     XhsDetailRequest,
     XhsSearchRequest,
+    XhsPublishRequest,
+    XhsPublishVideoRequest,
 )
 from app.config.settings import Platform
 from app.core.mcp import xhs as xhs_tools
@@ -169,6 +171,74 @@ async def crawler_comments(note_id: str, xsec_token: str, max_comments: int = 50
     except Exception as exc:
         logger.error("[xhs.comments] failed: %s", exc)
         return _server_error(f"小红书评论抓取失败: {exc}")
+
+
+@xhs_mcp.tool(
+    name="publish_image",
+    description="发布小红书图文内容",
+    tags={"xiaohongshu", "publish"}
+)
+async def publish_image(title: str, content: str, images: list[str], tags: list[str] | None = None):
+    try:
+        req = XhsPublishRequest.model_validate({
+            "title": title,
+            "content": content,
+            "images": images,
+            "tags": tags or [],
+        })
+    except ValidationError as exc:
+        return _validation_error(exc)
+
+    try:
+        result = await xhs_tools.xhs_publish(**req.to_service_params())
+        return {
+            "code": error_codes.SUCCESS[0],
+            "msg": error_codes.SUCCESS[1],
+            "data": _as_dict(result),
+        }
+    except LoginExpiredError:
+        return {
+            "code": error_codes.INVALID_TOKEN[0],
+            "msg": "登录过期，Cookie失效",
+            "data": {},
+        }
+    except Exception as exc:
+        logger.error("[xhs.publish] failed: %s", exc)
+        return _server_error(f"小红书发布失败: {exc}")
+
+
+@xhs_mcp.tool(
+    name="publish_video",
+    description="发布小红书视频内容",
+    tags={"xiaohongshu", "publish"}
+)
+async def publish_video(title: str, content: str, video: str, tags: list[str] | None = None):
+    try:
+        req = XhsPublishVideoRequest.model_validate({
+            "title": title,
+            "content": content,
+            "video": video,
+            "tags": tags or [],
+        })
+    except ValidationError as exc:
+        return _validation_error(exc)
+
+    try:
+        result = await xhs_tools.xhs_publish_video(**req.to_service_params())
+        return {
+            "code": error_codes.SUCCESS[0],
+            "msg": error_codes.SUCCESS[1],
+            "data": _as_dict(result),
+        }
+    except LoginExpiredError:
+        return {
+            "code": error_codes.INVALID_TOKEN[0],
+            "msg": "登录过期，Cookie失效",
+            "data": {},
+        }
+    except Exception as exc:
+        logger.error("[xhs.publish_video] failed: %s", exc)
+        return _server_error(f"小红书发布视频失败: {exc}")
 
 
 async def _safe_json(request) -> Dict[str, Any]:
