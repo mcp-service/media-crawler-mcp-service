@@ -197,11 +197,12 @@ async def get_creator(
     login_cookie = await login_service.get_cookie(Platform.XIAOHONGSHU.value)
     if not login_cookie:
         raise LoginExpiredError("登录过期，Cookie失效")
+    max_notes = int(kwargs.get("max_notes", global_settings.crawl.max_notes_count))
     context = _build_context(
         crawler_type=CrawlerType.CREATOR,
         creator_ids=creator_ids,
         enable_comments=False,  # 创作者作品不获取评论
-        max_notes=len(creator_ids),
+        max_notes=max_notes,
         max_comments=0,  # 不获取评论
         headless=headless,
         enable_save_media=enable_save_media,

@@ -119,6 +119,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
                 payload = await self.client.get_note_by_keyword(
                     keyword=keyword,
                     page=page_num,
+                    page_size=page_size,
                     sort=sort_type,
                     note_type=note_type,
                     search_id=search_id,
@@ -191,6 +192,10 @@ class XiaoHongShuCrawler(AbstractCrawler):
                 if sleep_interval > 0:
                     await asyncio.sleep(sleep_interval)
                     
+            except LoginExpiredError as e:
+                # 账号权限或登录失效，直接向上抛出给 MCP 层返回 401
+                logger.error(f"[xhs.search] Login required or permission denied: {e}")
+                raise
             except Exception as e:
                 logger.error(f"[xhs.search] Error processing keyword={keyword}: {type(e).__name__}: {e}")
                 # 继续处理下一个关键词，而不是让整个搜索失败

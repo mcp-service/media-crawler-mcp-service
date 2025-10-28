@@ -138,6 +138,12 @@ class BilibiliCrawler(AbstractCrawler):
             # 仅在未登录或未知时做一次 pong 校验，避免重复调用
             if not is_logged_in:
                 is_logged_in = await self.bili_client.pong()
+                # 若页面侧 pong 判定为登录，立刻回写 Redis，保证服务端状态一致
+                if is_logged_in:
+                    try:
+                        await login_service.refresh_platform_state(Platform.BILIBILI.value, force=True, strict=True)
+                    except Exception as exc:
+                        logger.warning(f"[BilibiliCrawler.start] Update platform state after pong failed: {exc}")
 
             if not is_logged_in:
                 # MCP 工具场景下不自动登录，直接提示登录过期
@@ -306,6 +312,15 @@ class BilibiliCrawler(AbstractCrawler):
                 # 从搜索结果构建基础视频信息
                 aid = str(item.get("aid", ""))
                 bvid = item.get("bvid", "")
+                # 将搜索结果中的可用统计字段映射到简化信息中
+                # liked_count: 取搜索接口返回的 like 字段；
+                # video_comment: 优先取 review（评论数），其次 video_review/danmaku（可能为弹幕数，作为兜底不使用，此处仅在缺失时回退）。
+                liked = item.get("like", 0)
+                # 有些返回只有 review 或 video_review，这里优先使用 review
+                review = item.get("review")
+                if review is None:
+                    review = item.get("video_review") or item.get("danmaku", 0)
+
                 video_info = {
                     # 使用 aid 作为对外视频 ID，方便后续请求详情
                     "video_id": aid,
@@ -315,8 +330,8 @@ class BilibiliCrawler(AbstractCrawler):
                     "user_id": str(item.get("mid", "")),
                     "nickname": item.get("author", ""),
                     "video_play_count": str(item.get("play", "0")),
-                    "liked_count": "0",  # 搜索结果中没有点赞数
-                    "video_comment": "0",  # 搜索结果中没有评论数
+                    "liked_count": str(liked),
+                    "video_comment": str(review if review is not None else 0),
                     # 使用 BV 号生成视频链接
                     "video_url": f"https://www.bilibili.com/video/{bvid}",
                     "video_cover_url": item.get("pic", ""),

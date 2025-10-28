@@ -135,7 +135,8 @@ async def login_session_status(request):
 @main_app.custom_route("/api/login/sessions", methods=["GET"])
 async def login_sessions(request):
     try:
-        result = await service.list_sessions()
+        # 简化版：仅读取缓存，不触发任何实时刷新/浏览器拉起
+        result = await service.list_sessions_cached()
         response_models = [PlatformSessionInfo.model_validate(item) for item in result]
         return JSONResponse(content=[model.model_dump() for model in response_models])
     except ValidationError as exc:

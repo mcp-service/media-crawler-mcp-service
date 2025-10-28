@@ -1,15 +1,18 @@
 # -*- coding: utf-8 -*-
 from starlette.responses import HTMLResponse
+import json
 
 from .ui_base import (
     build_page_with_nav,
     create_page_header,
     create_info_box,
-    create_button_group,
 )
 
+from app.providers.logger import get_logger
 
-def render_admin_inspector() -> HTMLResponse:
+logger = get_logger()
+
+async def render_admin_inspector() -> HTMLResponse:
     # 页面头部
     header = create_page_header(
         title="MCP Tools Inspector",
@@ -20,9 +23,17 @@ def render_admin_inspector() -> HTMLResponse:
 
     # 左侧工具列表
     tools_list = f"""
-    <div class="mc-status-card">
-        <h3>可用工具</h3>
-        <div id='tool-list'>{create_info_box("加载工具列表...")}</div>
+    <div class=\"mc-status-card\">
+        <h3>可用对象</h3>
+        <div class='mc-form-group' id='inspector-filters'>
+            <label style='font-weight:600; margin-bottom: .5rem;'>显示类别</label>
+            <select id='filter-kind' class='form-control' style='max-width:260px;'>
+                <option value='tools' selected>工具 (Tools)</option>
+                <option value='prompts'>提示词 (Prompts)</option>
+                <option value='resources'>资源 (Resources)</option>
+            </select>
+        </div>
+        <div id='tool-list'>{create_info_box("加载工具/提示词/资源中...")}</div>
     </div>
     """
 
@@ -45,11 +56,11 @@ def render_admin_inspector() -> HTMLResponse:
         </div>
 
         <div class='mc-form-group'>
-            {create_button_group([
-                ("执行请求", "#", "primary"),
-                ("恢复默认", "#", "secondary"),
-                ("复制响应", "#", "secondary")
-            ]).replace("执行请求", "执行请求' id='execute-tool' disabled").replace("恢复默认", "恢复默认' id='reset-body' disabled").replace("复制响应", "复制响应' id='copy-response' style='display:none;")}
+            <div class='btn-group'>
+                <button type='button' class='btn btn-primary' id='execute-tool' disabled>执行请求</button>
+                <button type='button' class='btn btn-secondary' id='reset-body' disabled>恢复默认</button>
+                <button type='button' class='btn btn-secondary' id='copy-response' style='display:none;'>复制响应</button>
+            </div>
         </div>
 
         <div>
@@ -62,167 +73,16 @@ def render_admin_inspector() -> HTMLResponse:
     </div>
     """
 
-    inspector_js = """
-    <script>
-    const API_BASE = '/api';
-    let currentTool = null;
+    # 直接使用 main_app 获取动态数据
+    try:
+        # 这里不再获取数据，改为通过 AJAX 获取，保持与其他页面一致
+        logger.info("Inspector 页面已改为 AJAX 模式获取数据")
+        
+    except Exception as e:
+        logger.error(f"Inspector 页面加载失败: {e}")
 
-    async function apiRequest(endpoint, options = {}){
-        const res=await fetch(`${API_BASE}${endpoint}`,{
-            headers:{'Content-Type':'application/json'},
-            ...options
-        });
-        if(!res.ok) throw new Error(`HTTP ${res.status}`);
-        const ct=res.headers.get('content-type')||'';
-        return ct.includes('application/json')?res.json():res.text();
-    }
-
-    function renderToolList(items){
-        const el=document.getElementById('tool-list');
-        if(!items?.length){
-            el.innerHTML='<div>暂无工具</div>';
-            return;
-        }
-
-        el.innerHTML=items.map(g=>`
-            <div style='margin-bottom: 1.5rem;'>
-                <h4 style='margin: 0 0 0.5rem; font-size: 0.875rem; font-weight: 600; color: var(--text-primary);'>${g.category||g.name}</h4>
-                <div style='margin-left: 0.5rem;'>
-                    ${g.tools.map(t=>`
-                        <div style='margin: 0.25rem 0;'>
-                            <a href='#' data-tool='${g.name}:${t.name}'
-                               style='color: var(--link-color, #3b82f6); text-decoration: none; font-size: 0.875rem;'
-                               onmouseover="this.style.textDecoration='underline'"
-                               onmouseout="this.style.textDecoration='none'">
-                                ${t.name}
-                            </a>
-                        </div>
-                    `).join('')}
-                </div>
-            </div>
-        `).join('');
-    }
-
-    function bindToolClicks(groups){
-        document.querySelectorAll('#tool-list a[data-tool]').forEach(a=>{
-            a.addEventListener('click',(e)=>{
-                e.preventDefault();
-                const[srv,tool]=a.dataset.tool.split(':');
-                const g=groups.find(x=>x.name===srv);
-                const t=g?.tools.find(x=>x.name===tool);
-
-                // 更新当前工具信息
-                currentTool = {service: srv, tool: tool, config: t};
-                const path=`/${srv}/${tool}`;
-                const methods='POST';
-
-                // 更新 UI
-                document.getElementById('tool-name').textContent=`${srv} · ${tool}`;
-                document.getElementById('tool-description').textContent=t?.description||'暂无描述';
-                document.getElementById('tool-path').textContent=path;
-                document.getElementById('tool-methods').textContent=methods;
-                document.getElementById('tool-request-body').value=JSON.stringify(t?.example||{},null,2);
-                document.getElementById('execute-tool').disabled=false;
-                document.getElementById('reset-body').disabled=false;
-
-                // 清空之前的响应
-                document.getElementById('response-status').textContent='选择工具完成，可以执行请求';
-                document.getElementById('response-body').textContent='{}';
-                document.getElementById('copy-response').style.display='none';
-
-                // 高亮选中的工具
-                document.querySelectorAll('#tool-list a').forEach(link => {
-                    link.style.backgroundColor = '';
-                    link.style.padding = '';
-                    link.style.borderRadius = '';
-                });
-                a.style.backgroundColor = 'var(--accent-color-alpha, rgba(59, 130, 246, 0.1))';
-                a.style.padding = '0.25rem 0.5rem';
-                a.style.borderRadius = '0.25rem';
-            });
-        });
-    }
-
-    async function executeCurrentTool(){
-        if(!currentTool) return;
-
-        const path = `/${currentTool.service}/${currentTool.tool}`;
-        const bodyText = document.getElementById('tool-request-body').value || '{}';
-
-        try{
-            document.getElementById('response-status').textContent='请求中...';
-            document.getElementById('response-status').style.color='var(--text-warning, #f59e0b)';
-
-            const res = await fetch(path, {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: bodyText
-            });
-
-            const responseText = await res.text();
-
-            // 更新状态
-            document.getElementById('response-status').textContent=`HTTP ${res.status} ${res.statusText}`;
-            document.getElementById('response-status').style.color = res.ok ?
-                'var(--text-success, #22c55e)' : 'var(--text-error, #ef4444)';
-
-            // 尝试格式化 JSON 响应
-            try{
-                const jsonData = JSON.parse(responseText);
-                document.getElementById('response-body').textContent = JSON.stringify(jsonData, null, 2);
-            }catch{
-                document.getElementById('response-body').textContent = responseText;
-            }
-
-            document.getElementById('copy-response').style.display='inline-block';
-
-        }catch(err){
-            document.getElementById('response-status').textContent='请求失败';
-            document.getElementById('response-status').style.color='var(--text-error, #ef4444)';
-            document.getElementById('response-body').textContent=String(err);
-        }
-    }
-
-    function resetRequestBody(){
-        if(currentTool && currentTool.config){
-            document.getElementById('tool-request-body').value =
-                JSON.stringify(currentTool.config.example||{}, null, 2);
-        }
-    }
-
-    function copyResponse(){
-        const responseText = document.getElementById('response-body').textContent;
-        navigator.clipboard.writeText(responseText).then(()=>{
-            const btn = document.getElementById('copy-response');
-            const originalText = btn.textContent;
-            btn.textContent = '已复制!';
-            setTimeout(()=>{
-                btn.textContent = originalText;
-            }, 2000);
-        });
-    }
-
-    async function init(){
-        try{
-            const r = await apiRequest('/admin/tools');
-            const items = r.items || [];
-            renderToolList(items);
-            bindToolClicks(items);
-        }catch(e){
-            document.getElementById('tool-list').innerHTML = '<div>加载工具失败：' + e.message + '</div>';
-        }
-    }
-
-    document.addEventListener('DOMContentLoaded', ()=>{
-        init();
-
-        // 绑定按钮事件
-        document.getElementById('execute-tool').addEventListener('click', executeCurrentTool);
-        document.getElementById('reset-body').addEventListener('click', resetRequestBody);
-        document.getElementById('copy-response').addEventListener('click', copyResponse);
-    });
-    </script>
-    """
+    # 使用静态文件路径，不注入数据，改为 AJAX 获取
+    inspector_js = "<script src='/static/js/inspector.js'></script>"
 
     # 组合主内容
     main_content = f"""

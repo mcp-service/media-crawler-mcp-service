@@ -163,6 +163,8 @@ async def search(
         login_cookie=login_cookie,
     )
 
+    # 明确指定 search 工具使用 Fast 搜索模式，避免与其他模式混淆
+    context.crawl.search_mode = "normal"
     crawler = BilibiliCrawler(context)
     try:
         return await crawler.start()

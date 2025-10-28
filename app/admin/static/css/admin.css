@@ -524,9 +524,9 @@ body {
   gap: 0.75rem;
   padding: 0.6rem;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.85);
-  border: 1px solid rgba(17, 17, 17, 0.08);
-  backdrop-filter: blur(20px);
+  background: linear-gradient(135deg, rgba(17, 17, 17, 0.95), rgba(34, 34, 34, 0.9));
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(14px);
 }
 
 .admin-nav__link {
@@ -535,21 +535,21 @@ body {
   border-radius: 999px;
   font-size: 0.95rem;
   text-decoration: none;
-  color: var(--admin-text-secondary);
+  color: #e5e7eb; /* slate-200 */
   transition: all 0.2s ease;
 }
 
 .admin-nav__link:hover {
-  color: var(--admin-text-primary);
+  color: #fff;
 }
 
 .admin-nav__link.is-active {
   color: #fff;
   font-weight: 600;
-  background: linear-gradient(135deg, rgba(34, 34, 34, 0.9), rgba(85, 85, 85, 0.8));
+  background: linear-gradient(135deg, rgba(0, 0, 0, 0.85), rgba(55, 55, 55, 0.85));
   box-shadow:
-    0 0 20px rgba(0, 0, 0, 0.18),
-    0 12px 25px -18px rgba(0, 0, 0, 0.35);
+    0 0 20px rgba(0, 0, 0, 0.25),
+    0 12px 25px -18px rgba(0, 0, 0, 0.45);
 }
 
 .admin-content {
@@ -1339,6 +1339,22 @@ button.quick-action-card {
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
+}
+
+/* 让配置卡片中的保存按钮固定在卡片底部（与爬虫配置一致） */
+.config-card .card-body {
+  display: flex;
+  flex-direction: column;
+}
+
+.config-card .config-form {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+}
+
+.config-card .config-form .form-actions {
+  margin-top: auto;
 }
 
 .platform-checkbox-grid {

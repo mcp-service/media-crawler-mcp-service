@@ -67,10 +67,27 @@ class XiaoHongShuLogin(AbstractLogin):
         Args:
             wait_for_scan: 是否等待扫码完成（默认True用于兼容旧流程，False用于新的异步流程）
         """
-        selector = "xpath=//img[@class='qrcode-img']"
+        selector = "xpath=//img[contains(@class,'qrcode') or contains(@class,'qrcode-img')]"
+
+        # 确保进入站点首页，再触发登录面板
+        try:
+            if not (self.context_page.url or "").startswith("https://www.xiaohongshu.com"):
+                await self.context_page.goto("https://www.xiaohongshu.com", wait_until="domcontentloaded")
+        except Exception as exc:
+            logger.warning(f"[xhs.login] 打开站点首页失败: {exc}")
 
         # 等待二维码图片加载完成（最多等待10秒）
         try:
+            # 优先点击登录按钮以唤起二维码面板
+            try:
+                # 常见登录入口：包含“登录”文字的按钮
+                await self.context_page.get_by_role("button", name="登录").click(timeout=4000)
+            except Exception:
+                try:
+                    await self.context_page.click("xpath=//button[contains(.,'登录') or contains(@class,'login')][1]", timeout=4000)
+                except Exception:
+                    pass
+
             await self.context_page.wait_for_selector(selector, timeout=10000)
             # 额外等待一下确保图片完全加载
             await asyncio.sleep(1)
@@ -80,15 +97,16 @@ class XiaoHongShuLogin(AbstractLogin):
         base64_qrcode = await crawler_util.find_login_qrcode(self.context_page, selector)
         if not base64_qrcode:
             try:
-                login_button = self.context_page.locator(
-                    "xpath=//*[@id='app']/div[1]/div[2]/div[1]/ul/div[1]/button"
-                )
-                await login_button.click()
-                # 点击后等待二维码出现
+                # 再次尝试点击“登录”按钮
+                await self.context_page.get_by_role("button", name="登录").click(timeout=3000)
                 await asyncio.sleep(2)
                 base64_qrcode = await crawler_util.find_login_qrcode(self.context_page, selector)
-            except Exception as exc:
-                logger.warning(f"[xhs.login] 展示二维码失败: {exc}")
+            except Exception:
+                try:
+                    # 尝试从 canvas 截图作为兜底
+                    base64_qrcode = await crawler_util.find_qrcode_img_from_canvas(self.context_page, "xpath=//canvas")
+                except Exception as exc:
+                    logger.warning(f"[xhs.login] 展示二维码失败: {exc}")
 
         if not base64_qrcode:
             raise RuntimeError("未能获取小红书登录二维码")
@@ -178,7 +196,7 @@ class XiaoHongShuLogin(AbstractLogin):
             logger.warning(f"[xhs.login] 检查Cookie失败: {exc}")
             return False
 
-    async def fetch_login_state(self) -> PlatformLoginState:
+    async def fetch_login_state(self, strict: bool = False) -> PlatformLoginState:
         """获取当前登录状态（增强风控容错）"""
         data_dir = self.user_data_dir
         if not data_dir.exists():
@@ -192,21 +210,24 @@ class XiaoHongShuLogin(AbstractLogin):
             browser_context, playwright = await browser_manager.get_context_for_check(
                 platform=self.platform,
                 user_data_dir=data_dir,
-                headless=True,
+                headless=self._headless,
                 viewport=self._viewport,
                 user_agent=self._user_agent,
             )
+
+            # 打开站点页面，确保可访问 localStorage 与当前域 Cookie
+            context_page = await browser_context.new_page()
+            try:
+                await context_page.goto("https://www.xiaohongshu.com", wait_until="domcontentloaded", timeout=10000)
+            except Exception:
+                pass
 
             cookies = await browser_context.cookies()
             cookie_str, cookie_dict = crawler_util.convert_cookies(cookies)
             has_web_session = bool(cookie_dict.get("web_session"))
 
-            if not has_web_session:
-                return await self.create_failed_state("未登录")
-
             # 尝试验证登录状态（带风控容错）
             try:
-                context_page = await browser_context.new_page()
                 from app.core.crawler.platforms.xhs.client import XiaoHongShuClient
                 client = XiaoHongShuClient(
                     playwright_page=context_page,
@@ -222,16 +243,16 @@ class XiaoHongShuLogin(AbstractLogin):
                 logger.debug(f"[xhs.login] fetch_login_state API 验证结果: {is_valid}")
 
                 if is_valid:
-                    user_info = {
-                        "web_session": cookie_dict.get("web_session", "")[:20] + "..."
-                    }
+                    user_info = {}
+                    if cookie_dict.get("web_session"):
+                        user_info["web_session"] = cookie_dict.get("web_session", "")[:20] + "..."
                     return await self.create_success_state(cookie_str, cookie_dict, user_info)
                 else:
-                    # API 返回失败，但保守判断（Cookie 存在即视为登录）
+                    if strict:
+                        return await self.create_failed_state("未登录或无权限")
+                    # 非严格模式下：保守判断（Cookie 存在即视为已登录）
                     logger.info(f"[xhs.login] API 验证失败但 Cookie 存在，保守判断为已登录")
-                    user_info = {
-                        "web_session": cookie_dict.get("web_session", "")[:20] + "..."
-                    }
+                    user_info = {"web_session": cookie_dict.get("web_session", "")[:20] + "..."}
                     return await self.create_success_state(cookie_str, cookie_dict, user_info)
 
             except Exception as api_exc:
@@ -240,19 +261,15 @@ class XiaoHongShuLogin(AbstractLogin):
 
                 # ⚠️ 风控错误 → 保守判断为已登录
                 is_risk_control = any(keyword in error_msg for keyword in ["406", "412", "461", "471", "风控", "banned", "risk"])
+                if strict:
+                    return await self.create_failed_state("状态检查失败")
                 if has_web_session and is_risk_control:
                     logger.info(f"[xhs.login] 检测到风控，但Cookie存在，保守判断为已登录")
-                    user_info = {
-                        "web_session": cookie_dict.get("web_session", "")[:20] + "..."
-                    }
+                    user_info = {"web_session": cookie_dict.get("web_session", "")[:20] + "..."}
                     return await self.create_success_state(cookie_str, cookie_dict, user_info)
-
-                # API 验证失败时，基于 Cookie 存在性判断（保守处理）
                 if has_web_session:
                     logger.info(f"[xhs.login] API 异常但 Cookie 存在，保守判断为已登录")
-                    user_info = {
-                        "web_session": cookie_dict.get("web_session", "")[:20] + "..."
-                    }
+                    user_info = {"web_session": cookie_dict.get("web_session", "")[:20] + "..."}
                     return await self.create_success_state(cookie_str, cookie_dict, user_info)
                 else:
                     return await self.create_failed_state("未登录")
@@ -603,7 +620,7 @@ async def _cleanup_browser_resources(session: LoginSession):
             pass
 
 
-async def fetch_login_state(service) -> PlatformLoginState:
+async def fetch_login_state(service, strict: bool = False) -> PlatformLoginState:
     """获取登录状态 - 服务接口"""
     user_data_dir = get_user_data_dir()
     if not user_data_dir.exists():
@@ -640,7 +657,7 @@ async def fetch_login_state(service) -> PlatformLoginState:
         )
         temp_login.playwright = playwright
 
-        return await temp_login.fetch_login_state()
+        return await temp_login.fetch_login_state(strict=strict)
 
     finally:
         if 'context_page' in locals():

@@ -235,6 +235,17 @@ class BrowserManager:
         lock = await self.get_lock(platform)
 
         async with lock:
+            # 优先复用已缓存的上下文，避免频繁创建新浏览器实例
+            cached_ctx = self._contexts.get(platform)
+            cached_pw = self._playwrights.get(platform)
+            if cached_ctx and cached_pw:
+                try:
+                    _ = cached_ctx.pages  # 触发连接探测
+                    logger.info(f"[BrowserManager] 复用 {platform} 浏览器上下文用于状态检查")
+                    return cached_ctx, cached_pw
+                except Exception:
+                    logger.warning(f"[BrowserManager] 复用 {platform} 失败，将创建临时上下文")
+
             logger.info(f"[BrowserManager] 为 {platform} 创建临时浏览器上下文用于状态检查")
 
             playwright = await async_playwright().start()
@@ -247,12 +258,60 @@ class BrowserManager:
                 user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 
             context = await chromium.launch_persistent_context(
-                user_data_dir=str(user_data_dir),
+                user_data_dir=str(user_data_dir.resolve()),
                 headless=headless,
                 viewport=viewport,
                 user_agent=user_agent,
                 accept_downloads=True,
             )
+
+            # 兼容：如果新上下文内没有有效 Cookie，尝试从本地文件加载并写入
+            try:
+                existing = await context.cookies()
+                if not existing:
+                    from pathlib import Path as _Path
+                    import json as _json
+                    cookie_base = _Path("browser_data") / platform
+                    cookie_json = cookie_base / "cookies.json"
+                    cookie_txt = cookie_base / "cookies.txt"
+                    cookie_dict: Dict[str, str] = {}
+                    if cookie_json.exists():
+                        try:
+                            cookie_dict = _json.loads(cookie_json.read_text(encoding="utf-8")) or {}
+                        except Exception:
+                            cookie_dict = {}
+                    elif cookie_txt.exists():
+                        try:
+                            raw = cookie_txt.read_text(encoding="utf-8")
+                            for part in raw.split(";"):
+                                part = part.strip()
+                                if not part or "=" not in part:
+                                    continue
+                                k, v = part.split("=", 1)
+                                cookie_dict[k.strip()] = v.strip()
+                        except Exception:
+                            cookie_dict = {}
+                    if cookie_dict:
+                        domain_map = {
+                            "bili": ".bilibili.com",
+                            "xhs": ".xiaohongshu.com",
+                            "dy": ".douyin.com",
+                            "ks": ".kuaishou.com",
+                            "wb": ".weibo.com",
+                            "zhihu": ".zhihu.com",
+                        }
+                        dom = domain_map.get(platform, None)
+                        cookies_payload = []
+                        for name, value in cookie_dict.items():
+                            payload = {"name": name, "value": value, "path": "/"}
+                            if dom:
+                                payload["domain"] = dom
+                            cookies_payload.append(payload)
+                        if cookies_payload:
+                            await context.add_cookies(cookies_payload)
+                            logger.info(f"[BrowserManager] 已从本地文件为 {platform} 注入 {len(cookies_payload)} 条 Cookie")
+            except Exception as exc:
+                logger.warning(f"[BrowserManager] 尝试注入本地 Cookie 失败: {exc}")
 
             return context, playwright
 

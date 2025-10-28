@@ -195,7 +195,7 @@ class BilibiliLogin(AbstractLogin):
             await asyncio.sleep(interval)
         return False
 
-    async def fetch_login_state(self) -> PlatformLoginState:
+    async def fetch_login_state(self, strict: bool = False) -> PlatformLoginState:
         """获取当前登录状态"""
         state = PlatformLoginState(platform=self.platform)
         data_dir = self.user_data_dir
@@ -234,7 +234,7 @@ class BilibiliLogin(AbstractLogin):
                 return state
 
             # 验证登录状态
-            is_logged_in = await self._verify_login_status(cookie_str, cookie_dict, browser_context)
+            is_logged_in = await self._verify_login_status(cookie_str, cookie_dict, browser_context, strict=strict)
 
             state.is_logged_in = is_logged_in
             state.cookie_str = cookie_str
@@ -345,12 +345,18 @@ class BilibiliLogin(AbstractLogin):
         return False
 
     async def _verify_login_status(self, cookie_str: str, cookie_dict: Dict[str, str],
-                                 browser_context: BrowserContext) -> bool:
+                                 browser_context: BrowserContext, *, strict: bool = False) -> bool:
         """验证登录状态（增强风控容错）"""
         has_key_cookies = bool(cookie_dict.get("SESSDATA") and cookie_dict.get("DedeUserID"))
 
+        page_for_client = None
         try:
-            # 先尝试API验证
+            # 先尝试API验证（提供 Page，以便在被风控时可回退到浏览器 fetch）
+            try:
+                page_for_client = await browser_context.new_page()
+                await page_for_client.goto("https://www.bilibili.com", wait_until="domcontentloaded", timeout=10000)
+            except Exception:
+                page_for_client = None
             bili_client = BilibiliClient(
                 proxy=None,
                 headers={
@@ -359,7 +365,7 @@ class BilibiliLogin(AbstractLogin):
                     "Origin": "https://www.bilibili.com",
                     "Referer": "https://www.bilibili.com",
                 },
-                playwright_page=None,
+                playwright_page=page_for_client,
                 cookie_dict=cookie_dict,
             )
             api_result = await bili_client.pong()
@@ -369,6 +375,10 @@ class BilibiliLogin(AbstractLogin):
         except Exception as api_exc:
             error_msg = str(api_exc)
             logger.debug(f"[登录管理] Bilibili API 检查失败: {api_exc}")
+
+            if strict:
+                # 严格模式：API 异常即认为未登录，不做任何兜底
+                return False
 
             # ⚠️ 风控错误（412/461/412/风控/banned）→ 保守判断为已登录
             is_risk_control = any(keyword in error_msg for keyword in ["412", "461", "471", "风控", "banned", "risk"])
@@ -427,6 +437,13 @@ class BilibiliLogin(AbstractLogin):
                         await page.close()
                     except Exception:
                         pass
+        finally:
+            # 关闭为 client 创建的临时页面（无论成功或失败）
+            if page_for_client:
+                try:
+                    await page_for_client.close()
+                except Exception:
+                    pass
 
 
 # === 登录服务接口实现 ===
@@ -760,7 +777,7 @@ async def _cleanup_session_resources(session: LoginSession):
             pass
 
 
-async def fetch_login_state(service) -> PlatformLoginState:
+async def fetch_login_state(service, strict: bool = False) -> PlatformLoginState:
     """获取登录状态 - 服务接口"""
     # 临时创建登录对象来检查状态
     user_data_dir = get_user_data_dir()
@@ -799,7 +816,7 @@ async def fetch_login_state(service) -> PlatformLoginState:
         )
         temp_login.playwright = playwright
 
-        return await temp_login.fetch_login_state()
+        return await temp_login.fetch_login_state(strict=strict)
 
     finally:
         if context_page:

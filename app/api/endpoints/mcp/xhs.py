@@ -16,7 +16,7 @@ from app.api.scheme.request.xhs_scheme import (
     XhsSearchRequest,
 )
 from app.config.settings import Platform
-from app.core.mcp_tools import xhs as xhs_tools
+from app.core.mcp import xhs as xhs_tools
 from app.core.login.exceptions import LoginExpiredError
 from app.providers.logger import get_logger
 
@@ -40,11 +40,18 @@ def _server_error(message: str) -> Dict[str, Any]:
     }
 
 
-@xhs_mcp.tool(description="小红书关键词搜索")
-async def search(request):
-    payload = await _safe_json(request)
+@xhs_mcp.tool(
+    name="search",
+    description="小红书关键词搜索",
+    tags={"xiaohongshu", "search"}
+)
+async def search(keywords: str, page_num: int = 1, page_size: int = 20):
     try:
-        req = XhsSearchRequest.model_validate(payload)
+        req = XhsSearchRequest.model_validate({
+            "keywords": keywords,
+            "page_num": page_num,
+            "page_size": page_size
+        })
     except ValidationError as exc:
         return _validation_error(exc)
 
@@ -66,11 +73,18 @@ async def search(request):
         return _server_error(f"小红书搜索失败: {exc}")
 
 
-@xhs_mcp.tool(description="获取小红书笔记详情（必传：node_id, xsec_token；xsec_source 未传默认 pc_search）")
-async def crawler_detail(request):
-    payload = await _safe_json(request)
+@xhs_mcp.tool(
+    name="crawler_detail",
+    description="获取小红书笔记详情（必传：note_id, xsec_token；xsec_source 未传默认 pc_search）",
+    tags={"xiaohongshu", "detail"}
+)
+async def crawler_detail(note_id: str, xsec_token: str, xsec_source: str = "pc_search"):
     try:
-        req = XhsDetailRequest.model_validate(payload)
+        req = XhsDetailRequest.model_validate({
+            "note_id": note_id,
+            "xsec_token": xsec_token,
+            "xsec_source": xsec_source
+        })
     except ValidationError as exc:
         return _validation_error(exc)
 
@@ -92,11 +106,17 @@ async def crawler_detail(request):
         return _server_error(f"小红书详情抓取失败: {exc}")
 
 
-@xhs_mcp.tool(description="获取小红书创作者作品")
-async def crawler_creator(request):
-    payload = await _safe_json(request)
+@xhs_mcp.tool(
+    name="crawler_creator",
+    description="获取小红书创作者作品",
+    tags={"xiaohongshu", "creator"}
+)
+async def crawler_creator(creator_ids: list[str], save_media: bool = False):
     try:
-        req = XhsCreatorRequest.model_validate(payload)
+        req = XhsCreatorRequest.model_validate({
+            "creator_ids": creator_ids,
+            "save_media": save_media
+        })
     except ValidationError as exc:
         return _validation_error(exc)
 
@@ -118,11 +138,18 @@ async def crawler_creator(request):
         return _server_error(f"小红书创作者抓取失败: {exc}")
 
 
-@xhs_mcp.tool(description="小红书笔记评论")
-async def crawler_comments(request):
-    payload = await _safe_json(request)
+@xhs_mcp.tool(
+    name="crawler_comments",
+    description="小红书笔记评论",
+    tags={"xiaohongshu", "comments"}
+)
+async def crawler_comments(note_id: str, xsec_token: str, max_comments: int = 50):
     try:
-        req = XhsCommentsRequest.model_validate(payload)
+        req = XhsCommentsRequest.model_validate({
+            "note_id": note_id,
+            "xsec_token": xsec_token,
+            "max_comments": max_comments
+        })
     except ValidationError as exc:
         return _validation_error(exc)
 

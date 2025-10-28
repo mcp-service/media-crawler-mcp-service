@@ -38,6 +38,7 @@ def create_app() -> tuple[Any, Any]:
         await main_app.import_server(bili_mcp, 'bili')
 
         logger.info(f"✅ MCP tools {await main_app.get_tools()}")
+        logger.info(f"✅ MCP prompts {await main_app.get_prompts()}")
         logger.info(f"✅ MCP custom_route {main_app._get_additional_http_routes()}")
 
     asyncio.run(setup_servers())

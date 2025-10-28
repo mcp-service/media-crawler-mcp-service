@@ -232,25 +232,28 @@ class LoginService:
 
         return record.to_public_dict()
 
-    async def list_sessions(self) -> List[Dict[str, Any]]:
+    async def list_sessions(self, *, force: bool = False) -> List[Dict[str, Any]]:
         """列出所有平台的登录状态"""
         async def _collect(platform: str) -> Dict[str, Any]:
             platform_module = self._get_platform_module(platform)
             logger.debug(f"开始收集 {platform} 平台状态")
             
             try:
-                # 优先从存储中读取状态，避免触发风控检查
-                state = await self._storage.get_platform_state(platform)
-                logger.debug(f"{platform} 从存储读取状态: {state.is_logged_in if state else 'None'}")
-                
-                if not state:
-                    # 只有在没有缓存状态时才刷新（但不强制）
-                    logger.debug(f"{platform} 没有缓存，调用 refresh_platform_state")
-                    state = await self.refresh_platform_state(platform, force=False)
-                    logger.debug(f"{platform} refresh 后状态: {state.is_logged_in}")
+                if not force:
+                    # 优先从存储读取，避免不必要的风控
+                    state = await self._storage.get_platform_state(platform)
+                    logger.debug(f"{platform} 从存储读取状态: {state.is_logged_in if state else 'None'}")
+                    if not state:
+                        logger.debug(f"{platform} 没有缓存，调用 refresh_platform_state(force=False)")
+                        state = await self.refresh_platform_state(platform, force=False)
+                        logger.debug(f"{platform} refresh 后状态: {state.is_logged_in}")
+                    else:
+                        logger.debug(f"{platform} 使用缓存状态，last_checked: {state.last_checked_at}, is_logged_in: {state.is_logged_in}")
                 else:
-                    logger.debug(f"{platform} 使用缓存状态，last_checked: {state.last_checked_at}, is_logged_in: {state.is_logged_in}")
-                    
+                    # 手动刷新：跳过缓存，严格 pong 检查
+                    logger.debug(f"{platform} 手动刷新(force=True) 严格校验，调用 refresh_platform_state")
+                    state = await self.refresh_platform_state(platform, force=True, strict=True)
+            
             except Exception as exc:
                 logger.warning(f"[登录管理] 获取 {platform} 登录状态失败: {exc}")
                 return {
@@ -281,6 +284,42 @@ class LoginService:
         results: List[Dict[str, Any]] = await asyncio.gather(*tasks)
         return results
 
+    async def list_sessions_cached(self) -> List[Dict[str, Any]]:
+        """仅从缓存读取平台状态，不做任何刷新/创建浏览器上下文。
+
+        适用于轻量级的状态面板展示，避免触发风控或拉起浏览器。
+        """
+        results: List[Dict[str, Any]] = []
+        for platform in self.get_supported_platforms():
+            try:
+                state = await self._storage.get_platform_state(platform)
+                if state:
+                    results.append({
+                        "platform": platform,
+                        "platform_name": self.get_platform_display_name(platform),
+                        "is_logged_in": state.is_logged_in,
+                        "last_login": self._format_last_login(state),
+                        "session_path": None,
+                    })
+                else:
+                    results.append({
+                        "platform": platform,
+                        "platform_name": self.get_platform_display_name(platform),
+                        "is_logged_in": False,
+                        "last_login": "从未登录",
+                        "session_path": None,
+                    })
+            except Exception as exc:
+                logger.warning(f"[登录管理] 读取 {platform} 缓存状态失败: {exc}")
+                results.append({
+                    "platform": platform,
+                    "platform_name": self.get_platform_display_name(platform),
+                    "is_logged_in": False,
+                    "last_login": "未知",
+                    "session_path": None,
+                })
+        return results
+
     def _format_last_login(self, state: PlatformLoginState) -> str:
         """格式化最近登录时间"""
         if state.last_success_at:
@@ -288,7 +327,7 @@ class LoginService:
             return strftime("%Y-%m-%d %H:%M:%S", localtime(state.last_success_at))
         return "从未登录"
 
-    async def refresh_platform_state(self, platform: str, force: bool = False) -> PlatformLoginState:
+    async def refresh_platform_state(self, platform: str, force: bool = False, strict: bool = False) -> PlatformLoginState:
         """刷新或获取平台登录状态（带缓存）"""
         try:
             cached_state = await self._storage.get_platform_state(platform)
@@ -310,7 +349,8 @@ class LoginService:
 
         platform_module = self._get_platform_module(platform)
         try:
-            state = await platform_module.fetch_login_state(self)
+            # 严格模式下，平台模块必须进行实时 pong 校验，不允许 Cookie 存在即视为已登录
+            state = await platform_module.fetch_login_state(self, strict=strict)
             state.touch()
 
             if cached_state and state.is_logged_in and not state.last_success_at:

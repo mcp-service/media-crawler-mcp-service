@@ -5,17 +5,20 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any, Callable, Dict, List, Optional, Union
+import time
 
 import httpx
 from playwright.async_api import BrowserContext, Page
-from tenacity import retry, stop_after_attempt, wait_fixed
+from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
 
 from app.providers.logger import get_logger
+from app.core.login.exceptions import LoginExpiredError
 
 from .exception import DataFetchError, IPBlockError
 from .field import SearchNoteType, SearchSortType
 from .help import get_search_id, sign
 from .extractor import XiaoHongShuExtractor
+from .secsign import seccore_signv2_playwright
 
 logger = get_logger()
 
@@ -52,14 +55,49 @@ class XiaoHongShuClient:
         self.cookie_dict = {c["name"]: c["value"] for c in cookies}
 
     async def pong(self) -> bool:
-        """Check login state by calling nav API."""
+        """Check login using signed API call with browser fallback.
+
+        1) Try signed GET /api/sns/web/v1/homefeed (mnsv2/_webmsxyw)
+        2) If signing/API blocked, fallback to page context heuristic
+           (web_session cookie or localStorage a1 present)
+        """
         path = "/api/sns/web/v1/homefeed"
-        headers = await self._prepare_headers(path, None)
-        url = f"{self._domain}{path}"
         try:
+            headers = await self._prepare_headers(path, None)
+            url = f"{self._domain}{path}"
             await self._request("GET", url, headers=headers)
             return True
-        except DataFetchError:
+        except DataFetchError as e:
+            logger.warning(f"[xhs.client] signed homefeed failed: {e}")
+        except Exception as e:
+            logger.warning(f"[xhs.client] signed homefeed error: {e}")
+
+        # Fallback: page context check (less strict but avoids false negatives during risk control)
+        try:
+            cur = ""
+            try:
+                cur = self.page.url or ""
+            except Exception:
+                cur = ""
+            if "xiaohongshu.com" not in cur:
+                try:
+                    await self.page.goto(self._domain, wait_until="domcontentloaded")
+                except Exception:
+                    pass
+            return await self.page.evaluate(
+                """
+                () => {
+                    try {
+                        const hasCookie = (document.cookie || '').includes('web_session=');
+                        const a1 = (window.localStorage && window.localStorage.getItem('a1')) || '';
+                        return Boolean(hasCookie || a1);
+                    } catch (e) {
+                        return false;
+                    }
+                }
+                """
+            )
+        except Exception:
             return False
 
     async def get_note_by_keyword(
@@ -67,6 +105,7 @@ class XiaoHongShuClient:
         *,
         keyword: str,
         page: int,
+        page_size: int,
         sort: SearchSortType,
         note_type: SearchNoteType,
         search_id: Optional[str] = None,
@@ -77,12 +116,18 @@ class XiaoHongShuClient:
         payload = {
             "keyword": keyword,
             "page": page,
-            "page_size": 20,
+            "page_size": int(page_size) if page_size else 20,
             "sort": sort.value,
             "note_type": note_type_code,
             "search_id": search_id or get_search_id(),
         }
-        return await self._post("/api/sns/web/v1/search/notes", payload)
+        # 为搜索接口设置与关键字匹配的 Referer，部分风控策略依赖该来源页
+        from urllib.parse import quote
+        path = "/api/sns/web/v1/search/notes"
+        headers = await self._prepare_headers(path, payload)
+        headers["Referer"] = f"{self._domain}/search_result?keyword={quote(keyword)}"
+        url = f"{self._host}{path}"
+        return await self._request("POST", url, headers=headers, json=payload)
 
     def _normalize_note_type(self, note_type: Union[SearchNoteType, str, int]) -> int:
         """Convert note_type to API expected integer codes.
@@ -338,16 +383,52 @@ class XiaoHongShuClient:
         return await self._request("POST", url, headers=headers, json=data)
 
     async def _prepare_headers(self, url: str, data: Optional[Dict]) -> Dict[str, str]:
-        encrypt_params = await self.page.evaluate(
-            "([targetUrl, body]) => window._webmsxyw(targetUrl, body)", [url, data]
-        )
+        # 确保已加载站点脚本（提供 window.mnsv2 或 _webmsxyw）
+        try:
+            current_url = self.page.url or ""
+        except Exception:
+            current_url = ""
+        if self._domain not in current_url:
+            try:
+                await self.page.goto(self._domain, wait_until="domcontentloaded")
+            except Exception:
+                # 继续尝试签名，不强制中断
+                pass
+
+        # 优先 seccore v2（mnsv2），不可用时回退 _webmsxyw；都不可用则报错
+        x_t = str(int(time.time()))
         local_storage = await self.page.evaluate("() => window.localStorage")
+        x_s: Optional[str] = None
+
+        # 检查 mnsv2 是否可用
+        try:
+            has_mnsv2 = await self.page.evaluate("() => typeof window.mnsv2 === 'function'")
+        except Exception:
+            has_mnsv2 = False
+
+        if has_mnsv2:
+            x_s = await seccore_signv2_playwright(self.page, url, data)
+        else:
+            # 回退老方案 _webmsxyw
+            try:
+                has_legacy = await self.page.evaluate("() => typeof window._webmsxyw === 'function'")
+            except Exception:
+                has_legacy = False
+            if has_legacy:
+                encrypt_params = await self.page.evaluate(
+                    "([targetUrl, body]) => window._webmsxyw(targetUrl, body)", [url, data]
+                )
+                x_s = encrypt_params.get("X-s", "")
+                x_t = str(encrypt_params.get("X-t", x_t))
+
+        if not x_s:
+            raise DataFetchError("xhs seccore not ready: missing mnsv2/_webmsxyw")
 
         sign_result = sign(
             a1=self.cookie_dict.get("a1", ""),
             b1=local_storage.get("b1", ""),
-            x_s=encrypt_params.get("X-s", ""),
-            x_t=str(encrypt_params.get("X-t", "")),
+            x_s=x_s,
+            x_t=x_t,
         )
 
         headers = dict(self.base_headers)
@@ -361,7 +442,7 @@ class XiaoHongShuClient:
         )
         return headers
 
-    @retry(stop=stop_after_attempt(3), wait=wait_fixed(1))
+    @retry(stop=stop_after_attempt(3), wait=wait_fixed(1), retry=retry_if_exception_type((DataFetchError, IPBlockError)))
     async def _request(self, method: str, url: str, **kwargs) -> Union[str, Dict]:
         return_response = kwargs.pop("return_response", False)
         async with httpx.AsyncClient(proxy=self.proxy) as client:
@@ -383,10 +464,16 @@ class XiaoHongShuClient:
         if data.get("success"):
             return data.get("data", data.get("success"))
 
-        if data.get("code") == self._ip_error_code:
+        # 业务失败增强日志，便于定位（200 但失败通常为签名/风控/登录）
+        code = data.get("code")
+        msg = data.get("msg") or data.get("message") or "unknown error"
+        logger.error(f"[xhs.client] API error url={url} code={code} msg={msg}")
+        if code == -104:
+            # 账号无权限或登录失效：不重试，直接抛出登录过期异常供上层转换为 401
+            raise LoginExpiredError(msg or "需要登录或账号权限不足")
+        if code == self._ip_error_code:
             raise IPBlockError("网络连接异常，请检查网络设置或稍后再试")
-
-        raise DataFetchError(data.get("msg", "unknown error"))
+        raise DataFetchError(msg)
 
     async def _request_once(self, method: str, url: str, **kwargs) -> Union[str, Dict]:
         """Single-attempt request without tenacity retry, used for endpoints

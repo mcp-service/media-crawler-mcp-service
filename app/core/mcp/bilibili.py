@@ -19,25 +19,91 @@ from app.api.scheme.response import (
 )
 
 
-def _process_search_result(raw_result: dict) -> BilibiliSearchResult:
-    """处理搜索结果，转换为简化模型"""
-    if not isinstance(raw_result, dict):
-        return BilibiliSearchResult()
-    
-    videos = []
-    if "videos" in raw_result and isinstance(raw_result["videos"], list):
-        for video_data in raw_result["videos"]:
-            try:
-                simple_video = BilibiliVideoSimple.from_full_video(video_data)
-                videos.append(simple_video)
-            except Exception as e:
-                # 如果某个视频数据有问题，跳过但不影响其他视频
-                continue
-    
+def _process_search_fast_result(raw_result: dict) -> BilibiliSearchResult:
+    """处理 Fast 搜索结果（预期返回包含 videos 列表）。不做兜底。"""
+    videos: list[BilibiliVideoSimple] = []
+    for item in raw_result.get("videos", []):
+        videos.append(BilibiliVideoSimple.from_full_video(item))
     return BilibiliSearchResult(
         videos=videos,
-        total_count=raw_result.get("total_count"),
+        total_count=raw_result.get("total_count", len(videos)),
         keywords=raw_result.get("keywords", ""),
+        crawl_info=raw_result.get("crawl_info", {}),
+    )
+
+
+def _process_search_api_result(raw_result: dict) -> BilibiliSearchResult:
+    """处理直出 API 搜索结果（预期返回包含 result 列表）。不做兜底。"""
+    videos: list[BilibiliVideoSimple] = []
+    for it in raw_result.get("result", []):
+        aid = str(it.get("aid", it.get("id", "")))
+        bvid = it.get("bvid", "")
+        url = f"https://www.bilibili.com/video/{bvid}" if bvid else f"https://www.bilibili.com/video/av{aid}"
+        cover = it.get("pic", "")
+        if isinstance(cover, str) and cover.startswith("//"):
+            cover = "https:" + cover
+        mapped = {
+            "video_id": aid,
+            "title": it.get("title", ""),
+            "desc": it.get("description", ""),
+            "create_time": it.get("pubdate"),
+            "user_id": str(it.get("mid", "")),
+            "nickname": it.get("author", ""),
+            "video_play_count": str(it.get("play", 0)),
+            "liked_count": str(it.get("like", 0)),
+            "video_comment": str(it.get("review", it.get("video_review", 0))),
+            "video_url": url,
+            "video_cover_url": cover,
+            "source_keyword": raw_result.get("keywords", ""),
+        }
+        videos.append(BilibiliVideoSimple.from_full_video(mapped))
+    return BilibiliSearchResult(
+        videos=videos,
+        total_count=raw_result.get("numResults", len(videos)),
+        keywords=raw_result.get("keywords", ""),
+        crawl_info=raw_result.get("crawl_info", {}),
+    )
+
+
+def _process_search_detail_map_result(raw_result: dict) -> BilibiliSearchResult:
+    """处理普通/时间范围搜索结果（预期返回 {keyword: [detail(View/Card)...]}）。不做兜底。"""
+    flattened: list[dict] = []
+    keywords_collected: list[str] = []
+    for k, v in raw_result.items():
+        if not isinstance(v, list):
+            continue
+        keywords_collected.append(str(k))
+        for detail in v:
+            view = (detail or {}).get("View", {})
+            stat = view.get("stat", {})
+            owner = view.get("owner", {})
+            aid = str(view.get("aid", ""))
+            bvid = view.get("bvid", "")
+            url = f"https://www.bilibili.com/video/{bvid}" if bvid else f"https://www.bilibili.com/video/av{aid}"
+            cover = view.get("pic", "")
+            if isinstance(cover, str) and cover.startswith("//"):
+                cover = "https:" + cover
+            mapped = {
+                "video_id": aid,
+                "title": view.get("title", ""),
+                "desc": view.get("desc", ""),
+                "create_time": view.get("pubdate"),
+                "user_id": str(owner.get("mid", "")),
+                "nickname": owner.get("name", ""),
+                "video_play_count": str(stat.get("view", 0)),
+                "liked_count": str(stat.get("like", 0)),
+                "video_comment": str(stat.get("reply", 0)),
+                "video_url": url,
+                "video_cover_url": cover,
+                "source_keyword": str(k),
+            }
+            flattened.append(mapped)
+
+    videos = [BilibiliVideoSimple.from_full_video(item) for item in flattened]
+    return BilibiliSearchResult(
+        videos=videos,
+        total_count=len(videos),
+        keywords=",".join([kw for kw in keywords_collected if kw]),
         crawl_info=raw_result.get("crawl_info", {}),
     )
 
@@ -168,8 +234,8 @@ async def bili_search(
         enable_save_media=save_media,
     )
     
-    # 转换为简化的结构化数据
-    structured_result = _process_search_result(raw_result)
+    # 转换为简化的结构化数据（search 固定按 Fast 模式处理，不做兜底）
+    structured_result = _process_search_fast_result(raw_result)
     return structured_result.model_dump_json(ensure_ascii=False, indent=2)
 
 
@@ -201,8 +267,8 @@ async def bili_search_time_range(
         enable_save_media=save_media,
     )
     
-    # 转换为简化的结构化数据
-    structured_result = _process_search_result(raw_result)
+    # 转换为简化的结构化数据（时间范围工具固定按 detail map 处理，不做兜底）
+    structured_result = _process_search_detail_map_result(raw_result)
     return structured_result.model_dump_json(ensure_ascii=False, indent=2)
 
 

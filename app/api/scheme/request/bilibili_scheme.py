@@ -36,7 +36,6 @@ class BiliSearchRequest(_BaseCrawlerRequest):
     keywords: str = Field(..., description="搜索关键词，多个关键词用逗号分隔")
     page_size: int = Field(default=1, ge=1, description="单页作品数量")
     page_num: int = Field(default=1, ge=1, description="页码（从1开始，不循环）")
-    limit: Optional[int] = Field(default=None, ge=1, description="返回作品上限")
 
     @model_validator(mode="after")
     def normalize(self) -> "BiliSearchRequest":
@@ -44,9 +43,6 @@ class BiliSearchRequest(_BaseCrawlerRequest):
         if not cleaned:
             raise ValueError("keywords 不能为空")
         self.keywords = cleaned
-        if self.limit is None:
-            # 未提供 limit 时，默认仅返回当前页的条数
-            self.limit = self.page_size
         return self
 
     def to_service_params(self) -> Dict[str, Any]:
@@ -54,7 +50,6 @@ class BiliSearchRequest(_BaseCrawlerRequest):
             "keywords": self.keywords,
             "page_size": self.page_size,
             "page_num": self.page_num,
-            "limit": self.limit,
         }
         params.update(self._collect_common_params())
         return params

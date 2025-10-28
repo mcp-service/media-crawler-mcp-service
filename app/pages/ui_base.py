@@ -239,6 +239,13 @@ body {{
   transition: border-color 0.2s, box-shadow 0.2s;
 }}
 
+/* Do not force full width for checkbox/radio */
+.mc-form-group input[type='checkbox'],
+.mc-form-group input[type='radio'] {{
+  width: auto;
+  padding: 0;
+}}
+
 .mc-form-group input:focus, .mc-form-group select:focus, .mc-form-group textarea:focus {{
   outline: none;
   border-color: var(--accent-color, #667eea);
@@ -250,6 +257,21 @@ body {{
   margin-top: 0.25rem;
   color: var(--text-muted, #6b7280);
   font-size: 0.875rem;
+}}
+
+/* Simple spinner for loading states */
+.mc-spinner {{
+  width: 28px;
+  height: 28px;
+  border: 3px solid #e5e7eb;
+  border-top-color: #6366f1;
+  border-radius: 50%;
+  animation: mc-spin 1s linear infinite;
+  display: inline-block;
+}}
+
+@keyframes mc-spin {{
+  to {{ transform: rotate(360deg); }}
 }}
 
 /* Code styling */
@@ -317,11 +339,82 @@ code {{
     font-size: 0.875rem;
   }}
 }}
+
+/* Inspector minimal styles for pages UI */
+.inspector-group {{
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+  margin-bottom: 1rem;
+}}
+
+.inspector-group__header {{
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}}
+
+.inspector-group__tools {{
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.5rem;
+}}
+
+.inspector-tool {{
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 0.5rem;
+  background: var(--item-bg, #f8fafc);
+  text-align: left;
+  cursor: pointer;
+}}
+
+.inspector-tool .tool-name {{
+  font-weight: 600;
+  color: var(--text-primary, #1a202c);
+}}
+
+.inspector-tool .tool-meta {{
+  font-size: 12px;
+  color: var(--text-muted, #6b7280);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}}
+
+.inspector-tool.is-active {{
+  outline: 2px solid var(--accent-color, #667eea);
+  background: #eef2ff;
+}}
+
+.inspector-group__routes ul {{
+  margin: 0.5rem 0 0;
+  padding-left: 1rem;
+}}
+
+.inspector-group__routes li {{
+  font-size: 12px;
+  color: var(--text-muted, #6b7280);
+}}
+
+.inspector-group__routes code {{
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}}
 """
 
 
 def render_top_nav(current_path: str = "/dashboard") -> str:
     """渲染顶部导航栏"""
+    # FastMCP 应用内部路径不需要 /mcp 前缀
     nav_items = [
         ("状态监控", "/dashboard"),
         ("登录管理", "/login"),
@@ -331,7 +424,10 @@ def render_top_nav(current_path: str = "/dashboard") -> str:
 
     menu_html = []
     for title, url in nav_items:
-        active_class = " is-active" if current_path == url or current_path.startswith(url) else ""
+        # 直接匹配路径
+        active_class = " is-active" if (
+            current_path == url or current_path.startswith(url)
+        ) else ""
         menu_html.append(f'<a href="{url}" class="top-nav__item{active_class}">{title}</a>')
 
     return f"""
