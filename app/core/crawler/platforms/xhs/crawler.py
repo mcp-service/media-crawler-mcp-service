@@ -30,23 +30,22 @@ logger = get_logger()
 browser_manager = get_browser_manager()
 
 
-
 def _parse_note_url(url: str) -> SimpleNamespace:
     """简单解析小红书笔记URL，提取note_id等信息"""
     import re
     from urllib.parse import urlparse, parse_qs
-    
+
     # 提取note_id
     note_id_match = re.search(r'/explore/([a-f0-9]+)', url)
     note_id = note_id_match.group(1) if note_id_match else ""
-    
+
     # 解析查询参数
     parsed = urlparse(url)
     query_params = parse_qs(parsed.query)
-    
+
     xsec_token = query_params.get('xsec_token', [''])[0]
     xsec_source = query_params.get('xsec_source', [''])[0]
-    
+
     return SimpleNamespace(
         note_id=note_id,
         xsec_token=xsec_token,
@@ -58,7 +57,7 @@ def _parse_creator_url(url: str) -> SimpleNamespace:
     """简单解析小红书用户URL，提取user_id等信息"""
     import re
     from urllib.parse import urlparse, parse_qs
-    
+
     # 如果是纯ID字符串，直接返回
     if not url.startswith('http'):
         return SimpleNamespace(
@@ -66,18 +65,18 @@ def _parse_creator_url(url: str) -> SimpleNamespace:
             xsec_token="",
             xsec_source=""
         )
-    
+
     # 提取user_id
     user_id_match = re.search(r'/user/profile/([a-f0-9]+)', url)
     user_id = user_id_match.group(1) if user_id_match else ""
-    
+
     # 解析查询参数
     parsed = urlparse(url)
     query_params = parse_qs(parsed.query)
-    
+
     xsec_token = query_params.get('xsec_token', [''])[0]
     xsec_source = query_params.get('xsec_source', [''])[0]
-    
+
     return SimpleNamespace(
         user_id=user_id,
         xsec_token=xsec_token,
@@ -121,7 +120,7 @@ class XiaoHongShuCrawler:
         self.platform = Platform.XIAOHONGSHU
         self.context_page: Optional[Page] = None
         self.browser_context: Optional[BrowserContext] = None
-        
+
         self.extra = dict(extra or {})
         self.platform_code = Platform.XIAOHONGSHU.value
 
@@ -149,6 +148,7 @@ class XiaoHongShuCrawler:
             login_type=resolved_login_type,
             cookie=login_cookie,
             phone=login_phone,
+            save_login_state=self.extra.get("save_login_state", False),
         )
 
         # 基础配置
@@ -169,7 +169,7 @@ class XiaoHongShuCrawler:
         """通过关键词搜索笔记"""
         # 确保浏览器和客户端已准备就绪
         await self._ensure_browser_and_client()
-        
+
         keyword_list = [kw.strip() for kw in keywords.split(",") if kw.strip()]
         if not keyword_list:
             raise ValueError("keywords 不能为空")
@@ -184,23 +184,23 @@ class XiaoHongShuCrawler:
                     keyword=keyword,
                     max_notes=limit - len(collected)
                 )
-                
+
                 for result in search_results:
                     if len(collected) >= limit:
                         break
-                    
+
                     # 可选的存储功能
                     if enable_save:
                         try:
                             await xhs_store.update_xhs_note(result)
                         except Exception as store_exc:
                             logger.error(f"[xhs.search] Store note error: {store_exc}")
-                    
+
                     collected.append(result)
 
                 if crawl_interval > 0:
                     await asyncio.sleep(crawl_interval)
-                    
+
             except LoginExpiredError as e:
                 logger.error(f"[xhs.search] Login required or permission denied: {e}")
                 raise
@@ -219,14 +219,23 @@ class XiaoHongShuCrawler:
             "crawl_info": self._build_crawl_info("search"),
         }
 
-    async def get_detail(self) -> Dict[str, Any]:
-        targets = self.crawl_opts.note_ids or self.extra.get("note_ids") or []
-        if not targets:
+    async def get_detail(
+        self,
+        *,
+        note_ids: List[Union[str, Dict[str, Any]]],
+        max_concurrency: int = 5,
+        enable_get_comments: bool = False,
+        max_comments_per_note: int = 0,
+        enable_save_media: bool = False,
+        **kwargs: Any
+    ) -> Dict[str, Any]:
+        """获取笔记详情"""
+        if not note_ids:
             raise ValueError("note_ids 不能为空")
 
-        semaphore = Semaphore(self.crawl_opts.max_concurrency)
+        semaphore = Semaphore(max_concurrency)
         details: List[Dict[str, Any]] = []
-        for item in targets:
+        for item in note_ids:
             note_id = ""
             xsec_token = ""
             xsec_source = ""
@@ -250,12 +259,12 @@ class XiaoHongShuCrawler:
             if not note_detail:
                 continue
             await xhs_store.update_xhs_note(note_detail)
-            if self.store_opts.enable_save_media:
+            if enable_save_media:
                 await xhs_store.update_xhs_note_media(note_detail)
             details.append(note_detail)
 
-        if self.crawl_opts.enable_get_comments and self.crawl_opts.max_comments_per_note > 0:
-            await self._batch_fetch_comments(details, self.crawl_opts.max_comments_per_note)
+        if enable_get_comments and max_comments_per_note > 0:
+            await self._batch_fetch_comments(details, max_comments_per_note)
 
         return {
             "notes": details,
@@ -263,13 +272,26 @@ class XiaoHongShuCrawler:
             "crawl_info": self._build_crawl_info(),
         }
 
-    async def get_creator(self) -> Dict[str, Any]:
-        creator_ids = self.crawl_opts.creator_ids or []
+    async def get_creator(
+        self,
+        *,
+        creator_ids: List[str],
+        max_notes: Optional[int] = None,
+        enable_get_comments: bool = False,
+        max_comments_per_note: int = 0,
+        enable_save_media: bool = False,
+        crawl_interval: float = 1.0,
+        **kwargs: Any
+    ) -> Dict[str, Any]:
+        """获取创作者信息"""
         if not creator_ids:
             raise ValueError("creator_ids 不能为空")
 
+        # 使用全局配置作为默认值
+        crawl_defaults = global_settings.crawl
+        resolved_max_notes = max_notes if max_notes is not None else crawl_defaults.max_notes_count
+
         collected: List[Dict[str, Any]] = []
-        crawl_interval = self.crawl_opts.crawl_interval
         for raw_id in creator_ids:
             info = _parse_creator_url(raw_id)
             creator_detail = await self.client.get_creator_info(
@@ -284,20 +306,21 @@ class XiaoHongShuCrawler:
                 info.user_id,
                 crawl_interval=crawl_interval,
                 callback=self._creator_notes_callback,
-                max_notes=self.crawl_opts.max_notes_count,
+                max_notes=resolved_max_notes,
             )
             # 与 MediaCrawler 对齐：拉取每条作品详情，必要时再抓评论
-            details = await self._gather_details_from_items(notes)
+            details = await self._gather_details_from_items(notes, max_concurrency=5)
             for detail in details:
                 if not detail:
                     continue
                 await xhs_store.update_xhs_note(detail)
-                if self.store_opts.enable_save_media:
+                if enable_save_media:
                     await xhs_store.update_xhs_note_media(detail)
                 collected.append(detail)
 
-            if self.crawl_opts.enable_get_comments and self.crawl_opts.max_comments_per_note > 0 and collected:
-                await self._batch_fetch_comments([d for d in details if d], self.crawl_opts.max_comments_per_note)
+            if enable_get_comments and max_comments_per_note > 0 and collected:
+                await self._batch_fetch_comments([d for d in details if d], max_comments_per_note, crawl_interval)
+            await asyncio.sleep(crawl_interval)
 
         return {
             "notes": collected,
@@ -305,15 +328,23 @@ class XiaoHongShuCrawler:
             "crawl_info": self._build_crawl_info(),
         }
 
-    async def fetch_comments(self) -> Dict[str, Any]:
-        targets = self.crawl_opts.note_ids or self.extra.get("note_ids") or []
-        if not targets:
-            raise ValueError("note_ids 不能为空")
+    async def fetch_comments(
+        self,
+        *,
+        note_items: List[Dict[str, Any]],
+        max_concurrency: int = 5,
+        crawl_interval: float = 1.0,
+        max_comments_per_note: int = 50,
+        **kwargs: Any
+    ) -> Dict[str, Any]:
+        """获取评论"""
+        if not note_items:
+            raise ValueError("note_items 不能为空")
 
-        semaphore = Semaphore(self.crawl_opts.max_concurrency)
+        semaphore = Semaphore(max_concurrency)
         comments: Dict[str, List[Dict[str, Any]]] = {}
 
-        for item in targets:
+        for item in note_items:
             # 只支持字典格式
             if not isinstance(item, dict):
                 logger.warning(f"[xhs.comments] 不支持的格式，跳过: {type(item)}")
@@ -340,9 +371,9 @@ class XiaoHongShuCrawler:
                 await self.client.get_note_all_comments(
                     note_id=note_id,
                     xsec_token=xsec_token,
-                    crawl_interval=self.crawl_opts.crawl_interval,
+                    crawl_interval=crawl_interval,
                     callback=_collector,
-                    max_count=self.crawl_opts.max_comments_per_note or 50,
+                    max_count=max_comments_per_note,
                 )
             except Exception as exc:
                 logger.error(f"[xhs.comments] 获取评论失败 note_id={note_id}: {exc}")
@@ -353,6 +384,34 @@ class XiaoHongShuCrawler:
             "total_count": sum(len(v) for v in comments.values()),
             "crawl_info": self._build_crawl_info(),
         }
+
+    async def search_with_time_range(
+        self,
+        *,
+        keywords: str,
+        start_day: str,
+        end_day: str,
+        max_notes: int = 20,
+        page_size: int = 20,
+        crawl_interval: float = 1.0,
+        enable_save: bool = False,
+        **kwargs: Any
+    ) -> Dict[str, Any]:
+        """按时间范围搜索笔记"""
+        # 设置时间范围参数
+        self.extra.update({
+            "start_day": start_day,
+            "end_day": end_day,
+        })
+
+        # 调用普通搜索方法
+        return await self.search_by_keywords(
+            keywords=keywords,
+            max_notes=max_notes,
+            page_size=page_size,
+            crawl_interval=crawl_interval,
+            enable_save=enable_save,
+        )
 
     async def launch_browser(
         self,
@@ -370,8 +429,8 @@ class XiaoHongShuCrawler:
                 user_agent=user_agent,
                 accept_downloads=True,
                 viewport={
-                    "width": self.browser_opts.viewport_width,
-                    "height": self.browser_opts.viewport_height,
+                    "width": self.browser.viewport_width,
+                    "height": self.browser.viewport_height,
                 },
             )
         else:
@@ -379,8 +438,8 @@ class XiaoHongShuCrawler:
             browser_context = await browser.new_context(
                 user_agent=user_agent,
                 viewport={
-                    "width": self.browser_opts.viewport_width,
-                    "height": self.browser_opts.viewport_height,
+                    "width": self.browser.viewport_width,
+                    "height": self.browser.viewport_height,
                 },
             )
 
@@ -460,14 +519,14 @@ class XiaoHongShuCrawler:
             playwright_page=self.context_page,
             cookie_dict=cookie_dict,
             headers=headers,
-            proxy=self.browser_opts.proxy,
+            proxy=self.browser.proxy,
             timeout=60,
         )
         await client.update_cookies(browser_context)
         return client
 
-    async def _gather_details_from_items(self, items: Iterable[Dict[str, Any]]) -> List[Optional[Dict]]:
-        semaphore = Semaphore(self.crawl_opts.max_concurrency)
+    async def _gather_details_from_items(self, items: Iterable[Dict[str, Any]], max_concurrency: int = 5) -> List[Optional[Dict]]:
+        semaphore = Semaphore(max_concurrency)
         tasks = []
         for item in items:
             note_info = self._extract_note_info_from_search_item(item)
@@ -546,7 +605,7 @@ class XiaoHongShuCrawler:
                 detail.pop("xsecSource", None)
             return detail
 
-    async def _batch_fetch_comments(self, details: List[Dict[str, Any]], max_comments: int) -> None:
+    async def _batch_fetch_comments(self, details: List[Dict[str, Any]], max_comments: int, crawl_interval: float = 1.0) -> None:
         for detail in details:
             note_id = detail.get("note_id")
             if not note_id:
@@ -554,7 +613,7 @@ class XiaoHongShuCrawler:
             await self.client.get_note_all_comments(
                 note_id=note_id,
                 xsec_token=detail.get("xsec_token", ""),
-                crawl_interval=self.crawl_opts.crawl_interval,
+                crawl_interval=crawl_interval,
                 callback=xhs_store.batch_update_xhs_note_comments,
                 max_count=max_comments,
             )
@@ -593,321 +652,3 @@ class XiaoHongShuCrawler:
             "crawler_type": crawler_type,
             "timestamp": time_util.get_current_timestamp(),
         }
-
-
-async def _ensure_login_cookie() -> str:
-    cookie = await login_service.get_cookie(Platform.XIAOHONGSHU.value)
-    if not cookie:
-        raise LoginExpiredError("登录过期，Cookie失效")
-    return cookie
-
-
-async def search(
-    *,
-    keywords: str,
-    page_size: int = 20,
-    page_num: int = 1,
-    limit: Optional[int] = None,
-    headless: Optional[bool] = None,
-    enable_save_media: Optional[bool] = None,
-    **kwargs: Any,
-) -> Dict[str, Any]:
-    logger.info(f"[xhs.crawler.search] keywords={keywords}")
-    extra = dict(kwargs)
-    login_cookie = extra.pop("login_cookie", None)
-    login_phone = extra.pop("login_phone", None)
-    login_type_hint = extra.pop("login_type", None)
-
-    if not login_cookie:
-        login_cookie = await _ensure_login_cookie()
-
-    crawler = XiaoHongShuCrawler(
-        login_cookie=login_cookie,
-        login_phone=login_phone,
-        login_type=login_type_hint,
-        headless=headless,
-        enable_save_media=enable_save_media,
-        extra=extra,
-    )
-    
-    try:
-        total_limit = limit if limit is not None else page_size
-        enable_save = extra.get("enable_save", bool(enable_save_media))
-        return await crawler.search_by_keywords(
-            keywords=keywords,
-            max_notes=total_limit,
-            page_size=page_size,
-            crawl_interval=float(extra.get("crawl_interval", 1.0)),
-            enable_save=enable_save,
-        )
-    finally:
-        await crawler.close()
-
-
-async def search_with_time_range(
-    *,
-    keywords: str,
-    start_day: str,
-    end_day: str,
-    limit: int = 20,
-    headless: Optional[bool] = None,
-    enable_save_media: Optional[bool] = None,
-    **kwargs: Any,
-) -> Dict[str, Any]:
-    extra = dict(kwargs)
-    extra.update({
-        "start_day": start_day,
-        "end_day": end_day,
-    })
-    return await search(
-        keywords=keywords,
-        limit=limit,
-        headless=headless,
-        enable_save_media=enable_save_media,
-        **extra,
-    )
-
-
-async def get_detail(
-    *,
-    note_id: str,
-    xsec_token: str,
-    xsec_source: Optional[str] = "",
-    headless: Optional[bool] = None,
-    enable_save_media: Optional[bool] = None,
-    **kwargs: Any,
-) -> Dict[str, Any]:
-    note_info = {
-        "note_id": note_id,
-        "xsec_token": xsec_token or "",
-        "xsec_source": xsec_source or "",
-    }
-    note_items = [note_info]
-
-    extra = dict(kwargs)
-    login_cookie = extra.pop("login_cookie", None)
-    login_phone = extra.pop("login_phone", None)
-    login_type_hint = extra.pop("login_type", None)
-
-    if not login_cookie:
-        login_cookie = await _ensure_login_cookie()
-
-    extra.update({
-        "no_auto_login": True,
-        "note_ids": note_items,
-    })
-
-    return await _run_xhs_crawler(
-        crawler_type=CrawlerType.DETAIL,
-        note_items=note_items,
-        headless=headless,
-        enable_comments=False,
-        max_notes=1,
-        max_comments=0,
-        enable_save_media=enable_save_media,
-        extra=extra,
-        login_cookie=login_cookie,
-        login_phone=login_phone,
-        login_type=login_type_hint,
-    )
-
-
-async def get_creator(
-    *,
-    creator_ids: List[str],
-    max_notes: Optional[int] = None,
-    headless: Optional[bool] = None,
-    enable_save_media: Optional[bool] = None,
-    **kwargs: Any,
-) -> Dict[str, Any]:
-    extra = dict(kwargs)
-    login_cookie = extra.pop("login_cookie", None)
-    login_phone = extra.pop("login_phone", None)
-    login_type_hint = extra.pop("login_type", None)
-
-    if not login_cookie:
-        login_cookie = await _ensure_login_cookie()
-
-    extra.update({
-        "no_auto_login": True,
-    })
-
-    resolved_max_notes = (
-        max_notes
-        if max_notes is not None
-        else int(extra.pop("max_notes", global_settings.crawl.max_notes_count))
-    )
-
-    return await _run_xhs_crawler(
-        crawler_type=CrawlerType.CREATOR,
-        creator_ids=creator_ids,
-        headless=headless,
-        enable_comments=False,
-        max_notes=resolved_max_notes,
-        max_comments=0,
-        enable_save_media=enable_save_media,
-        extra=extra,
-        login_cookie=login_cookie,
-        login_phone=login_phone,
-        login_type=login_type_hint,
-    )
-
-
-async def fetch_comments(
-    *,
-    note_id: str,
-    xsec_token: str,
-    xsec_source: str = "",
-    max_comments: int = 50,
-    headless: Optional[bool] = None,
-    **kwargs: Any,
-) -> Dict[str, Any]:
-    note_info = {
-        "note_id": note_id,
-        "xsec_token": xsec_token,
-        "xsec_source": xsec_source or "",
-    }
-    note_items = [note_info]
-
-    extra = dict(kwargs)
-    login_cookie = extra.pop("login_cookie", None)
-    login_phone = extra.pop("login_phone", None)
-    login_type_hint = extra.pop("login_type", None)
-
-    if not login_cookie:
-        login_cookie = await _ensure_login_cookie()
-
-    extra.update({
-        "no_auto_login": True,
-        "note_ids": note_items,
-    })
-
-    return await _run_xhs_crawler(
-        crawler_type=CrawlerType.COMMENTS,
-        note_items=note_items,
-        headless=headless,
-        enable_comments=True,
-        max_notes=1,
-        max_comments=max_comments,
-        enable_save_media=False,
-        extra=extra,
-        login_cookie=login_cookie,
-        login_phone=login_phone,
-        login_type=login_type_hint,
-    )
-
-
-async def publish_image(
-    *,
-    title: str,
-    content: str,
-    images: List[str],
-    tags: Optional[List[str]] = None,
-    headless: Optional[bool] = None,
-    **kwargs: Any,
-) -> Dict[str, Any]:
-    tags = tags or []
-    extra = dict(kwargs)
-
-    login_cookie = extra.pop("login_cookie", None)
-    if not login_cookie:
-        login_cookie = await _ensure_login_cookie()
-
-    browser_cfg = global_settings.browser
-    viewport = {"width": browser_cfg.viewport_width, "height": browser_cfg.viewport_height}
-
-    context = None
-    page = None
-    playwright = None
-    try:
-        context, page, playwright = await browser_manager.acquire_context(
-            platform=Platform.XIAOHONGSHU.value,
-            user_data_dir=xhs_user_data_dir(),
-            headless=browser_cfg.headless if headless is None else headless,
-            viewport=viewport,
-            user_agent=browser_cfg.user_agent or crawler_util.get_user_agent(),
-        )
-    except Exception:
-        context, playwright = await browser_manager.get_context_for_check(
-            platform=Platform.XIAOHONGSHU.value,
-            user_data_dir=xhs_user_data_dir(),
-            headless=browser_cfg.headless if headless is None else headless,
-            viewport=viewport,
-            user_agent=browser_cfg.user_agent or crawler_util.get_user_agent(),
-        )
-        page = await context.new_page()
-
-    try:
-        publisher = XhsPublisher(page)
-        result = await publisher.publish_image_post(
-            title=title,
-            content=content,
-            images=images,
-            tags=tags,
-        )
-        return result
-    finally:
-        try:
-            if page:
-                await page.close()
-        except Exception:
-            pass
-        await browser_manager.release_context(Platform.XIAOHONGSHU.value, keep_alive=True)
-
-
-async def publish_video(
-    *,
-    title: str,
-    content: str,
-    video: str,
-    tags: Optional[List[str]] = None,
-    headless: Optional[bool] = None,
-    **kwargs: Any,
-) -> Dict[str, Any]:
-    tags = tags or []
-    extra = dict(kwargs)
-
-    login_cookie = extra.pop("login_cookie", None)
-    if not login_cookie:
-        login_cookie = await _ensure_login_cookie()
-
-    browser_cfg = global_settings.browser
-    viewport = {"width": browser_cfg.viewport_width, "height": browser_cfg.viewport_height}
-
-    context = None
-    page = None
-    playwright = None
-    try:
-        context, page, playwright = await browser_manager.acquire_context(
-            platform=Platform.XIAOHONGSHU.value,
-            user_data_dir=xhs_user_data_dir(),
-            headless=browser_cfg.headless if headless is None else headless,
-            viewport=viewport,
-            user_agent=browser_cfg.user_agent or crawler_util.get_user_agent(),
-        )
-    except Exception:
-        context, playwright = await browser_manager.get_context_for_check(
-            platform=Platform.XIAOHONGSHU.value,
-            user_data_dir=xhs_user_data_dir(),
-            headless=browser_cfg.headless if headless is None else headless,
-            viewport=viewport,
-            user_agent=browser_cfg.user_agent or crawler_util.get_user_agent(),
-        )
-        page = await context.new_page()
-
-    try:
-        publisher = XhsPublisher(page)
-        result = await publisher.publish_video_post(
-            title=title,
-            content=content,
-            video=video,
-            tags=tags,
-        )
-        return result
-    finally:
-        try:
-            if page:
-                await page.close()
-        except Exception:
-            pass
-        await browser_manager.release_context(Platform.XIAOHONGSHU.value, keep_alive=True)

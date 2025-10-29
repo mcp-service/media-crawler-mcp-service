@@ -57,15 +57,7 @@ class BilibiliCrawler:
         self.platform_code = Platform.BILIBILI.value
 
         browser_defaults = global_settings.browser
-        crawl_defaults = global_settings.crawl
-        store_defaults = global_settings.store
-
         resolved_headless = headless if headless is not None else browser_defaults.headless
-        resolved_enable_save_media = (
-            bool(enable_save_media)
-            if enable_save_media is not None
-            else bool(getattr(store_defaults, "enable_save_media", False))
-        )
 
         self.browser = SimpleNamespace(
             headless=resolved_headless,
@@ -192,11 +184,13 @@ class BilibiliCrawler:
 
     async def cleanup(self) -> None:
         """
-        清理浏览器资源
+        清理浏览器资源 - 现在不再真正关闭浏览器上下文，只清理引用
+        浏览器实例由BrowserManager统一管理，实现复用
         """
         try:
-            await browser_manager.release_context(self.platform_code, keep_alive=True)
-            logger.info("[BilibiliCrawler.cleanup] Browser context released")
+            # 不再释放浏览器上下文，保持常驻以实现复用
+            # await browser_manager.release_context(self.platform_code, keep_alive=True)
+            logger.info("[BilibiliCrawler.cleanup] Browser context kept alive for reuse")
         except Exception as e:
             logger.error(f"[BilibiliCrawler.cleanup] Error during cleanup: {e}")
 
@@ -240,22 +234,21 @@ class BilibiliCrawler:
         keywords: str,
         page_size: int = 1,
         page_num: Optional[int] = None,
-        start_page: int = 1
     ) -> Dict:
         """
         快速搜索（不获取详细信息）
         只返回搜索API提供的基础数据，提高响应速度
-        
+
         Returns:
             搜索结果字典
         """
+        from app.api.scheme.response import BilibiliSearchResult, BilibiliVideoSimple
+
         logger.info("[BilibiliCrawler.search_by_keywords_fast] Begin fast search bilibili keywords")
 
         page_size = max(1, min(page_size, 50))
-        start_page = max(1, start_page)
 
         all_videos = []
-        collected_count = 0
 
         for keyword in keywords.split(","):
             keyword = keyword.strip()
@@ -264,19 +257,13 @@ class BilibiliCrawler:
 
             logger.info(
                 f"[BilibiliCrawler.search_by_keywords_fast] keyword={keyword} "
-                f"page_size={page_size} page={(page_num or start_page)}"
-            )
-
-            # 仅抓取指定页（不做多页循环）
-            page = page_num or start_page
-            logger.info(
-                f"[BilibiliCrawler.search_by_keywords_fast] Searching keyword={keyword} page={page}"
+                f"page_size={page_size} page={page_num}"
             )
 
             try:
                 videos_res = await self.bili_client.search_video_by_keyword(
                     keyword=keyword,
-                    page=page,
+                    page=page_num,
                     page_size=page_size,
                     order=SearchOrderType.DEFAULT,
                     pubtime_begin_s="0",
@@ -284,14 +271,14 @@ class BilibiliCrawler:
                 )
             except Exception as exc:
                 logger.error(
-                    f"[BilibiliCrawler.search_by_keywords_fast] Error requesting page {page}: {exc}"
+                    f"[BilibiliCrawler.search_by_keywords_fast] Error requesting page {page_num}: {exc}"
                 )
                 continue
 
             video_list: List[Dict] = videos_res.get("result", [])[:page_size]
             if not video_list:
                 logger.info(
-                    f"[BilibiliCrawler.search_by_keywords_fast] No videos for keyword '{keyword}' on page {page}"
+                    f"[BilibiliCrawler.search_by_keywords_fast] No videos for keyword '{keyword}' on page {page_num}"
                 )
                 continue
 
@@ -330,22 +317,30 @@ class BilibiliCrawler:
                     "video_type": "video",
                 }
 
-                all_videos.append(video_info)
-                collected_count += 1
+                # 在循环中直接转换为Pydantic模型
+                try:
+                    video = BilibiliVideoSimple.from_full_video(video_info)
+                    all_videos.append(video)
+                except Exception as e:
+                    logger.debug(f"视频数据转换失败，跳过: {e}")
+                    continue
 
             await asyncio.sleep(self.crawl_interval)
 
-        return {
-            "videos": all_videos,
-            "total_count": len(all_videos),
-            "keywords": keywords,
-            "crawl_info": {
+        # 构建结果并返回
+        result = BilibiliSearchResult(
+            videos=all_videos,
+            total_count=len(all_videos),
+            keywords=keywords,
+            crawl_info={
                 "crawl_time": get_current_timestamp(),
                 "platform": "bilibili",
                 "crawler_type": "search_fast",
                 "total_videos": len(all_videos)
             }
-        }
+        )
+
+        return result.model_dump()
 
     async def search_by_keywords(
         self,
@@ -469,6 +464,8 @@ class BilibiliCrawler:
         Returns:
             搜索结果字典。
         """
+        from app.api.scheme.response import BilibiliSearchResult, BilibiliVideoSimple
+
         logger.info(
             f"[BilibiliCrawler.search_by_keywords_in_time_range] Begin search"
         )
@@ -479,18 +476,20 @@ class BilibiliCrawler:
         start_day = start_day or datetime.now().strftime("%Y-%m-%d")
         end_day = end_day or datetime.now().strftime("%Y-%m-%d")
 
-        results: Dict[str, List[Dict]] = {}
+        all_videos = []
+        keywords_list = []
 
         for keyword in keywords.split(","):
             keyword = keyword.strip()
             if not keyword:
                 continue
 
+            keywords_list.append(keyword)
+
             logger.info(
                 f"[BilibiliCrawler.search_by_keywords_in_time_range] keyword={keyword} "
                 f"page_size={page_size} page={(page_num or start_page)}"
             )
-            collected_items: List[Dict] = []
 
             # 直接使用整个时间范围，不需要按天循环
             pubtime_begin_s, pubtime_end_s = await self.get_pubtime_datetime(
@@ -535,7 +534,44 @@ class BilibiliCrawler:
             for video_item in video_items:
                 if not video_item:
                     continue
-                    
+
+                # 从 video_item 中提取 View 数据
+                view = video_item.get("View", {})
+                stat = view.get("stat", {})
+                owner = view.get("owner", {})
+
+                aid = str(view.get("aid", ""))
+                bvid = view.get("bvid", "")
+                url = f"https://www.bilibili.com/video/{bvid}" if bvid else f"https://www.bilibili.com/video/av{aid}"
+                cover = view.get("pic", "")
+                if isinstance(cover, str) and cover.startswith("//"):
+                    cover = "https:" + cover
+
+                # 构建映射数据
+                mapped = {
+                    "video_id": aid,
+                    "title": view.get("title", ""),
+                    "desc": view.get("desc", ""),
+                    "create_time": view.get("pubdate"),
+                    "user_id": str(owner.get("mid", "")),
+                    "nickname": owner.get("name", ""),
+                    "video_play_count": str(stat.get("view", 0)),
+                    "liked_count": str(stat.get("like", 0)),
+                    "video_comment": str(stat.get("reply", 0)),
+                    "video_url": url,
+                    "video_cover_url": cover,
+                    "source_keyword": keyword,
+                }
+
+                # 在循环中直接转换为Pydantic模型
+                try:
+                    video = BilibiliVideoSimple.from_full_video(mapped)
+                    all_videos.append(video)
+                except Exception as e:
+                    logger.debug(f"视频数据转换失败，跳过: {e}")
+                    continue
+
+                # 保存到存储
                 try:
                     await bilibili_store.update_bilibili_video(
                         video_item,
@@ -552,31 +588,49 @@ class BilibiliCrawler:
                         f"[BilibiliCrawler.search_by_keywords_in_time_range] Store media error: {store_exc}"
                     )
 
-                collected_items.append(video_item)
-
             await asyncio.sleep(self.crawl_interval)
 
-            if collected_items:
-                results[keyword] = collected_items
+        # 构建结果并返回
+        result = BilibiliSearchResult(
+            videos=all_videos,
+            total_count=len(all_videos),
+            keywords=",".join([kw for kw in keywords_list if kw]),
+            crawl_info={
+                "crawl_time": get_current_timestamp(),
+                "platform": "bilibili",
+                "crawler_type": "search_time_range",
+                "total_videos": len(all_videos),
+                "start_day": start_day,
+                "end_day": end_day
+            }
+        )
 
-        return results
+        return result.model_dump()
 
     async def fetch_comments_for_ids(
-        self, 
+        self,
         video_ids: List[str],
         enable_get_sub_comments: bool = False,
         max_comments_per_note: int = 20
     ) -> Dict[str, Any]:
         """
         根据视频ID批量获取评论。
-        
+
         Args:
             video_ids: 视频ID列表
             enable_get_sub_comments: 是否获取子评论
             max_comments_per_note: 每个视频最大评论数
         """
+        from app.api.scheme.response import BilibiliComment, BilibiliCommentsResult
+
         if not video_ids:
-            return {"comments": {}}
+            empty_result = BilibiliCommentsResult(
+                comments=[],
+                total_count=0,
+                video_ids=[],
+                crawl_info={}
+            )
+            return empty_result.model_dump()
 
         logger.info(
             f"[BilibiliCrawler.fetch_comments_for_ids] Fetching comments for {len(video_ids)} videos"
@@ -613,7 +667,41 @@ class BilibiliCrawler:
                 )
                 results[video_id] = []
 
-        return {"comments": results}
+        # 在循环中转换评论为Pydantic模型
+        all_comments = []
+        video_id_list = []
+
+        for video_id, comment_list in results.items():
+            video_id_list.append(str(video_id))
+            if not isinstance(comment_list, list):
+                continue
+
+            for comment_data in comment_list:
+                if isinstance(comment_data, dict):
+                    try:
+                        # 添加video_id到评论数据中
+                        comment_data_with_video = dict(comment_data)
+                        comment_data_with_video["video_id"] = str(video_id)
+                        comment = BilibiliComment.model_validate(comment_data_with_video)
+                        all_comments.append(comment)
+                    except Exception as e:
+                        logger.debug(f"单条评论转换失败: {e}")
+                        continue
+
+        # 构建结果并返回
+        result = BilibiliCommentsResult(
+            comments=all_comments,
+            total_count=len(all_comments),
+            video_ids=video_id_list,
+            crawl_info={
+                "crawl_time": get_current_timestamp(),
+                "platform": "bilibili",
+                "crawler_type": "comments",
+                "total_comments": len(all_comments)
+            }
+        )
+
+        return result.model_dump()
 
     async def batch_get_video_comments(
         self, 
@@ -696,26 +784,28 @@ class BilibiliCrawler:
     async def get_creator_videos(self, creator_id: str, page_num: int = 1, page_size: int = 30) -> Dict:
         """
         获取创作者的视频列表，支持分页
-        
+
         Args:
             creator_id: 创作者ID
             page_num: 页码，从1开始
             page_size: 每页数量，默认30
-            
+
         Returns:
             格式化的创作者视频数据
         """
+        from app.api.scheme.response import BilibiliCreatorResult, BilibiliCreatorInfo, BilibiliVideoSimple
+
         logger.info(f"[BilibiliCrawler.get_creator_videos] Getting videos for creator: {creator_id}, page: {page_num}, size: {page_size}")
 
         # 添加请求间隔避免风控
         await asyncio.sleep(self.crawl_interval)
-        
+
         result = await self.bili_client.get_creator_videos(creator_id, page_num, page_size)
         logger.info(f"[BilibiliCrawler.get_creator_videos] Getting videos -----> result {result}")
         # 从结果中提取创作者信息
         video_list = result.get("list", {}).get("vlist", [])
         creator_info = None
-        
+
         if video_list:
             first_video = video_list[0]
             creator_info = {
@@ -723,14 +813,14 @@ class BilibiliCrawler:
                 "creator_name": first_video.get("author", ""),
                 "total_videos": result.get("page", {}).get("count", 0)
             }
-        
+
         # 处理当前页的视频列表
         all_videos = []
         for video in video_list:
             aid = video.get("aid")
             if not aid:
                 continue
-                
+
             # 构建视频信息，使用类似search的格式
             video_info = {
                 "video_id": str(aid),
@@ -752,23 +842,31 @@ class BilibiliCrawler:
                 "typeid": video.get("typeid"),
                 "copyright": video.get("copyright"),
             }
-            all_videos.append(video_info)
 
-        return {
-            "creator_info": creator_info or {
+            # 在循环中直接转换为Pydantic模型
+            try:
+                video_model = BilibiliVideoSimple.from_full_video(video_info)
+                all_videos.append(video_model)
+            except Exception as e:
+                logger.debug(f"创作者视频转换失败: {e}")
+                continue
+
+        # 构建结果并返回
+        creator_result = BilibiliCreatorResult(
+            creator_info=BilibiliCreatorInfo(**( creator_info or {
                 "creator_id": str(creator_id),
                 "creator_name": "Unknown",
                 "total_videos": 0
-            },
-            "videos": all_videos,
-            "total_count": len(all_videos),
-            "page_info": {
+            })),
+            videos=all_videos,
+            total_count=len(all_videos),
+            page_info={
                 "current_page": page_num,
                 "page_size": page_size,
                 "total_videos": result.get("page", {}).get("count", 0),
-                "has_more": len(all_videos) == page_size  # 如果当前页满了，可能还有更多
+                "has_more": len(all_videos) == page_size
             },
-            "crawl_info": {
+            crawl_info={
                 "crawl_time": get_current_timestamp(),
                 "platform": "bilibili",
                 "crawler_type": "creator",
@@ -776,11 +874,13 @@ class BilibiliCrawler:
                 "page_num": page_num,
                 "page_size": page_size
             }
-        }
+        )
+
+        return creator_result.model_dump()
 
     async def get_specified_videos(
-        self, 
-        video_ids: List[str], 
+        self,
+        video_ids: List[str],
         source_keyword: str = ""
     ) -> Dict:
         """
@@ -793,6 +893,8 @@ class BilibiliCrawler:
         Returns:
             视频详情字典
         """
+        from app.api.scheme.response import BilibiliDetailResult, BilibiliVideoFull
+
         logger.info(f"[BilibiliCrawler.get_specified_videos] Getting details for {len(video_ids)} videos")
         semaphore = asyncio.Semaphore(self.max_concurrency)
 
@@ -899,7 +1001,14 @@ class BilibiliCrawler:
                     # 来源关键词
                     "source_keyword": source_keyword,
                 }
-                results.append(formatted_video)
+
+                # 在循环中直接转换为Pydantic模型
+                try:
+                    video_full = BilibiliVideoFull(**formatted_video)
+                    results.append(video_full)
+                except Exception as e:
+                    logger.debug(f"视频详情转换失败，跳过: {e}")
+                    continue
 
                 try:
                     await bilibili_store.update_bilibili_video(
@@ -917,8 +1026,20 @@ class BilibiliCrawler:
 
         await self.batch_get_video_comments(video_aids_list, source_keyword=source_keyword)
 
+        # 构建结果并返回
+        detail_result = BilibiliDetailResult(
+            videos=results,
+            total_count=len(results),
+            crawl_info={
+                "crawl_time": get_current_timestamp(),
+                "platform": "bilibili",
+                "crawler_type": "detail",
+                "total_videos": len(results)
+            }
+        )
+
         logger.info(f"[BilibiliCrawler.get_specified_videos] Returning {len(results)} video details")
-        return {"videos": results}
+        return detail_result.model_dump()
 
     async def get_video_info_task(
         self, 
@@ -1220,126 +1341,3 @@ class BilibiliCrawler:
             logger.warning("[BilibiliCrawler.close] Browser context was already closed")
         except Exception as e:
             logger.error(f"[BilibiliCrawler.close] Error during close: {e}")
-
-
-async def search(
-    *,
-    keywords: str,
-    page_size: int = 1,
-    page_num: int = 1,
-    headless: Optional[bool] = None,
-    enable_save_media: Optional[bool] = None,
-    **kwargs: Any,
-) -> Dict[str, Any]:
-    logger.info(f"[bilibili.crawler.search] keywords={keywords}")
-    
-    crawler = BilibiliCrawler(headless=headless, enable_save_media=enable_save_media, **kwargs)
-    try:
-        await crawler.ensure_login_and_client(no_auto_login=True, **kwargs)
-        return await crawler.search_by_keywords_fast(
-            keywords=keywords,
-            page_size=page_size,
-            page_num=page_num,
-            start_page=1
-        )
-    finally:
-        await crawler.cleanup()
-
-
-async def search_with_time_range(
-    *,
-    keywords: str,
-    start_day: str,
-    end_day: str,
-    page_size: int = 1,
-    page_num: Optional[int] = None,
-    start_page: int = 1,
-    headless: Optional[bool] = None,
-    enable_save_media: Optional[bool] = None,
-    **kwargs: Any,
-) -> Dict[str, Any]:
-    logger.info(
-        "[bilibili.crawler.search_with_time_range] "
-        f"keywords={keywords} start={start_day} end={end_day}"
-    )
-
-    crawler = BilibiliCrawler(headless=headless, enable_save_media=enable_save_media, **kwargs)
-    try:
-        await crawler.ensure_login_and_client(no_auto_login=True, **kwargs)
-        return await crawler.search_by_keywords_in_time_range(
-            keywords=keywords,
-            start_day=start_day,
-            end_day=end_day,
-            page_size=page_size,
-            page_num=page_num,
-            start_page=start_page
-        )
-    finally:
-        await crawler.cleanup()
-
-
-async def get_detail(
-    *,
-    video_ids: List[str],
-    source_keyword: str = "detail",
-    headless: Optional[bool] = None,
-    enable_save_media: Optional[bool] = None,
-    **kwargs: Any,
-) -> Dict[str, Any]:
-    logger.info(f"[bilibili.crawler.get_detail] video_count={len(video_ids)}")
-
-    crawler = BilibiliCrawler(headless=headless, enable_save_media=enable_save_media, **kwargs)
-    try:
-        await crawler.ensure_login_and_client(no_auto_login=True, **kwargs)
-        return await crawler.get_specified_videos(
-            video_ids=video_ids,
-            source_keyword=source_keyword
-        )
-    finally:
-        await crawler.cleanup()
-
-
-async def get_creator(
-    *,
-    creator_id: str,
-    page_num: int = 1,
-    page_size: int = 30,
-    headless: Optional[bool] = None,
-    enable_save_media: Optional[bool] = None,
-    **kwargs: Any,
-) -> Dict[str, Any]:
-    logger.info(
-        f"[bilibili.crawler.get_creator] creator_id={creator_id} page={page_num} size={page_size}"
-    )
-
-    crawler = BilibiliCrawler(headless=headless, enable_save_media=enable_save_media, **kwargs)
-    try:
-        await crawler.ensure_login_and_client(no_auto_login=True, **kwargs)
-        return await crawler.get_creator_videos(creator_id, page_num, page_size)
-    finally:
-        await crawler.cleanup()
-
-
-async def fetch_comments(
-    *,
-    video_ids: List[str],
-    max_comments: int = 20,
-    fetch_sub_comments: bool = False,
-    headless: Optional[bool] = None,
-    **kwargs: Any,
-) -> Dict[str, Any]:
-    logger.info(
-        "[bilibili.crawler.fetch_comments] "
-        f"video_count={len(video_ids)} max_comments={max_comments} fetch_sub={fetch_sub_comments}"
-    )
-
-    crawler = BilibiliCrawler(headless=headless, **kwargs)
-    try:
-        await crawler.ensure_login_and_client(no_auto_login=True, **kwargs)
-        return await crawler.fetch_comments_for_ids(
-            video_ids=video_ids,
-            enable_get_sub_comments=fetch_sub_comments,
-            max_comments_per_note=max_comments
-        )
-    finally:
-        await crawler.cleanup()

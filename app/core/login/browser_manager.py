@@ -82,11 +82,10 @@ class BrowserManager:
                         page = await context.new_page()
 
                     playwright = self._playwrights.get(platform)
-                    self._ref_counts[platform] = self._ref_counts.get(platform, 0) + 1
-
+                    # 不再维护引用计数，直接复用
                     logger.info(
                         f"[BrowserManager] 复用 {platform} 浏览器实例 "
-                        f"(引用计数: {self._ref_counts[platform]})"
+                        f"(浏览器常驻模式)"
                     )
                     return context, page, playwright
 
@@ -142,28 +141,18 @@ class BrowserManager:
 
     async def release_context(self, platform: str, keep_alive: bool = True):
         """
-        释放浏览器上下文引用
+        释放浏览器上下文引用 - 现在不再真正释放，保持浏览器常驻
 
         Args:
             platform: 平台标识
-            keep_alive: 是否保持实例存活（默认True，仅减少引用计数）
+            keep_alive: 是否保持实例存活（现在默认总是保持）
         """
-        lock = await self.get_lock(platform)
-
-        async with lock:
-            if platform not in self._ref_counts:
-                return
-
-            self._ref_counts[platform] -= 1
-
-            logger.info(
-                f"[BrowserManager] 释放 {platform} 浏览器引用 "
-                f"(剩余引用: {self._ref_counts[platform]})"
-            )
-
-            # 如果引用计数为0且不保持存活，则清理实例
-            if self._ref_counts[platform] <= 0 and not keep_alive:
-                await self._cleanup_platform(platform)
+        # 不再减少引用计数，保持浏览器实例常驻
+        logger.info(
+            f"[BrowserManager] 保持 {platform} 浏览器实例常驻，不释放引用"
+        )
+        # 可以在这里添加延迟清理逻辑，比如设置定时器在一段时间后清理
+        # 但目前保持简单：浏览器实例一旦创建就常驻
 
     async def force_cleanup(self, platform: str):
         """

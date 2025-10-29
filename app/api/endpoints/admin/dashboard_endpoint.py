@@ -14,7 +14,7 @@ from app.pages.admin_inspector import render_admin_inspector
 
 logger = get_logger()
 
-
+@main_app.custom_route("/", methods=["GET"])
 @main_app.custom_route("/dashboard", methods=["GET"])
 async def admin_dashboard(request):
     return render_admin_dashboard()
@@ -107,7 +107,7 @@ async def execute_inspector_tool(request):
         result = await mcp_client_manager.call_tool(tool_name, params)
         logger.info(f"Tool {tool_name} executed successfully via MCP Client {result}")
         
-        return JSONResponse(content={"result": result.structured_content, "tool": tool_name})
+        return JSONResponse(content={"result": result.structured_content if not isinstance(result, str) else result, "tool": tool_name})
         
     except Exception as e:
         logger.error(f"Tool execution failed: {e}")
