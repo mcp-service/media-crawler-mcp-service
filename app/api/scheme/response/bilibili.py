@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from typing import List, Optional, Dict, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class BilibiliVideoBase(BaseModel):
@@ -119,7 +119,7 @@ class BilibiliDetailResult(BaseModel):
 
 
 class BilibiliComment(BaseModel):
-    """Bilibili 评论模型"""
+    """Bilibili 评论模型 - 使用Pydantic验证器处理原始数据"""
     comment_id: str = Field(..., description="评论 ID")
     parent_comment_id: str = Field(default="0", description="父评论 ID")
     create_time: Optional[int] = Field(None, description="评论时间戳")
@@ -132,7 +132,58 @@ class BilibiliComment(BaseModel):
     avatar: Optional[str] = Field(None, description="头像")
     sub_comment_count: str = Field(default="0", description="子评论数")
     like_count: int = Field(default=0, description="点赞数")
-    last_modify_ts: Optional[int] = Field(None, description="最后修改时间戳")
+
+    # 原始数据字段，用于内部处理
+    rpid: Optional[Any] = Field(None, exclude=True)  # 原始评论ID
+    parent: Optional[Any] = Field(None, exclude=True)  # 原始父评论ID
+    ctime: Optional[Any] = Field(None, exclude=True)  # 原始时间戳
+    member: Optional[Dict[str, Any]] = Field(None, exclude=True)  # 原始用户数据
+    content_data: Optional[Dict[str, Any]] = Field(None, exclude=True)  # 原始内容数据
+    rcount: Optional[Any] = Field(None, exclude=True)  # 原始回复数
+    like: Optional[Any] = Field(None, exclude=True)  # 原始点赞数
+
+    @model_validator(mode='before')
+    @classmethod
+    def process_raw_data(cls, data: Any) -> Dict[str, Any]:
+        """在模型创建前处理原始数据"""
+        if not isinstance(data, dict):
+            return {}
+
+        # 处理评论ID
+        if 'rpid' in data:
+            data['comment_id'] = str(data['rpid'])
+
+        # 处理父评论ID
+        if 'parent' in data:
+            data['parent_comment_id'] = str(data['parent'])
+
+        # 处理时间戳
+        if 'ctime' in data:
+            data['create_time'] = data['ctime']
+
+        # 处理回复数
+        if 'rcount' in data:
+            data['sub_comment_count'] = str(data['rcount'])
+
+        # 处理点赞数
+        if 'like' in data:
+            data['like_count'] = data['like']
+
+        # 处理用户数据
+        member = data.get('member', {})
+        if isinstance(member, dict):
+            data['user_id'] = str(member.get('mid', ''))
+            data['nickname'] = member.get('uname', '')
+            data['sex'] = member.get('sex', '')
+            data['sign'] = member.get('sign', '')
+            data['avatar'] = member.get('avatar', '')
+
+        # 处理内容数据
+        content = data.get('content', {})
+        if isinstance(content, dict):
+            data['content'] = content.get('message', '')
+
+        return data
 
 
 class BilibiliCommentsResult(BaseModel):

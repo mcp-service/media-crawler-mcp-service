@@ -68,35 +68,20 @@ class BiliDetailRequest(_BaseCrawlerRequest):
         self.video_ids = cleaned
         return self
 
-    def to_service_params(self) -> Dict[str, Any]:
-        params: Dict[str, Any] = {"video_ids": self.video_ids}
-        params.update(self._collect_common_params())
-        return params
-
 
 class BiliCreatorRequest(_BaseCrawlerRequest):
     """Bilibili 创作者内容请求"""
 
-    creator_ids: List[str] = Field(..., min_length=1, description="创作者ID列表")
+    creator_id: str = Field(..., min_length=1, description="创作者ID")
     page_num: int = Field(default=1, ge=1, description="页码，从1开始")
     page_size: int = Field(default=30, ge=1, le=50, description="每页数量")
 
     @model_validator(mode="after")
     def sanitize_ids(self) -> "BiliCreatorRequest":
-        cleaned = [cid.strip() for cid in self.creator_ids if cid and cid.strip()]
-        if not cleaned:
+        self.creator_id = self.creator_id.strip()
+        if not self.creator_id:
             raise ValueError("创作者ID列表不能为空")
-        self.creator_ids = cleaned
         return self
-
-    def to_service_params(self) -> Dict[str, Any]:
-        params: Dict[str, Any] = {
-            "creator_ids": self.creator_ids,
-            "page_num": self.page_num,
-            "page_size": self.page_size,
-        }
-        params.update(self._collect_common_params())
-        return params
 
 
 class BiliSearchTimeRangeRequest(BiliSearchRequest):
@@ -134,12 +119,3 @@ class BiliCommentsRequest(_BaseCrawlerRequest):
             raise ValueError("视频ID列表不能为空")
         self.video_ids = cleaned
         return self
-
-    def to_service_params(self) -> Dict[str, Any]:
-        params: Dict[str, Any] = {
-            "video_ids": self.video_ids,
-            "max_comments": self.max_comments,
-            "fetch_sub_comments": self.fetch_sub_comments,
-        }
-        params.update(self._collect_common_params())
-        return params

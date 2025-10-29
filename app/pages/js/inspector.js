@@ -11,7 +11,7 @@ const DEFAULT_PAYLOADS = {
   // B站 tools
   bili_search: { keywords: '纯圆大嬛嬛', page_size: 5, page_num: 1 },
   bili_crawler_detail: { video_ids: ['115285696846946'] },
-  bili_crawler_creator: { creator_ids: ['99801185'], page_num: 1, page_size: 30 },
+  bili_crawler_creator: { creator_id: '99801185', page_num: 1, page_size: 30 },
   bili_search_time_range_http: {
     keywords: '纯圆大嬛嬛',
     start_day: '2024-01-01',

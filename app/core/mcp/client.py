@@ -3,6 +3,7 @@
 
 from fastmcp import Client
 from app.providers.logger import get_logger
+from app.config.settings import global_settings
 
 logger = get_logger()
 
@@ -20,7 +21,7 @@ class MCPClientManager:
         """通过 MCP Client 调用工具"""
         try:
             # 创建 Client 连接到本地 MCP 服务
-            async with Client("http://localhost:9091/mcp") as client:
+            async with Client(f"http://localhost:{global_settings.app.port}/mcp") as client:
                 # 直接传递参数字典，让 FastMCP 处理参数转换
                 result = await client.call_tool(tool_name, arguments)
                 return result

@@ -1,170 +1,79 @@
-# MCP Tools Service - Production Docker Compose Configuration
-# This configuration includes all necessary services for the MCP Tools platform
-# with MediaCrawler integration
-#
-# Note: 'version' is obsolete in Docker Compose v2+ and has been removed
-# Usage from project root: cd deploy && docker compose up -d
+ services:
+    postgres:
+      image: postgres:16-alpine
+      restart: unless-stopped
+      environment:
+        POSTGRES_DB: ${DB_NAME:-mcp_tools_db}
+        POSTGRES_USER: ${DB_USER:-postgres}
+        POSTGRES_PASSWORD: ${DB_PASSWORD:-password}
+        TZ: ${TZ:-Asia/Shanghai}
+      ports:
+        - "${DB_PORT:-5432}:5432"
+      volumes:
+        - postgres_data:/var/lib/postgresql/data
+        - ./deploy/init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      healthcheck:
+        test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-mcp_tools_db}"]
+        interval: 10s
+        timeout: 5s
+        retries: 5
+        start_period: 30s
 
-services:
-  # PostgreSQL Database - Shared by main service and MediaCrawler
-  postgres:
-    image: postgres:16-alpine
-    container_name: mcp-postgres
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${DB_USER:-postgres}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-password}
-      POSTGRES_DB: ${DB_NAME:-mcp_tools_db}
-      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
-      TZ: Asia/Shanghai
-    ports:
-      - "${DB_PORT:-5432}:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-mcp_tools_db}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-    networks:
-      - mcp-network
+    redis:
+      image: redis:7-alpine
+      restart: unless-stopped
+      environment:
+        TZ: ${TZ:-Asia/Shanghai}
+      command: >                                                                                                                                                                                                                    
+        sh -c 'if [ -n "$${REDIS_PASSWORD}" ]; then                                                                                                                                                                                 
+                 redis-server --requirepass "$${REDIS_PASSWORD}" --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru;                                                                                                 
+               else                                                                                                                                                                                                                 
+                 redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru;                                                                                                                                    
+               fi'
+      ports:
+        - "${REDIS_PORT:-6379}:6379"
+      volumes:
+        - redis_data:/data
+      healthcheck:
+        test: ["CMD", "redis-cli", "ping"]
+        interval: 10s
+        timeout: 5s
+        retries: 5
+        start_period: 10s
 
-  # Redis - Shared cache and session storage
-  redis:
-    image: redis:7-alpine
-    container_name: mcp-redis
-    restart: unless-stopped
-    environment:
-      TZ: Asia/Shanghai
-    command: >
-      sh -c "
-      if [ -n '${REDIS_PASSWORD}' ]; then
-        redis-server --requirepass ${REDIS_PASSWORD} --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
-      else
-        redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
-      fi
-      "
-    ports:
-      - "${REDIS_PORT:-6379}:6379"
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-    networks:
-      - mcp-network
-
-
-  # MCP Tools Service - Main FastMCP + FastAPI Application
-  mcp-service:
-    build:
-      context: ..
-      dockerfile: Dockerfile
-      args:
-        - BUILDKIT_INLINE_CACHE=1
-    image: mcp-tools:latest
-    container_name: mcp-tools-service
-    restart: unless-stopped
-    environment:
-      # Application Settings
-      APP_ENV: ${APP_ENV:-prod}
-      APP_DEBUG: ${APP_DEBUG:-false}
-      APP_PORT: ${APP_PORT:-9090}
-      PYTHONPATH: /app:/app/media_crawler
-      PYTHONUNBUFFERED: 1
-      TZ: Asia/Shanghai
-
-      # Database Configuration
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_USER: ${DB_USER:-postgres}
-      DB_PASSWORD: ${DB_PASSWORD:-password}
-      DB_NAME: ${DB_NAME:-mcp_tools_db}
-
-      # Redis Configuration
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-      REDIS_DB: ${REDIS_DB:-0}
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
-
-      
-
-      # JWT Configuration (optional)
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-your-secret-key-change-in-production}
-    ports:
-      - "${APP_PORT:-9090}:9090"  # MCP SSE Service
-      - "${ADMIN_PORT:-9091}:9091"  # Admin Service
-    volumes:
-      # Application Data
-      - ../data:/app/data
-      - ../logs:/app/logs
-      # Configuration Files (read-only)
-      - ../app/config:/app/app/config:ro
-      - ../.env:/app/.env:ro
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9090/health", "||", "exit", "1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-    networks:
-      - mcp-network
-    # Resource Limits (主服务资源需求降低)
-    deploy:
-      resources:
-        limits:
-          cpus: '1.5'
-          memory: 1.5G
-        reservations:
-          cpus: '0.5'
-          memory: 512M
-
-  # Nginx Reverse Proxy (Optional - for production deployment)
-  nginx:
-    image: nginx:alpine
-    container_name: mcp-nginx
-    restart: unless-stopped
-    profiles: ["with-nginx"]
-    environment:
-      TZ: Asia/Shanghai
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./ssl:/etc/nginx/ssl:ro  # SSL certificates (if needed)
-      - nginx_logs:/var/log/nginx
-    depends_on:
-      - mcp-service
-    healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    networks:
-      - mcp-network
+    mcp-service:
+      build:
+        context: .
+        dockerfile: Dockerfile
+      image: media-crawler-mcp:latest
+      restart: unless-stopped
+      depends_on:
+        postgres:
+          condition: service_healthy
+        redis:
+          condition: service_healthy
+      env_file:
+        - .env
+      environment:
+        APP_HOST: 0.0.0.0
+        APP_PORT: ${APP_PORT:-9090}
+        DB_HOST: postgres
+        DB_PORT: 5432
+        REDIS_HOST: redis
+        REDIS_PORT: 6379
+      ports:
+        - "${APP_PORT:-9090}:9090"
+      volumes:
+        - ./data:/app/data
+        - ./logs:/app/logs
+        - ./browser_data:/app/browser_data
+      healthcheck:
+        test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/health"]
+        interval: 30s
+        timeout: 10s
+        retries: 3
+        start_period: 60s
 
 volumes:
-  # Persistent Data Volumes
-  postgres_data:
-    driver: local
-  redis_data:
-    driver: local
-  nginx_logs:
-    driver: local
-
-networks:
-  mcp-network:
-    driver: bridge
-    # 让 Docker 自动分配子网，避免冲突
+    postgres_data:
+    redis_data:

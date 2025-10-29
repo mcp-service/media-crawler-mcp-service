@@ -19,7 +19,7 @@ from .field import CommentOrderType, SearchOrderType
 from .help import BilibiliSign
 
 
-class BilibiliClient:  # 移除 AbstractApiClient 继承
+class BilibiliClient:
 
     def __init__(
         self,

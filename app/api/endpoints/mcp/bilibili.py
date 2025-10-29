@@ -16,8 +16,8 @@ from app.api.scheme.request.bilibili_scheme import (
     BiliSearchRequest,
     BiliSearchTimeRangeRequest,
 )
-from app.config.settings import Platform
-from app.core.mcp import bilibili as bili_tools
+from app.config.settings import global_settings
+from app.core.crawler.platforms import bilibili as bilibili_core
 from app.core.login.exceptions import LoginExpiredError
 from app.providers.logger import get_logger
 from fastmcp import FastMCP
@@ -50,17 +50,22 @@ def _server_error(message: str) -> Dict[str, Any]:
 )
 async def search(keywords: str, page_size: int = 5, page_num: int = 1):
     try:
-        # 只传递基本参数
-        result = await bili_tools.bili_search(
+        # 直接实例化Crawler调用方法
+        crawler = bilibili_core.BilibiliCrawler(headless=global_settings.browser.headless, enable_save_media=False)
+        await crawler.ensure_login_and_client(no_auto_login=True)
+
+        result = await crawler.search_by_keywords_fast(
             keywords=keywords,
             page_size=page_size,
             page_num=page_num,
-            save_media=False
         )
+
+        await crawler.cleanup()
+
         return {
             "code": error_codes.SUCCESS[0],
             "msg": error_codes.SUCCESS[1],
-            "data": _as_dict(result),
+            "data": result,
         }
     except LoginExpiredError:
         return {
@@ -86,13 +91,22 @@ async def crawler_detail(video_ids: list[str]):
     except ValidationError as exc:
         return _validation_error(exc)
 
-    params = _to_tool_params(req.to_service_params())
     try:
-        result = await bili_tools.bili_detail(**params)
+        # 直接实例化Crawler调用方法
+        crawler = bilibili_core.BilibiliCrawler(headless=global_settings.browser.headless, enable_save_media=False)
+        await crawler.ensure_login_and_client(no_auto_login=True)
+
+        result = await crawler.get_specified_videos(
+            video_ids=req.video_ids,
+            source_keyword="detail"
+        )
+
+        await crawler.cleanup()
+
         return {
             "code": error_codes.SUCCESS[0],
             "msg": error_codes.SUCCESS[1],
-            "data": _as_dict(result),
+            "data": result,
         }
     except LoginExpiredError:
         return {
@@ -102,7 +116,7 @@ async def crawler_detail(video_ids: list[str]):
         }
     except Exception as exc:  # pragma: no cover
         import traceback
-        logger.error(f"[Bilibili.detail] failed: {traceback.format_exc(exc)}")
+        logger.error(f"[Bilibili.detail] failed: {traceback.format_exc()}")
         return _server_error(f"bilibili 详情获取失败: {exc}, 可以重试一下")
 
 
@@ -111,23 +125,33 @@ async def crawler_detail(video_ids: list[str]):
     description="获取 Bilibili UP 主视频",
     tags={"bilibili", "creator"}
 )
-async def crawler_creator(creator_ids: list[str], page_num: int = 1, page_size: int = 30):
+async def crawler_creator(creator_id: str, page_num: int = 1, page_size: int = 30):
     try:
         req = BiliCreatorRequest.model_validate({
-            "creator_ids": creator_ids,
+            "creator_id": creator_id,
             "page_num": page_num,
             "page_size": page_size
         })
     except ValidationError as exc:
         return _validation_error(exc)
 
-    params = _to_tool_params(req.to_service_params())
     try:
-        result = await bili_tools.bili_creator(**params)
+        # 直接实例化Crawler调用方法
+        crawler = bilibili_core.BilibiliCrawler(headless=global_settings.browser.headless, enable_save_media=False)
+        await crawler.ensure_login_and_client(no_auto_login=True)
+
+        result = await crawler.get_creator_videos(
+            creator_id=req.creator_id,
+            page_num=req.page_num,
+            page_size=req.page_size
+        )
+
+        await crawler.cleanup()
+
         return {
             "code": error_codes.SUCCESS[0],
             "msg": error_codes.SUCCESS[1],
-            "data": _as_dict(result),
+            "data": result,
         }
     except LoginExpiredError:
         return {
@@ -157,21 +181,25 @@ async def search_time_range_http(keywords: str, start_day: str, end_day: str, pa
     except ValidationError as exc:
         return _validation_error(exc)
 
-    # 只传递实际需要的参数
-    params = {
-        "keywords": keywords,
-        "start_day": start_day,
-        "end_day": end_day,
-        "page_size": page_size,
-        "page_num": page_num,
-        "save_media": False
-    }
     try:
-        result = await bili_tools.bili_search_time_range(**params)
+        # 直接实例化Crawler调用方法
+        crawler = bilibili_core.BilibiliCrawler(headless=global_settings.browser.headless, enable_save_media=False)
+        await crawler.ensure_login_and_client(no_auto_login=True)
+
+        result = await crawler.search_by_keywords_in_time_range(
+            keywords=req.keywords,
+            start_day=req.start_day,
+            end_day=req.end_day,
+            page_size=req.page_size,
+            page_num=req.page_num
+        )
+
+        await crawler.cleanup()
+
         return {
             "code": error_codes.SUCCESS[0],
             "msg": error_codes.SUCCESS[1],
-            "data": _as_dict(result),
+            "data": result,
         }
     except LoginExpiredError:
         return {
@@ -181,7 +209,7 @@ async def search_time_range_http(keywords: str, start_day: str, end_day: str, pa
         }
     except Exception as exc:  # pragma: no cover
         import traceback
-        logger.error(f"[Bilibili.search_time_range] failed: {traceback.format_exc(exc)}")
+        logger.error(f"[Bilibili.search_time_range] failed: {traceback.format_exc()}")
         return _server_error(f"bilibili 时间范围搜索失败: {exc}")
 
 
@@ -200,13 +228,23 @@ async def crawler_comments(video_ids: list[str], max_comments: int = 20, fetch_s
     except ValidationError as exc:
         return _validation_error(exc)
 
-    params = _to_tool_params(req.to_service_params())
     try:
-        result = await bili_tools.bili_comments(**params)
+        # 直接实例化Crawler调用方法
+        crawler = bilibili_core.BilibiliCrawler(headless=global_settings.browser.headless, enable_save_media=False)
+        await crawler.ensure_login_and_client(no_auto_login=True)
+
+        result = await crawler.fetch_comments_for_ids(
+            video_ids=req.video_ids,
+            enable_get_sub_comments=req.fetch_sub_comments,
+            max_comments_per_note=req.max_comments
+        )
+
+        await crawler.cleanup()
+
         return {
             "code": error_codes.SUCCESS[0],
             "msg": error_codes.SUCCESS[1],
-            "data": _as_dict(result),
+            "data": result,
         }
     except LoginExpiredError:
         return {
@@ -217,25 +255,6 @@ async def crawler_comments(video_ids: list[str], max_comments: int = 20, fetch_s
     except Exception as exc:  # pragma: no cover
         logger.error(f"[Bilibili.comments] failed: {exc}")
         return _server_error(f"bilibili 评论抓取失败: {exc}")
-
-
-
-def _to_tool_params(params: Dict[str, Any]) -> Dict[str, Any]:
-    """Adjust parameter names so they match tool signatures."""
-    adjusted = dict(params)
-    if "enable_save_media" in adjusted:
-        adjusted["save_media"] = adjusted.pop("enable_save_media")
-    return adjusted
-
-
-def _as_dict(result: str | Dict[str, Any]) -> Dict[str, Any]:
-    """Ensure tool responses are JSON objects."""
-    if isinstance(result, dict):
-        return result
-    try:
-        return json.loads(result)
-    except json.JSONDecodeError:
-        return {"raw": result}
 
 
 __all__ = ["bili_mcp"]

@@ -248,47 +248,10 @@ logger.error("[bili.login] Pong failed: %s", exc)
 ### 4.2 Bilibili 工具（已完成 5 个）✅
 
 **实现位置**：
-- 工具函数：`app/core/mcp_tools/bilibili.py`
+- 工具函数：`app/core/crawler/platforms/bilibili/crawler.py`
 - HTTP 端点：`app/api/endpoints/mcp/bilibili.py`
-- 路由前缀：`/bili/*`
+- 路由前缀：`/bili_*`
 
-**工具清单**：
-
-1. **bili_search** - 快速搜索视频
-   - 路径：`POST /bili/search`
-   - 参数：keywords, page_size, page_num, limit, headless, save_media
-   - 返回：简化结构（BilibiliVideoSimple）
-   - 特点：使用 aid 作为 video_id，方便后续调用详情
-
-2. **bili_detail** - 获取视频详情
-   - 路径：`POST /bili/detail`
-   - 参数：video_ids (List[str]), headless, save_media
-   - 返回：完整结构（BilibiliVideoFull）
-   - 包含字段：
-     - 基础信息：title/desc/duration/video_url/cover_url
-     - 分区信息：tname/tid
-     - 视频属性：copyright/cid
-     - UP主信息：user_id/nickname/avatar/sex/sign/level/fans/official_verify
-     - 统计数据：play_count/liked_count/disliked_count/comment/coin/share/favorite/danmaku
-     - **标签**：tags (List[{tag_id, tag_name}])
-
-3. **bili_creator** - 获取 UP 主视频
-   - 路径：`POST /bili/creator`
-   - 参数：creator_ids (List[str]), creator_mode, headless, save_media
-   - creator_mode=True：获取UP主所有视频
-   - creator_mode=False：获取UP主详情（粉丝/关注/动态）
-
-4. **bili_search_time_range** - 时间范围搜索
-   - 路径：`POST /bili/search/time-range`
-   - 参数：keywords, start_day, end_day, page_size, page_num, limit, max_notes_per_day, daily_limit, headless, save_media
-   - daily_limit=True：限制每天爬取数量
-   - daily_limit=False：全量爬取（仅受 limit 约束）
-
-5. **bili_comments** - 抓取视频评论
-   - 路径：`POST /bili/comments`
-   - 参数：video_ids (List[str]), max_comments, fetch_sub_comments, headless
-   - fetch_sub_comments=True：递归抓取子评论
-   - 返回：{"comments": {video_id: [comment_list]}}
 
 ### 4.3 其它平台（规划中）
 
@@ -349,13 +312,9 @@ logger.error("[bili.login] Pong failed: %s", exc)
 ### 6.1 架构分层（严格遵守）
 
 ```
-MCP Tools 层 (app/core/mcp_tools/)
+MCP Tools 层 (app/api/endpoints/mcp/{platform}.py)
     - 职责：参数验证、结果结构化、错误处理
     - 原则：薄封装，不包含业务逻辑
-    ↓
-Service 层 (app/core/crawler/platforms/{platform}/service.py)
-    - 职责：Context 构建、生命周期管理、登录状态获取
-    - 原则：协调者角色，不直接操作浏览器
     ↓
 Crawler 层 (app/core/crawler/platforms/{platform}/crawler.py)
     - 职责：浏览器管理、业务逻辑编排、数据提取
@@ -377,20 +336,6 @@ Store 层 (app/core/crawler/store/{platform}/)
 - 通过 `bp.tool()` 装饰器绑定 MCP 工具与 HTTP 路由
 - 在 `app/api_service.py:auto_discover_endpoints()` 中自动发现并注册
 
-**示例**：
-```python
-from app.api.endpoints.base import MCPBlueprint
-from app.core.mcp_tools import bilibili as bili_tools
-
-bp = MCPBlueprint(prefix="/bili", name="bilibili", tags=["bili"])
-
-bp.tool(
-    "bili_search",
-    description="搜索 Bilibili 视频",
-    http_path="/search",
-    http_methods=["POST"],
-)(bili_tools.bili_search)
-```
 
 ### 6.3 日志规范
 
