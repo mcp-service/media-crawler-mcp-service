@@ -30,19 +30,29 @@ def register_resources(app: FastMCP) -> None:
                 "path": str(data_path.absolute())
             }, ensure_ascii=False, indent=2)
 
-        # 统计各平台数据（非递归：根目录 + json/csv 子目录）
+        # 统计各平台数据（包含 json/csv 与 videos 目录体积，不做历史别名兼容）
         platform_stats = {}
+
+        def _collect_files(p: Path):
+            files = list(p.glob("*.json")) + list(p.glob("*.csv"))
+            json_dir = p / "json"
+            csv_dir = p / "csv"
+            videos_dir = p / "videos"
+            if json_dir.exists() and json_dir.is_dir():
+                files += list(json_dir.glob("*.json"))
+            if csv_dir.exists() and csv_dir.is_dir():
+                files += list(csv_dir.glob("*.csv"))
+            bin_files = []
+            if videos_dir.exists() and videos_dir.is_dir():
+                bin_files += [f for f in videos_dir.rglob("*") if f.is_file()]
+            return files, bin_files
+
         for platform_dir in data_path.iterdir():
             if platform_dir.is_dir():
-                files = list(platform_dir.glob("*.json")) + list(platform_dir.glob("*.csv"))
-                json_dir = platform_dir / "json"
-                csv_dir = platform_dir / "csv"
-                if json_dir.exists() and json_dir.is_dir():
-                    files += list(json_dir.glob("*.json"))
-                if csv_dir.exists() and csv_dir.is_dir():
-                    files += list(csv_dir.glob("*.csv"))
-
-                total_size = sum(f.stat().st_size for f in files if f.is_file())
+                files, bin_files = _collect_files(platform_dir)
+                total_size = sum(f.stat().st_size for f in files if f.is_file()) + sum(
+                    f.stat().st_size for f in bin_files
+                )
                 latest_file = "无"
                 if files:
                     newest = max(files, key=lambda f: f.stat().st_mtime)
@@ -182,27 +192,35 @@ def register_resources(app: FastMCP) -> None:
         获取所有可用的API端点文档
         """
         import json
-        from app.api.endpoints.base import get_registered_blueprints
 
-        endpoints_info = []
-        for blueprint in get_registered_blueprints():
-            routes = [
-                {
-                    "path": route_info.path,
-                    "methods": route_info.methods or [],
-                    "kind": route_info.kind,
-                }
-                for route_info in blueprint.routes_info
-            ]
-            endpoints_info.append(
-                {
-                    "name": blueprint.name,
-                    "category": blueprint.category,
-                    "prefix": blueprint.prefix,
-                    "tags": blueprint.tags,
-                    "routes": routes,
-                }
-            )
+        # 现在使用fastmcp原生格式，直接返回已知的端点信息
+        endpoints_info = [
+            {
+                "name": "bili_mcp",
+                "category": "B站MCP",
+                "prefix": "/bili",
+                "tags": ["哔哩哔哩", "视频", "MCP工具"],
+                "routes": [
+                    {"path": "/bili/search", "methods": ["POST"], "kind": "tool"},
+                    {"path": "/bili/crawler_detail", "methods": ["POST"], "kind": "tool"},
+                    {"path": "/bili/crawler_creator", "methods": ["POST"], "kind": "tool"},
+                    {"path": "/bili/search_time_range_http", "methods": ["POST"], "kind": "tool"},
+                    {"path": "/bili/crawler_comments", "methods": ["POST"], "kind": "tool"}
+                ]
+            },
+            {
+                "name": "xhs_mcp",
+                "category": "小红书MCP", 
+                "prefix": "/xhs",
+                "tags": ["小红书", "笔记", "MCP工具"],
+                "routes": [
+                    {"path": "/xhs/search", "methods": ["POST"], "kind": "tool"},
+                    {"path": "/xhs/crawler_detail", "methods": ["POST"], "kind": "tool"},
+                    {"path": "/xhs/crawler_creator", "methods": ["POST"], "kind": "tool"},
+                    {"path": "/xhs/crawler_comments", "methods": ["POST"], "kind": "tool"}
+                ]
+            }
+        ]
 
         return json.dumps(
             {

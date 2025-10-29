@@ -1,11 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Bilibili 登录实现类（改造版）
+Bilibili 登录实现类
 
-关键改变：
-1. ❌ 移除：config.LOGIN_TYPE = login_type  （Line 39）
-2. ✅ 改为：self.login_type = login_type
-3. ✅ 所有 config.LOGIN_TYPE 改为 self.login_type
 """
 
 import asyncio
@@ -24,11 +20,7 @@ logger = get_logger()
 
 class BilibiliLogin(AbstractLogin):
     """
-    Bilibili 登录类（改造版）
-
-    改造要点：
-    - 不再修改全局 config
-    - login_type 作为实例属性存储
+    Bilibili 登录类
     """
 
     def __init__(

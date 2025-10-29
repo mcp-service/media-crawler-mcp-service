@@ -7,6 +7,7 @@ from __future__ import annotations
 import time
 from typing import Any, Dict, List, Optional
 from pathlib import Path
+import json
 
 import ujson
 
@@ -115,6 +116,23 @@ class RedisLoginStorage:
         key = self._platform_state_key(state.platform)
         await async_redis_storage.set(key, payload, ex=self.platform_ttl)
         await async_redis_storage.sadd(self.PLATFORM_INDEX_KEY, state.platform)
+
+        # 若为已登录状态，同时刷新本地 cookie 文件，便于外部工具读取
+        try:
+            if state.is_logged_in:
+                base_dir = Path("browser_data") / (state.platform or "unknown")
+                base_dir.mkdir(parents=True, exist_ok=True)
+                # cookies.txt
+                if state.cookie_str:
+                    (base_dir / "cookies.txt").write_text(state.cookie_str, encoding="utf-8")
+                # cookies.json
+                if state.cookie_dict:
+                    (base_dir / "cookies.json").write_text(
+                        json.dumps(state.cookie_dict, ensure_ascii=False, indent=2),
+                        encoding="utf-8",
+                    )
+        except Exception as exc:
+            self.logger.warning(f"[登录管理] 刷新本地 cookie 文件失败: {exc}")
 
     async def get_platform_state_raw(self, platform: str) -> Optional[Dict[str, Any]]:
         raw = await async_redis_storage.get(self._platform_state_key(platform))

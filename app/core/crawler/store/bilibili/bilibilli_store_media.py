@@ -6,7 +6,8 @@ from app.providers.logger import get_logger
 
 
 class BilibiliVideo:
-    video_store_path: str = "data/bilibili/videos"
+    # 统一使用平台代号目录，避免与 'bili' 重复
+    video_store_path: str = "data/bili/videos"
 
     async def store_video(self, video_content_item: Dict):
         """

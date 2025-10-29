@@ -5,7 +5,7 @@ import asyncio
 from datetime import datetime
 from decimal import Decimal
 from typing import AsyncGenerator, Dict, Any, Optional
-from fastapi.responses import JSONResponse, StreamingResponse
+from starlette.responses import JSONResponse, StreamingResponse
 from app.providers.logger import get_logger
 from app.api.scheme import error_codes
 

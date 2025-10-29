@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Platform endpoint blueprints package."""
 
-from app.api.endpoints.mcp.bilibili import bp as bilibili_bp
-from app.api.endpoints.mcp.xhs import bp as xhs_bp
+from app.api.endpoints.mcp.bilibili import bili_mcp
+from app.api.endpoints.mcp.xhs import xhs_mcp
 
-__all__ = ["bilibili_bp", "xhs_bp"]
+__all__ = ["bili_mcp", "xhs_mcp"]

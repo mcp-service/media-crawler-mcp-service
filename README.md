@@ -1,7 +1,5 @@
 # MediaCrawler MCP 服务
 
-![img2.png](docs/mcp.png)
-
 让 AI 原生使用社媒数据的MCP服务。爬虫部分参考了[MediaCrawler](https://github.com/NanmiCoder/MediaCrawler)，将其 CLI 爬虫升级为 MCP 标准工具，让 Claude / ChatGPT 直连调用，一次配置，长期可用。
 
 ![index .png](docs/index.png)
@@ -31,8 +29,36 @@
 
 MediaCrawler MCP Service 是面向个人的数据获取工具集，通过 MCP（Model Context Protocol）把社媒公开信息变成 AI 助手可直接调用的标准化工具。核心能力包括“登录外部化管理”“任务级配置隔离”“浏览器上下文复用”和“结构化数据输出”。
 
+本项目现已聚焦“高质量内容的爬取与自动化”，稳定与质量优先：
+
+- 优先支持高质量生态：Bilibili、小红书，其次抖音、微博、知乎、贴吧等。
+- 强调可持续的抗风控策略与最小化请求规模的精确抓取。
+- 输出面向 AI 分析的扁平结构，避免冗余嵌套与噪声字段。
+
+聚焦方向（高质量内容）：
+
+- 哔哩哔哩：视频内容与互动数据，适合视频分析与社交行为分析。
+- 小红书：电商导购、产品推荐与品牌分析。
+- 抖音：短视频与用户行为分析，适合营销效果评估。
+- 微博：舆情分析与热点追踪。
+- 知乎：知识管理与市场调研，专业领域分析价值高。
+
 
 ## 关键优势：
+
+- UI 升级为 FastMCP UI，管理页（/dashboard, /login, /config, /inspector）全部迁移并稳定运行。
+- 重构爬虫配置装配：去冗余封装，收敛为函数式构建与更清晰的分层。
+- 小红书改为 DOM 定位策略以降低风控敏感度，抓取更稳定（逐步完善中）。
+- Bilibili 登录与抓取逻辑优化，测试通过，运行稳定；移除部分 service 层 option 封装。
+- 路由改为直接使用 FastMCP 路由与蓝图，统一注册与调试体验。
+
+同时，数据持久化目录与展示统一为平台代号：
+
+- 目录统一：`bili`、`xhs`，不再使用历史目录名（如 `bilibili`）。
+- B 站媒体落盘路径：`data/bili/videos`。
+- “数据持久化概览”统计同时计入 `json/csv` 与 `videos` 子目录体积。
+
+![bili-detail.png](docs/bili_detail.png)
 
 ### 从脚本到标准：可复用的 MCP 工具
 
@@ -47,7 +73,9 @@ MediaCrawler MCP Service 是面向个人的数据获取工具集，通过 MCP（
 > 采用 分层解耦架构 和 Pydantic 模型，保证了高效的数据验证和一致性。状态缓存 和 风控设计 让系统更加稳定，减少了负载并提高了抓取效率。
 
 ### 文本格式友好：适合 AI 分析，不返回冗余嵌套数据
-![bili-detail.png](docs/bili-detail.png)
+
+![contentnice.png](docs/contentnice.png)
+
 > 与其他同类型MCP相比，media-crawler-mcp-service 返回的抓取数据 简洁、无冗余，特别适合 AI 分析。避免复杂的嵌套数据，让 AI 模型可以更轻松、更高效地处理数据。
 
 | 特性                     | `media-crawler-mcp-service`        | **MediaCrawler**     | **Bowenwin MCP Server**  |
@@ -69,7 +97,7 @@ MediaCrawler MCP Service 是面向个人的数据获取工具集，通过 MCP（
   - `bili_creator`
   - `bili_comments`
 
-- [x] 小红书搜索/详情/创作者/评论
+- [ ] 小红书搜索/详情/创作者/评论，**最近风控，正在修复**
   - `xhs_search`
   - `xhs_detail`
   - `xhs_creator`
@@ -77,9 +105,7 @@ MediaCrawler MCP Service 是面向个人的数据获取工具集，通过 MCP（
 
 ### 进行中
 - [ ] 抖音
-- [ ] 快手
 - [ ] 知乎
-- [ ] 贴吧
 - [ ] 微博
 - [ ] 其他外部api
 - [ ] JWT 鉴权：简单集成并实现安全的身份验证机制
@@ -123,60 +149,36 @@ poetry run python main.py    # 默认端口 9090
 ## 管理界面与登录
 
 ### 1) 打开管理界面 `http://localhost:9090/admin`
-   ![index .png](docs/index.png)
+   ![index.png](docs/index.png)
 ### 2) 进入“登录管理”，选择平台（如 B 站）
-   ![登录界面](docs/login.png)
+   ![login.png](docs/login.png)
 ### 3) 支持“二维码登录”或“Cookie 登录”，状态会持久化
-   ![登录状态](docs/login-state.png)
+   ![login_state.png](docs/login_state.png)
+
 
 ## 在 AI 助手中使用
 
-## 在 AI 助手中使用
+### MCP 连接
 
-### 多端点架构支持
+- MCP SSE 端点：`http://localhost:9090/mcp`
+- 管理页面提供在线调试：`http://localhost:9090/inspector`
+- 本地/内网默认无鉴权；公网部署请增加网关鉴权。
 
-从版本 2.0 开始，支持多 MCP 端点架构，每个平台提供独立的 MCP 连接：
+### 工具命名与平台代号
 
-```
-主服务端点：    /mcp        - 服务级工具（health, list_tools等）  
-小红书端点：    /mcp/xhs    - 小红书专用工具
-B站端点：      /mcp/bili   - B站专用工具  
-统一爬虫端点：  /mcp/crawl  - 跨平台统一工具
-```
+- 工具名统一为 `{platform}_{tool}`，平台代号：`bili`（哔哩哔哩）、`xhs`（小红书）。
+- 已注册示例：
+  - B 站：`bili_search`、`bili_crawler_detail`、`bili_crawler_creator`、`bili_search_time_range_http`、`bili_crawler_comments`
+  - 小红书：`xhs_search`、`xhs_crawler_detail`、`xhs_crawler_creator`、`xhs_crawler_comments`
 
-**连接方式：**
-- **完整服务**: `http://localhost:9090/mcp` (包含所有平台工具)
-- **小红书专用**: `http://localhost:9090/mcp/xhs` (仅小红书工具)
-- **B站专用**: `http://localhost:9090/mcp/bili` (仅B站工具)
-- **统一爬虫**: `http://localhost:9090/mcp/crawl` (跨平台工具)
+### 在 ChatGPT / Claude 中配置
 
-**使用建议：**
-- 如需特定平台功能，连接对应子端点获得更纯净的工具集
-- 如需跨平台分析，使用统一爬虫端点或主端点
-- 在管理界面的 MCP Inspector 中可切换不同端点进行调试
+- 将 MCP 服务器地址设置为上面的 SSE 端点。
+- 选择相应工具名与参数调用；不确定参数时，先在 `/inspector` 验证。
 
-你可以直接在 Claude/ChatGPT 中配置对应的 MCP 链接：
-```
-示例对话：
-“帮我搜索 Python 机器学习相关的 B 站视频，并分析受欢迎程度与创作者。”
-→ 自动调用 `bili_search` 获取数据 → 结合指标分析 → 输出洞察
-```
+### 常用调用示例
 
-## 工具总览
-
-管理页的 MCP Tools Inspector 支持多端点切换，可查看不同端点的工具并进行在线调试。
-
-### 端点工具分布
-
-**主服务端点** (`/mcp`)：
-- `service_info` - 服务信息
-- `service_health` - 健康检查  
-- `list_tools` - 工具列表
-- `tool_info` - 工具详情
-
-**B站端点** (`/mcp/bili`)：
-
-- `bili_search`（推荐，快速搜索）
+- B 站搜索（bili_search）
 ```json
 {
   "keywords": "Python 机器学习",
@@ -185,76 +187,58 @@ B站端点：      /mcp/bili   - B站专用工具
 }
 ```
 
-- `bili_detail`（指定视频详情）
+- B 站视频详情（bili_crawler_detail）
 ```json
 {
-  "video_ids": [
-    "444445981"
-  ]
+  "video_ids": ["444445981"]
 }
 ```
-![img.png](docs/bili-detail.png)
-- `bili_creator`（创作者分析）
-```json
-{ "creator_ids": ["99801185"], "creator_mode": true }
-```
 
-![工具测试](docs/tools-test.png)
-
-**小红书端点** (`/mcp/xhs`)：
-- `xhs_search` - 小红书关键词搜索
-- `xhs_detail` - 小红书笔记详情  
-- `xhs_creator` - 小红书创作者作品
-- `xhs_comments` - 小红书笔记评论
-
-**统一爬虫端点** (`/mcp/crawl`)：
-- `crawl_search` - 跨平台搜索
-- `crawl_detail` - 跨平台详情
-- `crawl_creator` - 跨平台创作者
-
-### 工具使用示例
-
-- `xhs_search`（小红书关键词搜索，返回本页摘要，不拉详情）
+- 小红书搜索（xhs_search）
 ```json
 {
-  "keywords": "纯圆大嬛嬛",
+  "keywords": "咖啡",
   "page_num": 1,
   "page_size": 20
 }
 ```
 
-- `xhs_detail`（小红书笔记详情，不含评论；xsec_token 必传）
+- 小红书详情（xhs_crawler_detail，xsec_token 必传）
 ```json
 {
   "note_id": "68f9b8b20000000004010353",
-  "xsec_token": "从搜索结果或分享链接中获取（必传）",
-  "xsec_source": "可选，未传时默认 pc_search"
+  "xsec_token": "从搜索结果或分享链接解析",
+  "xsec_source": "pc_search"
 }
 ```
 
-- `xhs_creator`（小红书创作者作品，不含评论）
-```json
-{
-  "creator_ids": ["user123", "user456"]
-}
-```
+## 工具总览
 
-- `xhs_comments`（小红书笔记评论，单条获取）
-```json
-{
-  "note_id": "68f9b8b20000000004010353",
-  "xsec_token": "从搜索结果获取（必传）",
-  "xsec_source": "可选，未传时默认 pc_search",
-  "max_comments": 50
-}
-```
+管理页的 MCP Tools Inspector 会按平台分组展示已注册工具，并可在线调用调试。
 
-说明：
-- **xsec_token 是必传参数**：小红书网页端对详情和评论访问存在严格的风控校验，`xhs_detail` 和 `xhs_comments` 都必须传入 `xsec_token`（可从 `xhs_search` 返回结果中获取，或从分享链接解析）。
-- **原子化设计**：`xhs_comments` 仅支持单条笔记查询，不支持批量，符合 MCP 工具原子化原则。
-- **数据完整性**：所有工具返回的数据已包含完整的用户信息（user_id、nickname、avatar）和交互数据（点赞、收藏、评论、分享数），支持中文数字格式解析（如"3万"自动转为 30000）。
-- **评论获取已独立**：`xhs_detail` 仅返回笔记详情，需要评论时请单独调用 `xhs_comments` 工具。
-- 当未传 `xsec_source` 时，服务会默认使用 `pc_search`；仍无法访问时请检查登录态、token 是否过期或笔记是否被限制浏览。
+### 工具分布（按平台分组）
+
+- 服务工具（service）
+  - `service_info` - 服务信息
+  - `service_health` - 健康检查
+  - `list_tools` - 工具列表
+  - `tool_info` - 工具详情
+
+- B 站（bili）
+  - `bili_search` - 关键词搜索
+  - `bili_crawler_detail` - 视频详情
+  - `bili_crawler_creator` - 创作者内容/信息
+  - `bili_search_time_range_http` - 时间范围搜索
+  - `bili_crawler_comments` - 视频评论
+
+- 小红书（xhs）
+  - `xhs_search` - 关键词搜索
+  - `xhs_crawler_detail` - 笔记详情（需 xsec_token）
+  - `xhs_crawler_creator` - 创作者作品
+  - `xhs_crawler_comments` - 笔记评论
+
+![mcp_tools_inspector.png](docs/mcp_tools_inspector.png)
+
 
 ## 架构与技术选择
 
@@ -278,55 +262,8 @@ B站端点：      /mcp/bili   - B站专用工具
 💾 Redis 状态缓存 · 本地/结构化存储
 ```
 
-### 浏览器实例管理（亮点）
+## 开发与贡献流程
 
-**问题背景：** 多平台环境下，浏览器实例管理不当会导致：
-- 不同平台共享浏览器上下文，Cookie 和登录状态互相干扰
-- 频繁创建/销毁浏览器实例，性能低下
-- 登录会话与爬虫任务竞争资源，导致状态混乱
-
-**解决方案：BrowserManager 统一管理**
-- **平台级隔离**：每个平台（Bilibili、小红书等）维护独立的浏览器实例
-- **上下文复用**：同一平台的 Login 和 Crawler 自动共享浏览器实例，避免重复创建
-- **引用计数**：通过 `acquire_context()` 和 `release_context()` 精确管理实例生命周期
-- **互斥锁保护**：防止并发创建多个实例，确保线程安全
-- **登录防抖**：平台级登录锁，防止用户多次点击触发重复登录请求
-
-**效果：**
-- 浏览器启动时间从 3-5s 降至 0.1s（上下文复用）
-- 登录状态稳定，不再出现平台间干扰
-- 防止并发登录导致的资源竞争
-
-对比传统 CLI 脚本：
-- 调用方式：脚本 → MCP 工具（AI 原生支持）
-- 登录管理：脚本内逻辑 → 外部化页面 + 持久化
-- 性能：每次冷启动 → 浏览器常驻复用（3-5s → 0.1s）
-- 设计：全局变量 → 任务级配置隔离 + 平台级浏览器隔离
-- 输出：原始结果 → Pydantic 结构化
-
-## Roadmap
-- 小红书 / 抖音 / 快手 / 知乎 / 微博 / 贴吧 适配
-- 工具调试器与可视化增强（过滤、导出、趋势）
-- 更细粒度的速率与风控策略
-- 更多存储目标（PGSQL 持久化）
-
-## 开发与贡献
-
-参考路径：
-- 启动入口：`main.py:1`
-- 应用工厂：`app/api_service.py:1`
-- 管理界面路由：`app/api/endpoints/admin/admin_page_endpoint.py:1`
-- 工具清单接口：`app/api/endpoints/admin/mcp_inspector_endpoint.py:1`
-
-新增平台的典型步骤：
-1) 添加登录适配器：`app/core/login/{platform}/...`
-2) 实现平台爬虫与编排：`app/core/crawler/platforms/{platform}/...`
-3) 包装为 MCP 工具：`app/core/mcp_tools/{platform}.py`
-4) 注册路由：`app/api/endpoints/mcp/{platform}.py`
-
-更多部署与运维选项：`deploy/README.md:1`
-
-贡献流程：
 1) Fork 并创建特性分支
 2) 阅读项目规范：`Agent.md:1`
 3) 本地开发与自测

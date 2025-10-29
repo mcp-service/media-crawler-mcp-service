@@ -10,18 +10,12 @@ from typing import List
 from pydantic import BaseModel
 from starlette.responses import JSONResponse
 
-from app.api.endpoints.base import MCPBlueprint
+from fastmcp import FastMCP
 from app.config.settings import Platform, global_settings
 from app.providers.logger import get_logger
-
+from app.api.endpoints import main_app
 
 logger = get_logger()
-bp = MCPBlueprint(
-    prefix="/api/config",
-    name="config",
-    tags=["配置管理"],
-    category="admin",
-)
 
 
 class PlatformConfigUpdate(BaseModel):
@@ -31,16 +25,14 @@ class PlatformConfigUpdate(BaseModel):
 
 
 class CrawlerConfigUpdate(BaseModel):
-    """爬虫配置更新"""
+    """爬虫配置更新（精简为当前实际可用项）"""
 
-    max_notes: int = 15
-    enable_comments: bool = True
-    max_comments_per_note: int = 10
-    headless: bool = False
-    save_data_option: str = "json"
+    headless: bool | None = None
+    save_data_option: str | None = None
+    output_dir: str | None = None
+    enable_save_media: bool | None = None
 
-
-@bp.route("/platforms", methods=["GET"])
+@main_app.custom_route("/api/config/platforms", methods=["GET"])
 async def get_platform_config(request):
     """获取平台配置"""
     try:
@@ -69,8 +61,7 @@ async def get_platform_config(request):
         logger.error(f"[配置管理] 获取平台配置失败: {exc}")
         return JSONResponse(content={"detail": str(exc)}, status_code=500)
 
-
-@bp.route("/platforms", methods=["PUT"])
+@main_app.custom_route("/api/config/platforms", methods=["PUT"])
 async def update_platform_config(request):
     """
     更新平台配置
@@ -126,17 +117,15 @@ async def update_platform_config(request):
         logger.error(f"[配置管理] 更新平台配置失败: {exc}")
         return JSONResponse(content={"detail": str(exc)}, status_code=500)
 
-
-@bp.route("/crawler", methods=["GET"])
+@main_app.custom_route("/api/config/crawler", methods=["GET"])
 async def get_crawler_config(request):
     """获取爬虫配置"""
     try:
         data = {
-            "max_notes": int(global_settings.crawl.max_notes_count),
-            "enable_comments": bool(global_settings.crawl.enable_get_comments),
-            "max_comments_per_note": int(global_settings.crawl.max_comments_per_note),
             "headless": bool(global_settings.browser.headless),
             "save_data_option": str(global_settings.store.save_format),
+            "output_dir": getattr(global_settings.store, "output_dir", "./data"),
+            "enable_save_media": bool(getattr(global_settings.store, "enable_save_media", False)),
         }
         return JSONResponse(content=data)
 
@@ -144,8 +133,7 @@ async def get_crawler_config(request):
         logger.error(f"[配置管理] 获取爬虫配置失败: {exc}")
         return JSONResponse(content={"detail": str(exc)}, status_code=500)
 
-
-@bp.route("/crawler", methods=["PUT"])
+@main_app.custom_route("/api/config/crawler", methods=["PUT"])
 async def update_crawler_config(request):
     """
     更新爬虫配置
@@ -162,13 +150,16 @@ async def update_crawler_config(request):
             with open(env_file, "r", encoding="utf-8") as f:
                 env_lines = f.readlines()
 
-        config_map = {
-            "CRAWL__MAX_NOTES_COUNT": str(config.max_notes),
-            "CRAWL__ENABLE_GET_COMMENTS": str(config.enable_comments).lower(),
-            "CRAWL__MAX_COMMENTS_PER_NOTE": str(config.max_comments_per_note),
-            "BROWSER__HEADLESS": str(config.headless).lower(),
-            "STORE__SAVE_FORMAT": config.save_data_option,
-        }
+        # 仅写入当前存在的配置项
+        config_map: dict[str, str] = {}
+        if config.headless is not None:
+            config_map["BROWSER__HEADLESS"] = str(config.headless).lower()
+        if config.save_data_option is not None:
+            config_map["STORE__SAVE_FORMAT"] = config.save_data_option
+        if config.output_dir is not None:
+            config_map["STORE__OUTPUT_DIR"] = config.output_dir
+        if config.enable_save_media is not None:
+            config_map["STORE__ENABLE_SAVE_MEDIA"] = str(config.enable_save_media).lower()
 
         new_lines: List[str] = []
         updated_keys = set()
@@ -203,7 +194,7 @@ async def update_crawler_config(request):
         return JSONResponse(content={"detail": str(exc)}, status_code=500)
 
 
-@bp.route("/database", methods=["GET"])
+@main_app.custom_route("/api/config/database", methods=["GET"])
 async def get_database_config(request):
     """获取数据库配置（隐藏敏感信息）"""
     try:
@@ -223,7 +214,7 @@ async def get_database_config(request):
         return JSONResponse(content={"detail": str(exc)}, status_code=500)
 
 
-@bp.route("/current", methods=["GET"])
+@main_app.custom_route("/api/config/current", methods=["GET"])
 async def get_current_config(request):
     """获取当前完整配置"""
     try:
@@ -252,6 +243,3 @@ async def get_current_config(request):
     except Exception as exc:
         logger.error(f"[配置管理] 获取当前配置失败: {exc}")
         return JSONResponse(content={"detail": str(exc)}, status_code=500)
-
-
-__all__ = ["bp"]

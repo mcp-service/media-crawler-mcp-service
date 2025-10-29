@@ -7,8 +7,6 @@ import uuid
 
 from pydantic import ValidationError
 from starlette.responses import JSONResponse
-
-from app.api.endpoints.base import MCPBlueprint
 from app.api.scheme.request.login_scheme import (
     LoginStatusResponse,
     LogoutResponse,
@@ -20,20 +18,14 @@ from app.api.scheme.request.login_scheme import (
 from app.config.settings import global_settings
 from app.core.login import LoginServiceError, login_service
 from app.providers.logger import get_logger
-
+from app.api.endpoints import main_app
 
 logger = get_logger()
 service = login_service
 
-bp = MCPBlueprint(
-    prefix="/api/login",
-    name="login",
-    tags=["登录管理", "平台认证"],
-    category="admin",
-)
 
-
-@bp.route("/platforms", methods=["GET"])
+@main_app.custom_route("/platforms", methods=["GET"])
+@main_app.custom_route("/api/login/platforms", methods=["GET"])
 async def login_get_platforms(request):
     try:
         platforms = service.get_supported_platforms()
@@ -52,7 +44,8 @@ async def login_get_platforms(request):
         return JSONResponse(content={"detail": str(exc)}, status_code=500)
 
 
-@bp.route("/start", methods=["POST"])
+@main_app.custom_route("/start", methods=["POST"])
+@main_app.custom_route("/api/login/start", methods=["POST"])
 async def login_start(request):
     try:
         payload = await request.json()
@@ -78,7 +71,8 @@ async def login_start(request):
         return JSONResponse(content={"detail": "启动登录失败"}, status_code=500)
 
 
-@bp.route("/status/{platform}", methods=["GET"])
+@main_app.custom_route("/status/{platform}", methods=["GET"])
+@main_app.custom_route("/api/login/status/{platform}", methods=["GET"])
 async def login_status(request):
     platform = request.path_params.get("platform", "")
     try:
@@ -95,7 +89,8 @@ async def login_status(request):
         return JSONResponse(content={"detail": "获取登录状态失败"}, status_code=500)
 
 
-@bp.route("/logout/{platform}", methods=["POST"])
+@main_app.custom_route("/logout/{platform}", methods=["POST"])
+@main_app.custom_route("/api/login/logout/{platform}", methods=["POST"])
 async def login_logout(request):
     platform = request.path_params.get("platform", "")
     try:
@@ -112,7 +107,8 @@ async def login_logout(request):
         return JSONResponse(content={"detail": "退出登录失败"}, status_code=500)
 
 
-@bp.route("/session/{session_id}", methods=["GET"])
+@main_app.custom_route("/session/{session_id}", methods=["GET"])
+@main_app.custom_route("/api/login/session/{session_id}", methods=["GET"])
 async def login_session_status(request):
     session_id = request.path_params.get("session_id", "")
 
@@ -135,10 +131,23 @@ async def login_session_status(request):
         return JSONResponse(content={"detail": "获取会话状态失败"}, status_code=500)
 
 
-@bp.route("/sessions", methods=["GET"])
+@main_app.custom_route("/sessions", methods=["GET"])
+@main_app.custom_route("/api/login/sessions", methods=["GET"])
 async def login_sessions(request):
     try:
-        result = await service.list_sessions()
+        params = request.query_params or {}
+        truthy = ('1', 'true', 'yes', 'y', 'on')
+        force = str(params.get('force', '0')).lower() in truthy
+
+        if force:
+            # 仅刷新小红书为 DOM 检测并回写（不分离新端点）
+            from app.config.settings import Platform
+            await service.refresh_platform_state(Platform.XIAOHONGSHU.value, force=True, strict=True)
+            # 之后走缓存读取，避免其它平台被动触发
+            result = await service.list_sessions_cached()
+        else:
+            # 仅从缓存读取
+            result = await service.list_sessions_cached()
         response_models = [PlatformSessionInfo.model_validate(item) for item in result]
         return JSONResponse(content=[model.model_dump() for model in response_models])
     except ValidationError as exc:
@@ -147,6 +156,3 @@ async def login_sessions(request):
     except Exception as exc:
         logger.error(f"获取会话列表失败: {exc}")
         return JSONResponse(content={"detail": "获取会话列表失败"}, status_code=500)
-
-
-__all__ = ["bp"]

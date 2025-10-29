@@ -76,7 +76,7 @@ class BilibiliClient:  # 移除 AbstractApiClient 继承
     async def request(self, method, url, **kwargs) -> Any:
         async with httpx.AsyncClient(proxy=self.proxy) as client:
             response = await client.request(method, url, timeout=self.timeout, **kwargs)
-
+            logger.debug(f"[BilibiliClient.request] ----->url:{url} response:{response.json()}")
         try:
             data: Dict = response.json()
         except json.JSONDecodeError:
@@ -142,19 +142,61 @@ class BilibiliClient:  # 移除 AbstractApiClient 继承
         return await self.request(method="POST", url=f"{self._host}{uri}", data=json_str, headers=self.headers)
 
     async def pong(self) -> bool:
-        """get a note to check if login state is ok"""
-        logger.info("[BilibiliClient.pong] Begin pong bilibili...")
-        ping_flag = False
+        """Check login state by calling Bilibili nav API, with browser fallback.
+
+        1) Try httpx request to /x/web-interface/nav
+        2) If banned/failed or not isLogin, fallback to page-side fetch with credentials
+        """
+        # Prefer page-side check first to avoid 412/risk control
         try:
-            check_login_uri = "/x/web-interface/nav"
-            response = await self.get(check_login_uri)
-            if response.get("isLogin"):
-                logger.info("[BilibiliClient.pong] Use cache login state get web interface successfull!")
-                ping_flag = True
+            current_url = ""
+            try:
+                current_url = self.playwright_page.url or ""
+            except Exception:
+                current_url = ""
+            if "bilibili.com" not in current_url:
+                try:
+                    await self.playwright_page.goto("https://www.bilibili.com/", wait_until="domcontentloaded", timeout=10000)
+                except Exception:
+                    pass
+            eval_result = await self.playwright_page.evaluate(
+                """
+                async () => {
+                    try {
+                        const resp = await fetch('https://api.bilibili.com/x/web-interface/nav', { credentials: 'include' });
+                        const status = resp.status;
+                        const text = await resp.text();
+                        try {
+                            const data = JSON.parse(text);
+                            return { ok: status === 200, code: data?.code, isLogin: data?.data?.isLogin === true };
+                        } catch (_) {
+                            return { ok: status === 200, raw: text };
+                        }
+                    } catch (err) {
+                        return { ok: false, error: String(err) };
+                    }
+                }
+                """
+            )
+            if isinstance(eval_result, dict) and eval_result.get("isLogin") is True:
+                logger.info("[BilibiliClient.pong] nav OK via browser fetch")
+                return True
+            logger.warning(f"[BilibiliClient.pong] page result: {eval_result}")
+        except Exception as be:
+            logger.warning(f"[BilibiliClient.pong] page evaluate failed: {be}")
+
+        # Fallback: httpx
+        try:
+            resp = await self.request(
+                method="GET",
+                url=f"{self._host}/x/web-interface/nav",
+                headers=self.headers,
+            )
+            if isinstance(resp, dict) and resp.get("isLogin"):
+                return True
         except Exception as e:
-            logger.error(f"[BilibiliClient.pong] Pong bilibili failed: {e}, and try to login again...")
-            ping_flag = False
-        return ping_flag
+            logger.warning(f"[BilibiliClient.pong] httpx nav failed: {e}")
+        return False
 
     async def update_cookies(self, browser_context: BrowserContext):
         logger.info("[BilibiliClient.update_cookies] Updating cookies from browser context...")

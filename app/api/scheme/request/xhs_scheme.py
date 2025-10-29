@@ -118,3 +118,37 @@ class XhsCommentsRequest(_XhsBaseRequest):
         }
         params.update(self.to_common_params())
         return params
+
+
+class XhsPublishRequest(_XhsBaseRequest):
+    title: str = Field(..., description="标题")
+    content: str = Field("", description="正文内容")
+    images: List[str] = Field(..., min_length=1, description="图片绝对路径列表")
+    tags: Optional[List[str]] = Field(default=None, description="标签列表，最多10个")
+
+    def to_service_params(self) -> Dict[str, Any]:
+        params = {
+            "title": self.title,
+            "content": self.content,
+            "images": self.images,
+            "tags": self.tags or [],
+        }
+        params.update(self.to_common_params())
+        return params
+
+
+class XhsPublishVideoRequest(_XhsBaseRequest):
+    title: str = Field(..., description="标题")
+    content: str = Field("", description="正文内容")
+    video: str = Field(..., description="视频绝对路径")
+    tags: Optional[List[str]] = Field(default=None, description="标签列表，最多10个")
+
+    def to_service_params(self) -> Dict[str, Any]:
+        params = {
+            "title": self.title,
+            "content": self.content,
+            "video": self.video,
+            "tags": self.tags or [],
+        }
+        params.update(self.to_common_params())
+        return params

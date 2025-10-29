@@ -12,24 +12,17 @@ from typing import Dict, Optional
 import psutil
 from starlette.responses import JSONResponse
 
-from app.api.endpoints.base import MCPBlueprint
+from fastmcp import FastMCP
 from app.config.settings import Platform, global_settings
 from app.providers.cache.redis_cache import async_redis_storage
 from app.core.login import login_service
 from app.core.login.models import PlatformLoginState
 from app.providers.logger import get_logger
-
+from app.api.endpoints import main_app
 
 logger = get_logger()
-bp = MCPBlueprint(
-    prefix="/api/status",
-    name="status",
-    tags=["状态监控"],
-    category="admin",
-)
 
-
-@bp.route("/system", methods=["GET"])
+@main_app.custom_route("/api/status/system", methods=["GET"])
 async def get_system_status(request):
     """获取系统状态"""
     try:
@@ -49,8 +42,7 @@ async def get_system_status(request):
         logger.error(f"[状态监控] 获取系统状态失败: {exc}")
         return JSONResponse(content={"detail": str(exc)}, status_code=500)
 
-
-@bp.route("/data", methods=["GET"])
+@main_app.custom_route("/api/status/data", methods=["GET"])
 async def get_data_status(request):
     """获取爬取数据统计"""
     try:
@@ -72,18 +64,27 @@ async def get_data_status(request):
             }
             return JSONResponse(content=data)
 
+        def _collect_files(p: Path):
+            files = list(p.glob("*.json")) + list(p.glob("*.csv"))
+            json_dir = p / "json"
+            csv_dir = p / "csv"
+            videos_dir = p / "videos"
+            if json_dir.exists() and json_dir.is_dir():
+                files += list(json_dir.glob("*.json"))
+            if csv_dir.exists() and csv_dir.is_dir():
+                files += list(csv_dir.glob("*.csv"))
+            # 统计视频等二进制文件体积与数量（不参与 latest_file 名称显示）
+            bin_files = []
+            if videos_dir.exists() and videos_dir.is_dir():
+                bin_files += [f for f in videos_dir.rglob("*") if f.is_file()]
+            return files, bin_files
+
         for platform_dir in data_path.iterdir():
             if platform_dir.is_dir():
-                # 非递归：仅统计平台目录根及特定子目录(json/csv)下的直系文件
-                files = list(platform_dir.glob("*.json")) + list(platform_dir.glob("*.csv"))
-                json_dir = platform_dir / "json"
-                csv_dir = platform_dir / "csv"
-                if json_dir.exists() and json_dir.is_dir():
-                    files += list(json_dir.glob("*.json"))
-                if csv_dir.exists() and csv_dir.is_dir():
-                    files += list(csv_dir.glob("*.csv"))
-
+                files, bin_files = _collect_files(platform_dir)
                 size = sum(f.stat().st_size for f in files if f.is_file())
+                bin_size = sum(f.stat().st_size for f in bin_files)
+
                 latest_file = "无"
                 if files:
                     newest = max(files, key=lambda f: f.stat().st_mtime)
@@ -91,12 +92,12 @@ async def get_data_status(request):
 
                 platform_stats[platform_dir.name] = {
                     "files_count": len(files),
-                    "total_size_mb": round(size / 1024 / 1024, 2),
+                    "total_size_mb": round((size + bin_size) / 1024 / 1024, 2),
                     "latest_file": latest_file,
                 }
 
                 total_files += len(files)
-                total_size += size
+                total_size += (size + bin_size)
 
         data = {
             "status": "active",
@@ -113,7 +114,7 @@ async def get_data_status(request):
         return JSONResponse(content={"detail": str(exc)}, status_code=500)
 
 
-@bp.route("/services", methods=["GET"])
+@main_app.custom_route("/api/status/services", methods=["GET"])
 async def get_services_status(request):
     """获取服务状态"""
     try:
@@ -173,7 +174,7 @@ async def get_services_status(request):
         return JSONResponse(content={"detail": str(exc)}, status_code=500)
 
 
-@bp.route("/platforms", methods=["GET"])
+@main_app.custom_route("/api/status/platforms", methods=["GET"])
 async def get_platforms_status(request):
     """获取平台状态"""
     try:
@@ -227,7 +228,7 @@ async def get_platforms_status(request):
         return JSONResponse(content={"detail": str(exc)}, status_code=500)
 
 
-@bp.route("/summary", methods=["GET"])
+@main_app.custom_route("/api/status/summary", methods=["GET"])
 async def get_status_summary(request):
     """获取状态概述"""
     try:
@@ -272,6 +273,3 @@ async def get_status_summary(request):
     except Exception as exc:
         logger.error(f"[状态监控] 获取状态概述失败: {exc}")
         return JSONResponse(content={"detail": str(exc)}, status_code=500)
-
-
-__all__ = ["bp"]

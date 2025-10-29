@@ -7,151 +7,238 @@ import json
 from typing import Any, Dict
 
 from pydantic import ValidationError
-from starlette.responses import JSONResponse
-
-from app.api.endpoints.base import MCPBlueprint
-from app.api.scheme import error_codes, jsonify_response
+from fastmcp import FastMCP
+from app.api.scheme import error_codes
 from app.api.scheme.request.xhs_scheme import (
     XhsCommentsRequest,
     XhsCreatorRequest,
     XhsDetailRequest,
     XhsSearchRequest,
+    XhsPublishRequest,
+    XhsPublishVideoRequest,
 )
 from app.config.settings import Platform
-from app.core.mcp_tools import xhs as xhs_tools
+from app.core.mcp import xhs as xhs_tools
 from app.core.login.exceptions import LoginExpiredError
 from app.providers.logger import get_logger
 
 logger = get_logger()
-bp = MCPBlueprint(
-    prefix=f"/{Platform.XIAOHONGSHU.value}",
-    name=Platform.XIAOHONGSHU.value,
-    tags=["xhs"],
-    category=Platform.XIAOHONGSHU.value,
+
+xhs_mcp = FastMCP(name="小红书MCP")
+
+def _validation_error(exc: ValidationError) -> Dict[str, Any]:
+    return {
+        "code": error_codes.PARAM_ERROR[0],
+        "msg": error_codes.PARAM_ERROR[1],
+        "data": {"errors": exc.errors()},
+    }
+
+
+def _server_error(message: str) -> Dict[str, Any]:
+    return {
+        "code": error_codes.SERVER_ERROR[0],
+        "msg": message or error_codes.SERVER_ERROR[1],
+        "data": {},
+    }
+
+
+@xhs_mcp.tool(
+    name="search",
+    description="小红书关键词搜索",
+    tags={"xiaohongshu", "search"}
 )
-
-
-def _validation_error(exc: ValidationError) -> JSONResponse:
-    return JSONResponse(
-        {
-            "code": error_codes.PARAM_ERROR[0],
-            "msg": error_codes.PARAM_ERROR[1],
-            "data": {"errors": exc.errors()},
-        },
-        status_code=400,
-    )
-
-
-def _server_error(message: str) -> JSONResponse:
-    return JSONResponse(
-        {
-            "code": error_codes.SERVER_ERROR[0],
-            "msg": message or error_codes.SERVER_ERROR[1],
-            "data": {},
-        },
-        status_code=500,
-    )
-
-
-@bp.route("/search", methods=["POST"])
-async def xhs_search_http(request):
-    payload = await _safe_json(request)
+async def search(keywords: str, page_num: int = 1, page_size: int = 20):
     try:
-        req = XhsSearchRequest.model_validate(payload)
+        req = XhsSearchRequest.model_validate({
+            "keywords": keywords,
+            "page_num": page_num,
+            "page_size": page_size
+        })
     except ValidationError as exc:
         return _validation_error(exc)
 
     try:
         result = await xhs_tools.xhs_search(**req.to_service_params())
-        return jsonify_response(_as_dict(result))
+        return {
+            "code": error_codes.SUCCESS[0],
+            "msg": error_codes.SUCCESS[1],
+            "data": _as_dict(result),
+        }
     except LoginExpiredError:
-        return jsonify_response({}, status_response=(error_codes.INVALID_TOKEN[0], "登录过期，Cookie失效"))
+        return {
+            "code": error_codes.INVALID_TOKEN[0],
+            "msg": "登录过期，Cookie失效",
+            "data": {},
+        }
     except Exception as exc:  # pragma: no cover - runtime safeguard
         logger.error(f"[xhs.search] failed: {exc}")
         return _server_error(f"小红书搜索失败: {exc}")
 
 
-@bp.route("/detail", methods=["POST"])
-async def xhs_detail_http(request):
-    payload = await _safe_json(request)
+@xhs_mcp.tool(
+    name="crawler_detail",
+    description="获取小红书笔记详情（必传：note_id, xsec_token；xsec_source 未传默认 pc_search）",
+    tags={"xiaohongshu", "detail"}
+)
+async def crawler_detail(note_id: str, xsec_token: str, xsec_source: str = "pc_search"):
     try:
-        req = XhsDetailRequest.model_validate(payload)
+        req = XhsDetailRequest.model_validate({
+            "note_id": note_id,
+            "xsec_token": xsec_token,
+            "xsec_source": xsec_source
+        })
     except ValidationError as exc:
         return _validation_error(exc)
 
     try:
         result = await xhs_tools.xhs_detail(**req.to_service_params())
-        return jsonify_response(_as_dict(result))
+        return {
+            "code": error_codes.SUCCESS[0],
+            "msg": error_codes.SUCCESS[1],
+            "data": _as_dict(result),
+        }
     except LoginExpiredError:
-        return jsonify_response({}, status_response=(error_codes.INVALID_TOKEN[0], "登录过期，Cookie失效"))
+        return {
+            "code": error_codes.INVALID_TOKEN[0],
+            "msg": "登录过期，Cookie失效",
+            "data": {},
+        }
     except Exception as exc:
         logger.error(f"[xhs.detail] failed: {exc}")
         return _server_error(f"小红书详情抓取失败: {exc}")
 
 
-@bp.route("/creator", methods=["POST"])
-async def xhs_creator_http(request):
-    payload = await _safe_json(request)
+@xhs_mcp.tool(
+    name="crawler_creator",
+    description="获取小红书创作者作品",
+    tags={"xiaohongshu", "creator"}
+)
+async def crawler_creator(creator_ids: list[str], save_media: bool = False):
     try:
-        req = XhsCreatorRequest.model_validate(payload)
+        req = XhsCreatorRequest.model_validate({
+            "creator_ids": creator_ids,
+            "save_media": save_media
+        })
     except ValidationError as exc:
         return _validation_error(exc)
 
     try:
         result = await xhs_tools.xhs_creator(**req.to_service_params())
-        return jsonify_response(_as_dict(result))
+        return {
+            "code": error_codes.SUCCESS[0],
+            "msg": error_codes.SUCCESS[1],
+            "data": _as_dict(result),
+        }
     except LoginExpiredError:
-        return jsonify_response({}, status_response=(error_codes.INVALID_TOKEN[0], "登录过期，Cookie失效"))
+        return {
+            "code": error_codes.INVALID_TOKEN[0],
+            "msg": "登录过期，Cookie失效",
+            "data": {},
+        }
     except Exception as exc:
         logger.error("[xhs.creator] failed: %s", exc)
         return _server_error(f"小红书创作者抓取失败: {exc}")
 
 
-@bp.route("/comments", methods=["POST"])
-async def xhs_comments_http(request):
-    payload = await _safe_json(request)
+@xhs_mcp.tool(
+    name="crawler_comments",
+    description="小红书笔记评论",
+    tags={"xiaohongshu", "comments"}
+)
+async def crawler_comments(note_id: str, xsec_token: str, max_comments: int = 50):
     try:
-        req = XhsCommentsRequest.model_validate(payload)
+        req = XhsCommentsRequest.model_validate({
+            "note_id": note_id,
+            "xsec_token": xsec_token,
+            "max_comments": max_comments
+        })
     except ValidationError as exc:
         return _validation_error(exc)
 
     try:
         result = await xhs_tools.xhs_comments(**req.to_service_params())
-        return jsonify_response(_as_dict(result))
+        return {
+            "code": error_codes.SUCCESS[0],
+            "msg": error_codes.SUCCESS[1],
+            "data": _as_dict(result),
+        }
     except LoginExpiredError:
-        return jsonify_response({}, status_response=(error_codes.INVALID_TOKEN[0], "登录过期，Cookie失效"))
+        return {
+            "code": error_codes.INVALID_TOKEN[0],
+            "msg": "登录过期，Cookie失效",
+            "data": {},
+        }
     except Exception as exc:
         logger.error("[xhs.comments] failed: %s", exc)
         return _server_error(f"小红书评论抓取失败: {exc}")
 
 
-bp.tool(
-    "xhs_search",
-    description="小红书关键词搜索",
-    http_path="/search",
-    http_methods=["POST"],
-)(xhs_tools.xhs_search)
+@xhs_mcp.tool(
+    name="publish_image",
+    description="发布小红书图文内容",
+    tags={"xiaohongshu", "publish"}
+)
+async def publish_image(title: str, content: str, images: list[str], tags: list[str] | None = None):
+    try:
+        req = XhsPublishRequest.model_validate({
+            "title": title,
+            "content": content,
+            "images": images,
+            "tags": tags or [],
+        })
+    except ValidationError as exc:
+        return _validation_error(exc)
 
-bp.tool(
-    "xhs_detail",
-    description="小红书笔记详情（必传：node_id, xsec_token；xsec_source 未传默认 pc_search）",
-    http_path="/detail",
-    http_methods=["POST"],
-)(xhs_tools.xhs_detail)
+    try:
+        result = await xhs_tools.xhs_publish(**req.to_service_params())
+        return {
+            "code": error_codes.SUCCESS[0],
+            "msg": error_codes.SUCCESS[1],
+            "data": _as_dict(result),
+        }
+    except LoginExpiredError:
+        return {
+            "code": error_codes.INVALID_TOKEN[0],
+            "msg": "登录过期，Cookie失效",
+            "data": {},
+        }
+    except Exception as exc:
+        logger.error("[xhs.publish] failed: %s", exc)
+        return _server_error(f"小红书发布失败: {exc}")
 
-bp.tool(
-    "xhs_creator",
-    description="小红书创作者作品",
-    http_path="/creator",
-    http_methods=["POST"],
-)(xhs_tools.xhs_creator)
 
-bp.tool(
-    "xhs_comments",
-    description="小红书笔记评论",
-    http_path="/comments",
-    http_methods=["POST"],
-)(xhs_tools.xhs_comments)
+@xhs_mcp.tool(
+    name="publish_video",
+    description="发布小红书视频内容",
+    tags={"xiaohongshu", "publish"}
+)
+async def publish_video(title: str, content: str, video: str, tags: list[str] | None = None):
+    try:
+        req = XhsPublishVideoRequest.model_validate({
+            "title": title,
+            "content": content,
+            "video": video,
+            "tags": tags or [],
+        })
+    except ValidationError as exc:
+        return _validation_error(exc)
+
+    try:
+        result = await xhs_tools.xhs_publish_video(**req.to_service_params())
+        return {
+            "code": error_codes.SUCCESS[0],
+            "msg": error_codes.SUCCESS[1],
+            "data": _as_dict(result),
+        }
+    except LoginExpiredError:
+        return {
+            "code": error_codes.INVALID_TOKEN[0],
+            "msg": "登录过期，Cookie失效",
+            "data": {},
+        }
+    except Exception as exc:
+        logger.error("[xhs.publish_video] failed: %s", exc)
+        return _server_error(f"小红书发布视频失败: {exc}")
 
 
 async def _safe_json(request) -> Dict[str, Any]:
@@ -170,4 +257,4 @@ def _as_dict(result: str | Dict[str, Any]) -> Dict[str, Any]:
         return {"raw": result}
 
 
-__all__ = ["bp"]
+__all__ = ["xhs_mcp"]
