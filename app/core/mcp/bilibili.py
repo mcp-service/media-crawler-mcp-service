@@ -7,6 +7,7 @@ import json
 from typing import List, Optional
 
 from app.core.crawler.platforms import bilibili as bilibili_core
+from app.providers.logger import get_logger
 from app.api.scheme.response import (
     BilibiliSearchResult,
     BilibiliDetailResult,
@@ -17,6 +18,8 @@ from app.api.scheme.response import (
     BilibiliCreatorResult,
     TagInfo,
 )
+
+logger = get_logger()
 
 
 def _process_search_fast_result(raw_result: dict) -> BilibiliSearchResult:
@@ -325,12 +328,14 @@ async def bili_creator(
                 page_size=page_size,
                 enable_save_media=save_media,
             )
-            
+            logger.info(f"raw_result ----> {raw_result}")
             # 转换为结构化数据
             structured_result = _process_creator_result(raw_result)
             all_results[creator_id] = structured_result.model_dump()
             
         except Exception as e:
+            import traceback
+            logger.error(f"Exception ----> {traceback.format_exc()}")
             all_results[creator_id] = {"error": str(e), "creator_id": creator_id}
         
         # 多个用户之间添加间隔，避免风控（最后一个不需要间隔）

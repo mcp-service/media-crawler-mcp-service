@@ -10,11 +10,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, Iterable, List, Optional, Union
 
-from playwright.async_api import BrowserContext, BrowserType, async_playwright
+from playwright.async_api import BrowserContext, BrowserType, Page, async_playwright
 from playwright._impl._errors import TargetClosedError
 
 from app.config.settings import CrawlerType, LoginType, Platform, global_settings
-from app.core.crawler.platforms.base import AbstractCrawler
 from app.core.crawler.store import xhs as xhs_store
 from app.core.crawler.tools import crawler_util, time_util
 from app.core.login import login_service
@@ -24,16 +23,66 @@ from app.core.login.xhs.login import get_user_data_dir as xhs_user_data_dir
 from app.providers.logger import get_logger
 
 from .client import XiaoHongShuClient
-from .exception import DataFetchError
-from .help import (
-    parse_creator_info_from_url,
-    parse_note_info_from_note_url,
-)
 from .login import XiaoHongShuLogin
 from .publish import XhsPublisher
 
 logger = get_logger()
 browser_manager = get_browser_manager()
+
+
+
+def _parse_note_url(url: str) -> SimpleNamespace:
+    """简单解析小红书笔记URL，提取note_id等信息"""
+    import re
+    from urllib.parse import urlparse, parse_qs
+    
+    # 提取note_id
+    note_id_match = re.search(r'/explore/([a-f0-9]+)', url)
+    note_id = note_id_match.group(1) if note_id_match else ""
+    
+    # 解析查询参数
+    parsed = urlparse(url)
+    query_params = parse_qs(parsed.query)
+    
+    xsec_token = query_params.get('xsec_token', [''])[0]
+    xsec_source = query_params.get('xsec_source', [''])[0]
+    
+    return SimpleNamespace(
+        note_id=note_id,
+        xsec_token=xsec_token,
+        xsec_source=xsec_source
+    )
+
+
+def _parse_creator_url(url: str) -> SimpleNamespace:
+    """简单解析小红书用户URL，提取user_id等信息"""
+    import re
+    from urllib.parse import urlparse, parse_qs
+    
+    # 如果是纯ID字符串，直接返回
+    if not url.startswith('http'):
+        return SimpleNamespace(
+            user_id=url.strip(),
+            xsec_token="",
+            xsec_source=""
+        )
+    
+    # 提取user_id
+    user_id_match = re.search(r'/user/profile/([a-f0-9]+)', url)
+    user_id = user_id_match.group(1) if user_id_match else ""
+    
+    # 解析查询参数
+    parsed = urlparse(url)
+    query_params = parse_qs(parsed.query)
+    
+    xsec_token = query_params.get('xsec_token', [''])[0]
+    xsec_source = query_params.get('xsec_source', [''])[0]
+    
+    return SimpleNamespace(
+        user_id=user_id,
+        xsec_token=xsec_token,
+        xsec_source=xsec_source
+    )
 
 
 def _resolve_login_type(
@@ -55,236 +104,108 @@ def _resolve_login_type(
     return LoginType.QRCODE
 
 
-class XiaoHongShuCrawler(AbstractCrawler):
+class XiaoHongShuCrawler:
     """Entry point for all Xiaohongshu crawl tasks."""
 
     def __init__(
         self,
         *,
-        crawler_type: CrawlerType,
-        keywords: Optional[str] = None,
-        note_items: Optional[List[Dict[str, Any]]] = None,
-        creator_ids: Optional[List[str]] = None,
         login_cookie: Optional[str] = None,
         login_phone: Optional[str] = None,
         login_type: Optional[Union[str, LoginType]] = None,
         headless: Optional[bool] = None,
-        enable_comments: bool = False,
-        max_notes: int = 20,
-        max_comments: int = 0,
         enable_save_media: Optional[bool] = None,
         extra: Optional[Dict[str, Any]] = None,
     ) -> None:
-        super().__init__(platform=Platform.XIAOHONGSHU, crawler_type=crawler_type)
-
-        browser_cfg = global_settings.browser
-        crawl_cfg = global_settings.crawl
-        store_cfg = global_settings.store
-
+        # 基本属性设置
+        self.platform = Platform.XIAOHONGSHU
+        self.context_page: Optional[Page] = None
+        self.browser_context: Optional[BrowserContext] = None
+        
         self.extra = dict(extra or {})
+        self.platform_code = Platform.XIAOHONGSHU.value
 
-        user_agent = self.extra.pop("user_agent", browser_cfg.user_agent)
-        proxy = self.extra.pop("proxy", browser_cfg.proxy)
-        viewport_width = self.extra.pop("viewport_width", browser_cfg.viewport_width)
-        viewport_height = self.extra.pop("viewport_height", browser_cfg.viewport_height)
-        max_concurrency = self.extra.pop("max_concurrency", crawl_cfg.max_concurrency)
-        crawl_interval = self.extra.pop("crawl_interval", crawl_cfg.crawl_interval)
-        start_page = self.extra.pop("start_page", crawl_cfg.start_page)
-        start_day = self.extra.pop("start_day", crawl_cfg.start_day)
-        end_day = self.extra.pop("end_day", crawl_cfg.end_day)
-        max_notes_per_day = self.extra.pop("max_notes_per_day", crawl_cfg.max_notes_per_day)
+        browser_defaults = global_settings.browser
+        store_defaults = global_settings.store
 
-        resolved_headless = headless if headless is not None else browser_cfg.headless
-        resolved_max_notes = max(max_notes, 0) or crawl_cfg.max_notes_count
+        resolved_headless = headless if headless is not None else browser_defaults.headless
         resolved_enable_save_media = (
-            enable_save_media if enable_save_media is not None else store_cfg.enable_save_media
+            bool(enable_save_media)
+            if enable_save_media is not None
+            else bool(getattr(store_defaults, "enable_save_media", False))
         )
 
-        self.browser_opts = SimpleNamespace(
+        self.browser = SimpleNamespace(
             headless=resolved_headless,
-            user_agent=user_agent,
-            proxy=proxy,
-            viewport_width=viewport_width,
-            viewport_height=viewport_height,
+            user_agent=self.extra.get("user_agent", browser_defaults.user_agent),
+            proxy=self.extra.get("proxy", browser_defaults.proxy),
+            viewport_width=int(self.extra.get("viewport_width", browser_defaults.viewport_width)),
+            viewport_height=int(self.extra.get("viewport_height", browser_defaults.viewport_height)),
         )
 
-        self.crawl_opts = SimpleNamespace(
-            keywords=keywords,
-            note_ids=note_items,
-            creator_ids=creator_ids,
-            max_notes_count=resolved_max_notes,
-            max_comments_per_note=max_comments,
-            enable_get_comments=enable_comments,
-            enable_get_sub_comments=False,
-            enable_save_media=bool(resolved_enable_save_media),
-            max_concurrency=max_concurrency,
-            crawl_interval=crawl_interval,
-            search_mode=self.extra.pop("search_mode", crawl_cfg.search_mode),
-            start_page=start_page,
-            start_day=start_day,
-            end_day=end_day,
-            max_notes_per_day=max_notes_per_day,
-        )
-
-        save_login_state = bool(self.extra.pop("save_login_state", True))
-        login_type_hint = login_type if login_type is not None else self.extra.pop("login_type", None)
-        resolved_login_type = _resolve_login_type(login_cookie, login_phone, login_type_hint)
-
+        # 登录选项
+        resolved_login_type = _resolve_login_type(login_cookie, login_phone, login_type)
         self.login_opts = SimpleNamespace(
             login_type=resolved_login_type,
             cookie=login_cookie,
             phone=login_phone,
-            save_login_state=save_login_state,
         )
 
-        self.store_opts = SimpleNamespace(
-            save_format=str(store_cfg.save_format),
-            enable_save_media=self.crawl_opts.enable_save_media,
-        )
-
-        self.user_agent = self.browser_opts.user_agent or crawler_util.get_user_agent()
+        # 基础配置
+        self.user_agent = self.browser.user_agent or crawler_util.get_user_agent()
         self.client: Optional[XiaoHongShuClient] = None
-        self.browser_context: Optional[BrowserContext] = None
         self._closed: bool = False
 
-    async def start(self) -> Dict[str, Any]:
-        logger.info(f"[xhs.crawler] start crawler type={self.crawler_type.value}")
-
-        # 使用浏览器管理器获取浏览器上下文
-        user_data_dir = Path("browser_data") / Platform.XIAOHONGSHU.value
-        viewport = {
-            "width": self.browser_opts.viewport_width,
-            "height": self.browser_opts.viewport_height,
-        }
-
-        try:
-            self.browser_context, self.context_page, playwright = await browser_manager.acquire_context(
-                platform=Platform.XIAOHONGSHU.value,
-                user_data_dir=user_data_dir,
-                headless=self.browser_opts.headless,
-                viewport=viewport,
-                user_agent=self.user_agent,
-            )
-
-            await self.context_page.goto("https://www.xiaohongshu.com")
-
-            await self._ensure_login_state()
-            self.client = await self._build_client(self.browser_context)
-
-            crawler_type = self.crawler_type
-            if crawler_type == CrawlerType.SEARCH:
-                return await self.search()
-            if crawler_type == CrawlerType.DETAIL:
-                return await self.get_detail()
-            if crawler_type == CrawlerType.CREATOR:
-                return await self.get_creator()
-            if crawler_type == CrawlerType.COMMENTS:
-                return await self.fetch_comments()
-
-            raise RuntimeError(f"Unsupported crawler type: {crawler_type}")
-        finally:
-            # 释放浏览器上下文引用（保持实例存活）
-            await browser_manager.release_context(Platform.XIAOHONGSHU.value, keep_alive=True)
-
-    async def search(self) -> Dict[str, Any]:
-        keywords = self.crawl_opts.keywords or ""
+    async def search_by_keywords(
+        self,
+        *,
+        keywords: str,
+        max_notes: int = 20,
+        page_size: int = 20,
+        crawl_interval: float = 1.0,
+        enable_save: bool = False,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        """通过关键词搜索笔记"""
+        # 确保浏览器和客户端已准备就绪
+        await self._ensure_browser_and_client()
+        
         keyword_list = [kw.strip() for kw in keywords.split(",") if kw.strip()]
         if not keyword_list:
             raise ValueError("keywords 不能为空")
 
-        limit = max(1, self.crawl_opts.max_notes_count)
-        sleep_interval = float(self.extra.get("sleep_interval", self.crawl_opts.crawl_interval))
-        page_size = int(self.extra.get("page_size", 20))
-
         collected: List[Dict[str, Any]] = []
+        limit = max(1, max_notes)
 
         for keyword in keyword_list:
             try:
-                # Page-based search like xiaohongshu-mcp
-                search_url = f"https://www.xiaohongshu.com/search_result?keyword={keyword}&source=web_explore_feed"
-                logger.info(f"[xhs.search] goto search_result: {search_url}")
-                await self.context_page.goto(search_url, wait_until="domcontentloaded")
-                try:
-                    await self.context_page.wait_for_function("() => !!window.__INITIAL_STATE__ && !!window.__INITIAL_STATE__.search", timeout=8000)
-                except Exception:
-                    logger.warning("[xhs.search] __INITIAL_STATE__ not ready")
-
-                raw_json = await self.context_page.evaluate(
-                    """
-                    () => {
-                        try {
-                            const st = window.__INITIAL_STATE__;
-                            if (st && st.search && st.search.feeds) {
-                                const feeds = st.search.feeds;
-                                const val = feeds.value !== undefined ? feeds.value : feeds._value;
-                                if (val) return JSON.stringify(val);
-                            }
-                        } catch (e) {}
-                        return "";
-                    }
-                    """
+                logger.info(f"[xhs.search] searching keyword: {keyword}")
+                search_results = await self.client.search_notes(
+                    keyword=keyword,
+                    max_notes=limit - len(collected)
                 )
-                if not raw_json:
-                    logger.info(f"[xhs.search] no feeds for keyword={keyword}")
-                    continue
-
-                import json as _json
-                try:
-                    feeds = _json.loads(raw_json)
-                except Exception as je:
-                    logger.error(f"[xhs.search] parse feeds json failed: {je}")
-                    continue
-
-                for item in feeds:
+                
+                for result in search_results:
                     if len(collected) >= limit:
                         break
-                    note_id = str(item.get("id") or item.get("noteId") or "").strip()
-                    if not note_id:
-                        continue
-                    xsec_token = item.get("xsecToken", "")
-                    note_obj = item.get("noteCard") or item.get("note") or {}
-                    title = (note_obj.get("displayTitle") or note_obj.get("title") or "") if isinstance(note_obj, dict) else ""
-                    user = note_obj.get("user", {}) if isinstance(note_obj, dict) else {}
-                    inter = note_obj.get("interactInfo", {}) if isinstance(note_obj, dict) else {}
-
-                    def _to_int(v):
+                    
+                    # 可选的存储功能
+                    if enable_save:
                         try:
-                            return int(v)
-                        except Exception:
-                            try:
-                                return int(str(v))
-                            except Exception:
-                                return None
+                            await xhs_store.update_xhs_note(result)
+                        except Exception as store_exc:
+                            logger.error(f"[xhs.search] Store note error: {store_exc}")
+                    
+                    collected.append(result)
 
-                    collected.append({
-                        "note_id": note_id,
-                        "xsec_token": xsec_token,
-                        "xsec_source": "pc_feed",
-                        "title": title,
-                        "note_url": f"https://www.xiaohongshu.com/explore/{note_id}",
-                        "user": {
-                            "user_id": user.get("userId") or user.get("user_id"),
-                            "nickname": user.get("nickname") or user.get("nickName") or user.get("nick_name"),
-                            "avatar": user.get("avatar"),
-                        },
-                        "interact_info": {
-                            "liked_count": _to_int(inter.get("likedCount")),
-                            "collected_count": _to_int(inter.get("collectedCount")),
-                            "comment_count": _to_int(inter.get("commentCount")),
-                            "share_count": _to_int(inter.get("sharedCount")),
-                        }
-                    })
-
-                if sleep_interval > 0:
-                    await asyncio.sleep(sleep_interval)
+                if crawl_interval > 0:
+                    await asyncio.sleep(crawl_interval)
                     
             except LoginExpiredError as e:
-                # 账号权限或登录失效，直接向上抛出给 MCP 层返回 401
                 logger.error(f"[xhs.search] Login required or permission denied: {e}")
                 raise
             except Exception as e:
                 logger.error(f"[xhs.search] Error processing keyword={keyword}: {type(e).__name__}: {e}")
-                # 继续处理下一个关键词，而不是让整个搜索失败
                 continue
 
         return {
@@ -295,7 +216,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
                 "page_size": page_size,
                 "has_more": False
             },
-            "crawl_info": self._build_crawl_info(),
+            "crawl_info": self._build_crawl_info("search"),
         }
 
     async def get_detail(self) -> Dict[str, Any]:
@@ -318,7 +239,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
                 if not s:
                     continue
                 if s.startswith("http://") or s.startswith("https://"):
-                    info = parse_note_info_from_note_url(s)
+                    info = _parse_note_url(s)
                     note_id, xsec_source, xsec_token = info.note_id, info.xsec_source, info.xsec_token
                 else:
                     note_id = s
@@ -350,7 +271,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
         collected: List[Dict[str, Any]] = []
         crawl_interval = self.crawl_opts.crawl_interval
         for raw_id in creator_ids:
-            info = parse_creator_info_from_url(raw_id)
+            info = _parse_creator_url(raw_id)
             creator_detail = await self.client.get_creator_info(
                 user_id=info.user_id,
                 xsec_token=info.xsec_token,
@@ -644,10 +565,32 @@ class XiaoHongShuCrawler(AbstractCrawler):
             if detail:
                 await xhs_store.update_xhs_note(detail)
 
-    def _build_crawl_info(self) -> Dict[str, Any]:
+    async def _ensure_browser_and_client(self) -> None:
+        """确保浏览器上下文和客户端已准备就绪"""
+        if not self.browser_context or not self.client:
+            # 使用浏览器管理器获取浏览器上下文
+            user_data_dir = Path("browser_data") / Platform.XIAOHONGSHU.value
+            viewport = {
+                "width": self.browser.viewport_width,
+                "height": self.browser.viewport_height,
+            }
+
+            self.browser_context, self.context_page, playwright = await browser_manager.acquire_context(
+                platform=Platform.XIAOHONGSHU.value,
+                user_data_dir=user_data_dir,
+                headless=self.browser.headless,
+                viewport=viewport,
+                user_agent=self.user_agent,
+            )
+
+            await self.context_page.goto("https://www.xiaohongshu.com")
+            await self._ensure_login_state()
+            self.client = await self._build_client(self.browser_context)
+
+    def _build_crawl_info(self, crawler_type: str = "unknown") -> Dict[str, Any]:
         return {
             "platform": Platform.XIAOHONGSHU.value,
-            "crawler_type": self.crawler_type.value,
+            "crawler_type": crawler_type,
             "timestamp": time_util.get_current_timestamp(),
         }
 
@@ -657,14 +600,6 @@ async def _ensure_login_cookie() -> str:
     if not cookie:
         raise LoginExpiredError("登录过期，Cookie失效")
     return cookie
-
-
-async def _run_xhs_crawler(**kwargs: Any) -> Dict[str, Any]:
-    crawler = XiaoHongShuCrawler(**kwargs)
-    try:
-        return await crawler.start()
-    finally:
-        await crawler.close()
 
 
 async def search(
@@ -686,26 +621,27 @@ async def search(
     if not login_cookie:
         login_cookie = await _ensure_login_cookie()
 
-    extra.update({
-        "page_size": page_size,
-        "page_num": page_num,
-        "no_auto_login": True,
-    })
-
-    total_limit = limit if limit is not None else page_size
-    return await _run_xhs_crawler(
-        crawler_type=CrawlerType.SEARCH,
-        keywords=keywords,
-        headless=headless,
-        enable_comments=False,
-        max_notes=total_limit,
-        max_comments=0,
-        enable_save_media=enable_save_media,
-        extra=extra,
+    crawler = XiaoHongShuCrawler(
         login_cookie=login_cookie,
         login_phone=login_phone,
         login_type=login_type_hint,
+        headless=headless,
+        enable_save_media=enable_save_media,
+        extra=extra,
     )
+    
+    try:
+        total_limit = limit if limit is not None else page_size
+        enable_save = extra.get("enable_save", bool(enable_save_media))
+        return await crawler.search_by_keywords(
+            keywords=keywords,
+            max_notes=total_limit,
+            page_size=page_size,
+            crawl_interval=float(extra.get("crawl_interval", 1.0)),
+            enable_save=enable_save,
+        )
+    finally:
+        await crawler.close()
 
 
 async def search_with_time_range(

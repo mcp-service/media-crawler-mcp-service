@@ -105,7 +105,7 @@ async def execute_inspector_tool(request):
         
         # 使用 MCP Client 调用工具
         result = await mcp_client_manager.call_tool(tool_name, params)
-        logger.info(f"Tool {tool_name} executed successfully via MCP Client")
+        logger.info(f"Tool {tool_name} executed successfully via MCP Client {result}")
         
         return JSONResponse(content={"result": result.structured_content, "tool": tool_name})
         

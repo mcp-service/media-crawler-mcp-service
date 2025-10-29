@@ -76,7 +76,7 @@ class BilibiliClient:  # 移除 AbstractApiClient 继承
     async def request(self, method, url, **kwargs) -> Any:
         async with httpx.AsyncClient(proxy=self.proxy) as client:
             response = await client.request(method, url, timeout=self.timeout, **kwargs)
-
+            logger.debug(f"[BilibiliClient.request] ----->url:{url} response:{response.json()}")
         try:
             data: Dict = response.json()
         except json.JSONDecodeError:

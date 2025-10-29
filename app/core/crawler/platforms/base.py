@@ -6,42 +6,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Dict, Optional
 
-from playwright.async_api import BrowserContext, BrowserType, Page, Playwright
-
-from app.config.settings import CrawlerType, Platform
-
-
-class AbstractCrawler(ABC):
-    """Simplified crawler contract used by all platforms."""
-
-    def __init__(self, *, platform: Platform, crawler_type: CrawlerType) -> None:
-        self.platform = platform
-        self.crawler_type = crawler_type
-        self.context_page: Optional[Page] = None
-        self.browser_context: Optional[BrowserContext] = None
-
-    @abstractmethod
-    async def start(self) -> Dict:
-        """Run crawler entrypoint."""
-
-    @abstractmethod
-    async def search(self) -> Dict:
-        """Search flow."""
-
-    @abstractmethod
-    async def launch_browser(
-        self,
-        chromium: BrowserType,
-        playwright_proxy: Optional[Dict],
-        user_agent: Optional[str],
-        headless: bool = True,
-    ) -> BrowserContext:
-        """Launch playwright browser context."""
-
-    async def close(self) -> None:
-        """Close browser context when available."""
-        if self.browser_context:
-            await self.browser_context.close()
+from playwright.async_api import BrowserContext, Page
 
 
 class AbstractLogin(ABC):
