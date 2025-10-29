@@ -1,57 +1,32 @@
 # -*- coding: utf-8 -*-
-"""
-改造后的爬虫基础类
+"""Lightweight crawler base interfaces."""
 
-去除全局 config 依赖，使用嵌套上下文对象
-"""
+from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from typing import Dict, Optional
-from playwright.async_api import BrowserContext, BrowserType, Playwright, Page
 
-from app.core.crawler import CrawlerContext
+from playwright.async_api import BrowserContext, BrowserType, Page, Playwright
+
+from app.config.settings import CrawlerType, Platform
 
 
 class AbstractCrawler(ABC):
-    """
-    爬虫抽象基类（改造版）
+    """Simplified crawler contract used by all platforms."""
 
-    关键改变：
-    - 构造函数接受 CrawlerContext 参数
-    - 移除对全局 config 的依赖
-    - 所有方法使用 self.ctx 访问配置
-    """
-
-    def __init__(self, context: CrawlerContext):
-        """
-        初始化爬虫
-
-        Args:
-            context: 爬虫配置上下文
-        """
-        self.ctx = context
+    def __init__(self, *, platform: Platform, crawler_type: CrawlerType) -> None:
+        self.platform = platform
+        self.crawler_type = crawler_type
         self.context_page: Optional[Page] = None
         self.browser_context: Optional[BrowserContext] = None
 
     @abstractmethod
     async def start(self) -> Dict:
-        """
-        启动爬虫
-
-        Returns:
-            爬取结果字典
-        """
-        pass
+        """Run crawler entrypoint."""
 
     @abstractmethod
     async def search(self) -> Dict:
-        """
-        搜索爬取
-
-        Returns:
-            搜索结果字典
-        """
-        pass
+        """Search flow."""
 
     @abstractmethod
     async def launch_browser(
@@ -59,36 +34,18 @@ class AbstractCrawler(ABC):
         chromium: BrowserType,
         playwright_proxy: Optional[Dict],
         user_agent: Optional[str],
-        headless: bool = True
+        headless: bool = True,
     ) -> BrowserContext:
-        """
-        启动浏览器
+        """Launch playwright browser context."""
 
-        Args:
-            chromium: Playwright chromium 对象
-            playwright_proxy: 代理配置
-            user_agent: 用户代理
-            headless: 是否无头模式
-
-        Returns:
-            浏览器上下文
-        """
-        pass
-
-    async def close(self):
-        """关闭浏览器"""
+    async def close(self) -> None:
+        """Close browser context when available."""
         if self.browser_context:
             await self.browser_context.close()
 
 
 class AbstractLogin(ABC):
-    """
-    登录抽象基类（改造版）
-
-    关键改变：
-    - 构造函数接受 login_type 和其他参数
-    - 不修改全局 config
-    """
+    """Generic login interface for platform crawlers."""
 
     def __init__(
         self,
@@ -96,18 +53,8 @@ class AbstractLogin(ABC):
         browser_context: BrowserContext,
         context_page: Page,
         login_phone: Optional[str] = "",
-        cookie_str: str = ""
+        cookie_str: str = "",
     ):
-        """
-        初始化登录对象
-
-        Args:
-            login_type: 登录类型 (qrcode, phone, cookie)
-            browser_context: 浏览器上下文
-            context_page: 页面对象
-            login_phone: 手机号（手机登录时使用）
-            cookie_str: Cookie字符串（Cookie登录时使用）
-        """
         self.login_type = login_type
         self.browser_context = browser_context
         self.context_page = context_page
@@ -116,39 +63,32 @@ class AbstractLogin(ABC):
 
     @abstractmethod
     async def begin(self):
-        """开始登录流程"""
-        pass
+        """Begin login flow."""
 
     @abstractmethod
     async def login_by_qrcode(self):
-        """二维码登录"""
-        pass
+        """Login using QR code."""
 
     @abstractmethod
     async def login_by_mobile(self):
-        """手机号登录"""
-        pass
+        """Login via mobile phone."""
 
     @abstractmethod
     async def login_by_cookies(self):
-        """Cookie登录"""
-        pass
+        """Login with cookie string."""
 
 
 class AbstractStore(ABC):
-    """数据存储抽象基类"""
+    """Data persistence interface for crawlers."""
 
     @abstractmethod
     async def store_content(self, content_item: Dict):
-        """存储内容数据"""
-        pass
+        """Persist content items."""
 
     @abstractmethod
     async def store_comment(self, comment_item: Dict):
-        """存储评论数据"""
-        pass
+        """Persist comment items."""
 
     @abstractmethod
     async def store_creator(self, creator: Dict):
-        """存储创作者数据"""
-        pass
+        """Persist creator info."""

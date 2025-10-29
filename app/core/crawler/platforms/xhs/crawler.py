@@ -7,19 +7,20 @@ import asyncio
 import os
 from asyncio import Semaphore
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from types import SimpleNamespace
+from typing import Any, Dict, Iterable, List, Optional, Union
 
 from playwright.async_api import BrowserContext, BrowserType, async_playwright
 from playwright._impl._errors import TargetClosedError
 
-from app.config.settings import CrawlerType, Platform, global_settings
-from app.core.crawler import CrawlerContext
+from app.config.settings import CrawlerType, LoginType, Platform, global_settings
 from app.core.crawler.platforms.base import AbstractCrawler
 from app.core.crawler.store import xhs as xhs_store
 from app.core.crawler.tools import crawler_util, time_util
 from app.core.login import login_service
-from app.core.login.exceptions import LoginExpiredError
 from app.core.login.browser_manager import get_browser_manager
+from app.core.login.exceptions import LoginExpiredError
+from app.core.login.xhs.login import get_user_data_dir as xhs_user_data_dir
 from app.providers.logger import get_logger
 
 from .client import XiaoHongShuClient
@@ -29,24 +30,117 @@ from .help import (
     parse_note_info_from_note_url,
 )
 from .login import XiaoHongShuLogin
+from .publish import XhsPublisher
 
 logger = get_logger()
 browser_manager = get_browser_manager()
 
 
+def _resolve_login_type(
+    cookie: Optional[str],
+    phone: Optional[str],
+    hint: Optional[Union[str, LoginType]],
+) -> LoginType:
+    if isinstance(hint, LoginType):
+        return hint
+    if isinstance(hint, str):
+        try:
+            return LoginType(hint)
+        except ValueError:
+            logger.warning("[xhs.login] Unknown login_type hint=%s, fallback to auto detect", hint)
+    if cookie:
+        return LoginType.COOKIE
+    if phone:
+        return LoginType.PHONE
+    return LoginType.QRCODE
+
+
 class XiaoHongShuCrawler(AbstractCrawler):
     """Entry point for all Xiaohongshu crawl tasks."""
 
-    def __init__(self, context: CrawlerContext) -> None:
-        super().__init__(context)
-        if context.platform != Platform.XIAOHONGSHU:
-            raise ValueError("XHS crawler only supports Platform.XIAOHONGSHU")
+    def __init__(
+        self,
+        *,
+        crawler_type: CrawlerType,
+        keywords: Optional[str] = None,
+        note_items: Optional[List[Dict[str, Any]]] = None,
+        creator_ids: Optional[List[str]] = None,
+        login_cookie: Optional[str] = None,
+        login_phone: Optional[str] = None,
+        login_type: Optional[Union[str, LoginType]] = None,
+        headless: Optional[bool] = None,
+        enable_comments: bool = False,
+        max_notes: int = 20,
+        max_comments: int = 0,
+        enable_save_media: Optional[bool] = None,
+        extra: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        super().__init__(platform=Platform.XIAOHONGSHU, crawler_type=crawler_type)
 
-        self.browser_opts = context.browser
-        self.crawl_opts = context.crawl
-        self.login_opts = context.login
-        self.store_opts = context.store
-        self.extra = context.extra or {}
+        browser_cfg = global_settings.browser
+        crawl_cfg = global_settings.crawl
+        store_cfg = global_settings.store
+
+        self.extra = dict(extra or {})
+
+        user_agent = self.extra.pop("user_agent", browser_cfg.user_agent)
+        proxy = self.extra.pop("proxy", browser_cfg.proxy)
+        viewport_width = self.extra.pop("viewport_width", browser_cfg.viewport_width)
+        viewport_height = self.extra.pop("viewport_height", browser_cfg.viewport_height)
+        max_concurrency = self.extra.pop("max_concurrency", crawl_cfg.max_concurrency)
+        crawl_interval = self.extra.pop("crawl_interval", crawl_cfg.crawl_interval)
+        start_page = self.extra.pop("start_page", crawl_cfg.start_page)
+        start_day = self.extra.pop("start_day", crawl_cfg.start_day)
+        end_day = self.extra.pop("end_day", crawl_cfg.end_day)
+        max_notes_per_day = self.extra.pop("max_notes_per_day", crawl_cfg.max_notes_per_day)
+
+        resolved_headless = headless if headless is not None else browser_cfg.headless
+        resolved_max_notes = max(max_notes, 0) or crawl_cfg.max_notes_count
+        resolved_enable_save_media = (
+            enable_save_media if enable_save_media is not None else store_cfg.enable_save_media
+        )
+
+        self.browser_opts = SimpleNamespace(
+            headless=resolved_headless,
+            user_agent=user_agent,
+            proxy=proxy,
+            viewport_width=viewport_width,
+            viewport_height=viewport_height,
+        )
+
+        self.crawl_opts = SimpleNamespace(
+            keywords=keywords,
+            note_ids=note_items,
+            creator_ids=creator_ids,
+            max_notes_count=resolved_max_notes,
+            max_comments_per_note=max_comments,
+            enable_get_comments=enable_comments,
+            enable_get_sub_comments=False,
+            enable_save_media=bool(resolved_enable_save_media),
+            max_concurrency=max_concurrency,
+            crawl_interval=crawl_interval,
+            search_mode=self.extra.pop("search_mode", crawl_cfg.search_mode),
+            start_page=start_page,
+            start_day=start_day,
+            end_day=end_day,
+            max_notes_per_day=max_notes_per_day,
+        )
+
+        save_login_state = bool(self.extra.pop("save_login_state", True))
+        login_type_hint = login_type if login_type is not None else self.extra.pop("login_type", None)
+        resolved_login_type = _resolve_login_type(login_cookie, login_phone, login_type_hint)
+
+        self.login_opts = SimpleNamespace(
+            login_type=resolved_login_type,
+            cookie=login_cookie,
+            phone=login_phone,
+            save_login_state=save_login_state,
+        )
+
+        self.store_opts = SimpleNamespace(
+            save_format=str(store_cfg.save_format),
+            enable_save_media=self.crawl_opts.enable_save_media,
+        )
 
         self.user_agent = self.browser_opts.user_agent or crawler_util.get_user_agent()
         self.client: Optional[XiaoHongShuClient] = None
@@ -54,7 +148,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
         self._closed: bool = False
 
     async def start(self) -> Dict[str, Any]:
-        logger.info(f"[xhs.crawler] start crawler type={self.ctx.crawler_type.value}")
+        logger.info(f"[xhs.crawler] start crawler type={self.crawler_type.value}")
 
         # 使用浏览器管理器获取浏览器上下文
         user_data_dir = Path("browser_data") / Platform.XIAOHONGSHU.value
@@ -77,7 +171,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
             await self._ensure_login_state()
             self.client = await self._build_client(self.browser_context)
 
-            crawler_type = self.ctx.crawler_type
+            crawler_type = self.crawler_type
             if crawler_type == CrawlerType.SEARCH:
                 return await self.search()
             if crawler_type == CrawlerType.DETAIL:
@@ -402,8 +496,14 @@ class XiaoHongShuCrawler(AbstractCrawler):
         if self.extra.get("no_auto_login"):
             raise LoginExpiredError("登录过期，Cookie失效")
 
+        login_type_value = (
+            self.login_opts.login_type.value
+            if isinstance(self.login_opts.login_type, LoginType)
+            else str(self.login_opts.login_type)
+        )
+
         login = XiaoHongShuLogin(
-            login_type=self.login_opts.login_type.value,
+            login_type=login_type_value,
             browser_context=self.browser_context,
             context_page=self.context_page,
             login_phone=self.login_opts.phone,
@@ -547,6 +647,331 @@ class XiaoHongShuCrawler(AbstractCrawler):
     def _build_crawl_info(self) -> Dict[str, Any]:
         return {
             "platform": Platform.XIAOHONGSHU.value,
-            "crawler_type": self.ctx.crawler_type.value,
+            "crawler_type": self.crawler_type.value,
             "timestamp": time_util.get_current_timestamp(),
         }
+
+
+async def _ensure_login_cookie() -> str:
+    cookie = await login_service.get_cookie(Platform.XIAOHONGSHU.value)
+    if not cookie:
+        raise LoginExpiredError("登录过期，Cookie失效")
+    return cookie
+
+
+async def _run_xhs_crawler(**kwargs: Any) -> Dict[str, Any]:
+    crawler = XiaoHongShuCrawler(**kwargs)
+    try:
+        return await crawler.start()
+    finally:
+        await crawler.close()
+
+
+async def search(
+    *,
+    keywords: str,
+    page_size: int = 20,
+    page_num: int = 1,
+    limit: Optional[int] = None,
+    headless: Optional[bool] = None,
+    enable_save_media: Optional[bool] = None,
+    **kwargs: Any,
+) -> Dict[str, Any]:
+    logger.info(f"[xhs.crawler.search] keywords={keywords}")
+    extra = dict(kwargs)
+    login_cookie = extra.pop("login_cookie", None)
+    login_phone = extra.pop("login_phone", None)
+    login_type_hint = extra.pop("login_type", None)
+
+    if not login_cookie:
+        login_cookie = await _ensure_login_cookie()
+
+    extra.update({
+        "page_size": page_size,
+        "page_num": page_num,
+        "no_auto_login": True,
+    })
+
+    total_limit = limit if limit is not None else page_size
+    return await _run_xhs_crawler(
+        crawler_type=CrawlerType.SEARCH,
+        keywords=keywords,
+        headless=headless,
+        enable_comments=False,
+        max_notes=total_limit,
+        max_comments=0,
+        enable_save_media=enable_save_media,
+        extra=extra,
+        login_cookie=login_cookie,
+        login_phone=login_phone,
+        login_type=login_type_hint,
+    )
+
+
+async def search_with_time_range(
+    *,
+    keywords: str,
+    start_day: str,
+    end_day: str,
+    limit: int = 20,
+    headless: Optional[bool] = None,
+    enable_save_media: Optional[bool] = None,
+    **kwargs: Any,
+) -> Dict[str, Any]:
+    extra = dict(kwargs)
+    extra.update({
+        "start_day": start_day,
+        "end_day": end_day,
+    })
+    return await search(
+        keywords=keywords,
+        limit=limit,
+        headless=headless,
+        enable_save_media=enable_save_media,
+        **extra,
+    )
+
+
+async def get_detail(
+    *,
+    note_id: str,
+    xsec_token: str,
+    xsec_source: Optional[str] = "",
+    headless: Optional[bool] = None,
+    enable_save_media: Optional[bool] = None,
+    **kwargs: Any,
+) -> Dict[str, Any]:
+    note_info = {
+        "note_id": note_id,
+        "xsec_token": xsec_token or "",
+        "xsec_source": xsec_source or "",
+    }
+    note_items = [note_info]
+
+    extra = dict(kwargs)
+    login_cookie = extra.pop("login_cookie", None)
+    login_phone = extra.pop("login_phone", None)
+    login_type_hint = extra.pop("login_type", None)
+
+    if not login_cookie:
+        login_cookie = await _ensure_login_cookie()
+
+    extra.update({
+        "no_auto_login": True,
+        "note_ids": note_items,
+    })
+
+    return await _run_xhs_crawler(
+        crawler_type=CrawlerType.DETAIL,
+        note_items=note_items,
+        headless=headless,
+        enable_comments=False,
+        max_notes=1,
+        max_comments=0,
+        enable_save_media=enable_save_media,
+        extra=extra,
+        login_cookie=login_cookie,
+        login_phone=login_phone,
+        login_type=login_type_hint,
+    )
+
+
+async def get_creator(
+    *,
+    creator_ids: List[str],
+    max_notes: Optional[int] = None,
+    headless: Optional[bool] = None,
+    enable_save_media: Optional[bool] = None,
+    **kwargs: Any,
+) -> Dict[str, Any]:
+    extra = dict(kwargs)
+    login_cookie = extra.pop("login_cookie", None)
+    login_phone = extra.pop("login_phone", None)
+    login_type_hint = extra.pop("login_type", None)
+
+    if not login_cookie:
+        login_cookie = await _ensure_login_cookie()
+
+    extra.update({
+        "no_auto_login": True,
+    })
+
+    resolved_max_notes = (
+        max_notes
+        if max_notes is not None
+        else int(extra.pop("max_notes", global_settings.crawl.max_notes_count))
+    )
+
+    return await _run_xhs_crawler(
+        crawler_type=CrawlerType.CREATOR,
+        creator_ids=creator_ids,
+        headless=headless,
+        enable_comments=False,
+        max_notes=resolved_max_notes,
+        max_comments=0,
+        enable_save_media=enable_save_media,
+        extra=extra,
+        login_cookie=login_cookie,
+        login_phone=login_phone,
+        login_type=login_type_hint,
+    )
+
+
+async def fetch_comments(
+    *,
+    note_id: str,
+    xsec_token: str,
+    xsec_source: str = "",
+    max_comments: int = 50,
+    headless: Optional[bool] = None,
+    **kwargs: Any,
+) -> Dict[str, Any]:
+    note_info = {
+        "note_id": note_id,
+        "xsec_token": xsec_token,
+        "xsec_source": xsec_source or "",
+    }
+    note_items = [note_info]
+
+    extra = dict(kwargs)
+    login_cookie = extra.pop("login_cookie", None)
+    login_phone = extra.pop("login_phone", None)
+    login_type_hint = extra.pop("login_type", None)
+
+    if not login_cookie:
+        login_cookie = await _ensure_login_cookie()
+
+    extra.update({
+        "no_auto_login": True,
+        "note_ids": note_items,
+    })
+
+    return await _run_xhs_crawler(
+        crawler_type=CrawlerType.COMMENTS,
+        note_items=note_items,
+        headless=headless,
+        enable_comments=True,
+        max_notes=1,
+        max_comments=max_comments,
+        enable_save_media=False,
+        extra=extra,
+        login_cookie=login_cookie,
+        login_phone=login_phone,
+        login_type=login_type_hint,
+    )
+
+
+async def publish_image(
+    *,
+    title: str,
+    content: str,
+    images: List[str],
+    tags: Optional[List[str]] = None,
+    headless: Optional[bool] = None,
+    **kwargs: Any,
+) -> Dict[str, Any]:
+    tags = tags or []
+    extra = dict(kwargs)
+
+    login_cookie = extra.pop("login_cookie", None)
+    if not login_cookie:
+        login_cookie = await _ensure_login_cookie()
+
+    browser_cfg = global_settings.browser
+    viewport = {"width": browser_cfg.viewport_width, "height": browser_cfg.viewport_height}
+
+    context = None
+    page = None
+    playwright = None
+    try:
+        context, page, playwright = await browser_manager.acquire_context(
+            platform=Platform.XIAOHONGSHU.value,
+            user_data_dir=xhs_user_data_dir(),
+            headless=browser_cfg.headless if headless is None else headless,
+            viewport=viewport,
+            user_agent=browser_cfg.user_agent or crawler_util.get_user_agent(),
+        )
+    except Exception:
+        context, playwright = await browser_manager.get_context_for_check(
+            platform=Platform.XIAOHONGSHU.value,
+            user_data_dir=xhs_user_data_dir(),
+            headless=browser_cfg.headless if headless is None else headless,
+            viewport=viewport,
+            user_agent=browser_cfg.user_agent or crawler_util.get_user_agent(),
+        )
+        page = await context.new_page()
+
+    try:
+        publisher = XhsPublisher(page)
+        result = await publisher.publish_image_post(
+            title=title,
+            content=content,
+            images=images,
+            tags=tags,
+        )
+        return result
+    finally:
+        try:
+            if page:
+                await page.close()
+        except Exception:
+            pass
+        await browser_manager.release_context(Platform.XIAOHONGSHU.value, keep_alive=True)
+
+
+async def publish_video(
+    *,
+    title: str,
+    content: str,
+    video: str,
+    tags: Optional[List[str]] = None,
+    headless: Optional[bool] = None,
+    **kwargs: Any,
+) -> Dict[str, Any]:
+    tags = tags or []
+    extra = dict(kwargs)
+
+    login_cookie = extra.pop("login_cookie", None)
+    if not login_cookie:
+        login_cookie = await _ensure_login_cookie()
+
+    browser_cfg = global_settings.browser
+    viewport = {"width": browser_cfg.viewport_width, "height": browser_cfg.viewport_height}
+
+    context = None
+    page = None
+    playwright = None
+    try:
+        context, page, playwright = await browser_manager.acquire_context(
+            platform=Platform.XIAOHONGSHU.value,
+            user_data_dir=xhs_user_data_dir(),
+            headless=browser_cfg.headless if headless is None else headless,
+            viewport=viewport,
+            user_agent=browser_cfg.user_agent or crawler_util.get_user_agent(),
+        )
+    except Exception:
+        context, playwright = await browser_manager.get_context_for_check(
+            platform=Platform.XIAOHONGSHU.value,
+            user_data_dir=xhs_user_data_dir(),
+            headless=browser_cfg.headless if headless is None else headless,
+            viewport=viewport,
+            user_agent=browser_cfg.user_agent or crawler_util.get_user_agent(),
+        )
+        page = await context.new_page()
+
+    try:
+        publisher = XhsPublisher(page)
+        result = await publisher.publish_video_post(
+            title=title,
+            content=content,
+            video=video,
+            tags=tags,
+        )
+        return result
+    finally:
+        try:
+            if page:
+                await page.close()
+        except Exception:
+            pass
+        await browser_manager.release_context(Platform.XIAOHONGSHU.value, keep_alive=True)

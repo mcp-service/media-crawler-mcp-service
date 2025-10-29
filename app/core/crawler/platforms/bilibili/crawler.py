@@ -6,6 +6,7 @@ from functools import partial
 from typing import Any, Dict, List, Optional, Tuple, Union
 from datetime import datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 import pandas as pd
 from app.providers.logger import get_logger
 
@@ -18,7 +19,6 @@ from playwright.async_api import (
 )
 from playwright._impl._errors import TargetClosedError
 
-from app.core.crawler import CrawlerContext
 from app.core.crawler.platforms.base import AbstractCrawler
 from app.core.crawler.store import bilibili as bilibili_store
 from app.core.crawler.tools.time_util import get_current_timestamp
@@ -39,36 +39,265 @@ browser_manager = get_browser_manager()
 class BilibiliCrawler(AbstractCrawler):
     """B站爬虫实现"""
 
-    def __init__(self, context: CrawlerContext):
-        super().__init__(context)
-
-        if context.platform != Platform.BILIBILI:
-            raise ValueError(f"Invalid platform: {context.platform}, expected {Platform.BILIBILI}")
+    def __init__(
+        self,
+        *,
+        login_cookie: Optional[str] = None,
+        login_phone: Optional[str] = None,
+        login_type: Optional[str] = None,
+        headless: Optional[bool] = None,
+        enable_save_media: Optional[bool] = None,
+        extra: Optional[Dict[str, Any]] = None,
+    ):
+        super().__init__(platform=Platform.BILIBILI, crawler_type=CrawlerType.SEARCH)
 
         self.index_url = "https://www.bilibili.com"
-        self.browser = context.browser
-        self.crawl = context.crawl
-        self.login_options = context.login
-        self.store_options = context.store
-        self.extra = context.extra or {}
-        self.platform = context.platform
-        if isinstance(self.platform, Platform):
-            self.platform_code = self.platform.value
-        else:
-            self.platform_code = str(self.platform)
-        self.crawler_type = context.crawler_type
+        self.extra = dict(extra or {})
+        self.base_extra = dict(self.extra)
+        self.platform_code = Platform.BILIBILI.value
+
+        browser_defaults = global_settings.browser
+        crawl_defaults = global_settings.crawl
+        store_defaults = global_settings.store
+
+        resolved_headless = headless if headless is not None else browser_defaults.headless
+        resolved_enable_save_media = (
+            bool(enable_save_media)
+            if enable_save_media is not None
+            else bool(getattr(store_defaults, "enable_save_media", False))
+        )
+
+        self.browser = SimpleNamespace(
+            headless=resolved_headless,
+            user_agent=self.extra.get("user_agent", browser_defaults.user_agent),
+            proxy=self.extra.get("proxy", browser_defaults.proxy),
+            viewport_width=int(self.extra.get("viewport_width", browser_defaults.viewport_width)),
+            viewport_height=int(self.extra.get("viewport_height", browser_defaults.viewport_height)),
+        )
+
+        self.crawl = SimpleNamespace(
+            keywords=None,
+            note_ids=None,
+            creator_ids=None,
+            max_notes_count=crawl_defaults.max_notes_count,
+            max_comments_per_note=0,
+            enable_get_comments=False,
+            enable_get_sub_comments=crawl_defaults.enable_get_sub_comments,
+            enable_save_media=resolved_enable_save_media,
+            max_concurrency=crawl_defaults.max_concurrency,
+            crawl_interval=crawl_defaults.crawl_interval,
+            search_mode=crawl_defaults.search_mode,
+            start_page=crawl_defaults.start_page,
+            start_day=crawl_defaults.start_day,
+            end_day=crawl_defaults.end_day,
+            max_notes_per_day=crawl_defaults.max_notes_per_day,
+        )
+
+        save_login_state = bool(self.extra.get("save_login_state", True))
+        login_type_hint = self._resolve_login_type_hint(
+            login_type if login_type is not None else self.extra.get("login_type"),
+            login_cookie,
+            login_phone,
+        )
+
+        self.login_options = SimpleNamespace(
+            login_type=login_type_hint,
+            cookie=login_cookie,
+            phone=login_phone,
+            save_login_state=save_login_state,
+        )
+
+        self.store_options = SimpleNamespace(
+            save_format=str(store_defaults.save_format),
+            enable_save_media=self.crawl.enable_save_media,
+        )
 
         self.user_agent = self.browser.user_agent or self._get_default_user_agent()
 
         self.bili_client: Optional[BilibiliClient] = None
-        self.cdp_manager: Optional[any] = None
+        self.cdp_manager: Optional[Any] = None
 
-        label = (
+        self.crawler_label = (
             self.crawler_type.value
             if isinstance(self.crawler_type, CrawlerType)
             else str(self.crawler_type)
+        ) or "general"
+
+    @staticmethod
+    def _resolve_login_type_hint(
+        provided_type: Optional[str],
+        cookie: Optional[str],
+        phone: Optional[str],
+    ) -> str:
+        if provided_type:
+            return str(provided_type)
+        if cookie:
+            return "cookie"
+        if phone:
+            return "phone"
+        return "qrcode"
+
+    def _reset_extra(self, overrides: Optional[Dict[str, Any]]) -> None:
+        self.extra = dict(self.base_extra)
+        if overrides:
+            self.extra.update(overrides)
+
+    def _apply_common_overrides(self) -> None:
+        extra = self.extra
+        if "user_agent" in extra:
+            self.browser.user_agent = extra["user_agent"]
+        if "proxy" in extra:
+            self.browser.proxy = extra["proxy"]
+        if "viewport_width" in extra:
+            self.browser.viewport_width = int(extra["viewport_width"])
+        if "viewport_height" in extra:
+            self.browser.viewport_height = int(extra["viewport_height"])
+
+        if "max_concurrency" in extra:
+            self.crawl.max_concurrency = int(extra["max_concurrency"])
+        if "crawl_interval" in extra:
+            self.crawl.crawl_interval = float(extra["crawl_interval"])
+        if "start_page" in extra:
+            self.crawl.start_page = int(extra["start_page"])
+        if "start_day" in extra:
+            self.crawl.start_day = extra["start_day"]
+        if "end_day" in extra:
+            self.crawl.end_day = extra["end_day"]
+        if "max_notes_per_day" in extra:
+            self.crawl.max_notes_per_day = int(extra["max_notes_per_day"])
+
+    def _set_crawler_type(self, crawler_type: CrawlerType) -> None:
+        self.crawler_type = crawler_type
+        self.crawler_label = (
+            crawler_type.value if isinstance(crawler_type, CrawlerType) else str(crawler_type)
+        ) or "general"
+
+    def configure_search(
+        self,
+        *,
+        keywords: str,
+        page_size: int,
+        page_num: int,
+        limit: Optional[int] = None,
+        enable_save_media: Optional[bool] = None,
+        overrides: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        self._set_crawler_type(CrawlerType.SEARCH)
+        total_limit = max(1, limit if limit is not None else page_size)
+
+        self._reset_extra(overrides)
+        self.extra["page_size"] = page_size
+        self.extra["page_num"] = page_num
+        self.extra["search_mode"] = self.extra.get("search_mode", "normal")
+
+        self.crawl.keywords = keywords
+        self.crawl.max_notes_count = total_limit
+        self.crawl.max_comments_per_note = 0
+        self.crawl.enable_get_comments = False
+        self.crawl.search_mode = str(self.extra.get("search_mode", "normal"))
+        if enable_save_media is not None:
+            self.crawl.enable_save_media = bool(enable_save_media)
+
+        self._apply_common_overrides()
+
+    def configure_search_with_time_range(
+        self,
+        *,
+        keywords: str,
+        start_day: str,
+        end_day: str,
+        page_size: int,
+        page_num: int,
+        limit: Optional[int] = None,
+        max_notes_per_day: int = 50,
+        daily_limit: bool = False,
+        enable_save_media: Optional[bool] = None,
+        overrides: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        mode = "daily_limit_in_time_range" if daily_limit else "all_in_time_range"
+        merged_overrides = dict(overrides or {})
+        merged_overrides.update(
+            {
+                "start_day": start_day,
+                "end_day": end_day,
+                "max_notes_per_day": max_notes_per_day,
+                "search_mode": mode,
+            }
         )
-        self.crawler_label = label or "general"
+        self.configure_search(
+            keywords=keywords,
+            page_size=page_size,
+            page_num=page_num,
+            limit=limit,
+            enable_save_media=enable_save_media,
+            overrides=merged_overrides,
+        )
+        self.crawl.search_mode = mode
+
+    def configure_detail(
+        self,
+        *,
+        video_ids: List[str],
+        enable_save_media: Optional[bool] = None,
+        overrides: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        self._set_crawler_type(CrawlerType.DETAIL)
+        self._reset_extra(overrides)
+        self.extra["page_size"] = len(video_ids)
+
+        self.crawl.keywords = None
+        self.crawl.note_ids = list(video_ids)
+        self.crawl.max_notes_count = max(1, len(video_ids))
+        self.crawl.max_comments_per_note = 0
+        self.crawl.enable_get_comments = False
+        if enable_save_media is not None:
+            self.crawl.enable_save_media = bool(enable_save_media)
+
+        self._apply_common_overrides()
+
+    def configure_creator(
+        self,
+        *,
+        creator_id: str,
+        page_num: int,
+        page_size: int,
+        enable_save_media: Optional[bool] = None,
+        overrides: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        self._set_crawler_type(CrawlerType.CREATOR)
+        self._reset_extra(overrides)
+        self.extra["page_num"] = page_num
+        self.extra["page_size"] = page_size
+
+        self.crawl.creator_ids = [creator_id]
+        self.crawl.max_notes_count = 1
+        self.crawl.max_comments_per_note = 0
+        self.crawl.enable_get_comments = False
+        if enable_save_media is not None:
+            self.crawl.enable_save_media = bool(enable_save_media)
+
+        self._apply_common_overrides()
+
+    def configure_comments(
+        self,
+        *,
+        video_ids: List[str],
+        max_comments: int,
+        fetch_sub_comments: bool,
+        overrides: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        self._set_crawler_type(CrawlerType.COMMENTS)
+        self._reset_extra(overrides)
+        self.extra["fetch_sub_comments"] = fetch_sub_comments
+
+        self.crawl.note_ids = list(video_ids)
+        self.crawl.max_notes_count = max(1, len(video_ids))
+        self.crawl.max_comments_per_note = max_comments
+        self.crawl.enable_get_comments = True
+        self.crawl.enable_get_sub_comments = bool(fetch_sub_comments)
+        self.crawl.enable_save_media = False
+
+        self._apply_common_overrides()
 
     def _get_default_user_agent(self) -> str:
         """获取默认User-Agent"""
@@ -1223,3 +1452,228 @@ class BilibiliCrawler(AbstractCrawler):
             logger.warning("[BilibiliCrawler.close] Browser context was already closed")
         except Exception as e:
             logger.error(f"[BilibiliCrawler.close] Error during close: {e}")
+
+
+async def _ensure_login_cookie() -> str:
+    cookie = await login_service.get_cookie(Platform.BILIBILI.value)
+    if not cookie:
+        raise LoginExpiredError("登录过期，Cookie失效")
+    return cookie
+
+
+async def _run_bilibili_crawler(**kwargs: Any) -> Dict[str, Any]:
+    crawler = BilibiliCrawler(**kwargs)
+    try:
+        return await crawler.start()
+    finally:
+        await crawler.close()
+
+
+async def search(
+    *,
+    keywords: str,
+    page_size: int = 1,
+    page_num: int = 1,
+    limit: Optional[int] = None,
+    headless: Optional[bool] = None,
+    enable_save_media: Optional[bool] = None,
+    **kwargs: Any,
+) -> Dict[str, Any]:
+    logger.info(f"[bilibili.crawler.search] keywords={keywords}")
+
+    total_limit = limit if limit is not None else page_size
+    extra = dict(kwargs)
+    login_cookie = extra.pop("login_cookie", None)
+    login_phone = extra.pop("login_phone", None)
+    login_type_hint = extra.pop("login_type", None)
+
+    extra.update({
+        "page_size": page_size,
+        "page_num": page_num,
+        "no_auto_login": True,
+        "search_mode": "normal",
+    })
+
+    if not login_cookie:
+        login_cookie = await _ensure_login_cookie()
+
+    return await _run_bilibili_crawler(
+        crawler_type=CrawlerType.SEARCH,
+        keywords=keywords,
+        headless=headless,
+        enable_comments=False,
+        max_notes=total_limit,
+        max_comments_per_note=0,
+        enable_save_media=enable_save_media,
+        extra=extra,
+        login_cookie=login_cookie,
+        login_phone=login_phone,
+        login_type=login_type_hint,
+    )
+
+
+async def search_with_time_range(
+    *,
+    keywords: str,
+    start_day: str,
+    end_day: str,
+    page_size: int = 1,
+    page_num: int = 1,
+    limit: Optional[int] = None,
+    max_notes_per_day: int = 50,
+    daily_limit: bool = False,
+    headless: Optional[bool] = None,
+    enable_save_media: Optional[bool] = None,
+    **kwargs: Any,
+) -> Dict[str, Any]:
+    logger.info(
+        "[bilibili.crawler.search_with_time_range] "
+        f"keywords={keywords} start={start_day} end={end_day} daily_limit={daily_limit}"
+    )
+
+    total_limit = limit if limit is not None else page_size
+    extra = dict(kwargs)
+    login_cookie = extra.pop("login_cookie", None)
+    login_phone = extra.pop("login_phone", None)
+    login_type_hint = extra.pop("login_type", None)
+
+    extra.update({
+        "page_size": page_size,
+        "page_num": page_num,
+        "search_mode": "daily_limit_in_time_range" if daily_limit else "all_in_time_range",
+        "start_day": start_day,
+        "end_day": end_day,
+        "max_notes_per_day": max_notes_per_day,
+        "no_auto_login": True,
+    })
+
+    if not login_cookie:
+        login_cookie = await _ensure_login_cookie()
+
+    return await _run_bilibili_crawler(
+        crawler_type=CrawlerType.SEARCH,
+        keywords=keywords,
+        headless=headless,
+        enable_comments=False,
+        max_notes=total_limit,
+        max_comments_per_note=0,
+        enable_save_media=enable_save_media,
+        extra=extra,
+        login_cookie=login_cookie,
+        login_phone=login_phone,
+        login_type=login_type_hint,
+    )
+
+
+async def get_detail(
+    *,
+    video_ids: List[str],
+    headless: Optional[bool] = None,
+    enable_save_media: Optional[bool] = None,
+    **kwargs: Any,
+) -> Dict[str, Any]:
+    logger.info(f"[bilibili.crawler.get_detail] video_count={len(video_ids)}")
+
+    extra = dict(kwargs)
+    login_cookie = extra.pop("login_cookie", None)
+    login_phone = extra.pop("login_phone", None)
+    login_type_hint = extra.pop("login_type", None)
+    extra["no_auto_login"] = True
+
+    if not login_cookie:
+        login_cookie = await _ensure_login_cookie()
+
+    return await _run_bilibili_crawler(
+        crawler_type=CrawlerType.DETAIL,
+        note_ids=video_ids,
+        headless=headless,
+        enable_comments=False,
+        max_notes=len(video_ids),
+        max_comments_per_note=0,
+        enable_save_media=enable_save_media,
+        extra=extra,
+        login_cookie=login_cookie,
+        login_phone=login_phone,
+        login_type=login_type_hint,
+    )
+
+
+async def get_creator(
+    *,
+    creator_id: str,
+    page_num: int = 1,
+    page_size: int = 30,
+    headless: Optional[bool] = None,
+    enable_save_media: Optional[bool] = None,
+    **kwargs: Any,
+) -> Dict[str, Any]:
+    logger.info(
+        f"[bilibili.crawler.get_creator] creator_id={creator_id} page={page_num} size={page_size}"
+    )
+
+    extra = dict(kwargs)
+    login_cookie = extra.pop("login_cookie", None)
+    login_phone = extra.pop("login_phone", None)
+    login_type_hint = extra.pop("login_type", None)
+    extra.update({
+        "page_num": page_num,
+        "page_size": page_size,
+        "no_auto_login": True,
+    })
+
+    if not login_cookie:
+        login_cookie = await _ensure_login_cookie()
+
+    return await _run_bilibili_crawler(
+        crawler_type=CrawlerType.CREATOR,
+        creator_ids=[creator_id],
+        headless=headless,
+        enable_comments=False,
+        max_notes=1,
+        max_comments_per_note=0,
+        enable_save_media=enable_save_media,
+        extra=extra,
+        login_cookie=login_cookie,
+        login_phone=login_phone,
+        login_type=login_type_hint,
+    )
+
+
+async def fetch_comments(
+    *,
+    video_ids: List[str],
+    max_comments: int = 20,
+    fetch_sub_comments: bool = False,
+    headless: Optional[bool] = None,
+    **kwargs: Any,
+) -> Dict[str, Any]:
+    logger.info(
+        "[bilibili.crawler.fetch_comments] "
+        f"video_count={len(video_ids)} max_comments={max_comments} fetch_sub={fetch_sub_comments}"
+    )
+
+    extra = dict(kwargs)
+    login_cookie = extra.pop("login_cookie", None)
+    login_phone = extra.pop("login_phone", None)
+    login_type_hint = extra.pop("login_type", None)
+    extra.update({
+        "fetch_sub_comments": fetch_sub_comments,
+        "no_auto_login": True,
+    })
+
+    if not login_cookie:
+        login_cookie = await _ensure_login_cookie()
+
+    return await _run_bilibili_crawler(
+        crawler_type=CrawlerType.COMMENTS,
+        note_ids=video_ids,
+        headless=headless,
+        enable_comments=True,
+        max_notes=len(video_ids),
+        max_comments_per_note=max_comments,
+        enable_save_media=None,
+        extra=extra,
+        login_cookie=login_cookie,
+        login_phone=login_phone,
+        login_type=login_type_hint,
+    )

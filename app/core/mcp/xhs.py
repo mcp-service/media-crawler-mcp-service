@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 from typing import List, Optional
 
-from app.core.crawler.platforms.xhs import service as xhs_service
+from app.core.crawler.platforms import xhs as xhs_service
 from app.providers.logger import get_logger
 from app.api.scheme.response.xhs import XhsCommentsResult, XhsNoteDetail, XhsNoteSearchResult
 

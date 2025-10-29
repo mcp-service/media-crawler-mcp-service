@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 from typing import List, Optional
 
-from app.core.crawler.platforms.bilibili import service as bilibili_core
+from app.core.crawler.platforms import bilibili as bilibili_core
 from app.api.scheme.response import (
     BilibiliSearchResult,
     BilibiliDetailResult,
