@@ -36,37 +36,16 @@ def render_admin_config() -> HTMLResponse:
     </div>
     """
 
-    # 爬虫配置卡片
+    # 爬虫配置卡片（精简为当前有效配置）
     crawler_card = f"""
     <div class="mc-status-card">
         <h3>爬虫核心参数</h3>
         <form id='crawler-config-form' class='mc-form'>
             <div class='mc-form-group'>
-                <label>最大爬取数量</label>
-                <input type='number' id='max_notes' name='max_notes' min='1' max='1000' value='15'>
-                <small>每次爬取的最大帖子数量 (1-1000)</small>
-            </div>
-
-            <div class='mc-form-group'>
-                <label>每帖最大评论数</label>
-                <input type='number' id='max_comments_per_note' name='max_comments_per_note' min='0' max='100' value='10'>
-                <small>每个帖子最多爬取的评论数 (0-100)</small>
-            </div>
-
-            <div class='mc-form-group'>
-                <label>
-                    <input type='checkbox' id='enable_comments' name='enable_comments' checked>
-                    启用评论爬取
+                <label>无头模式</label>
+                <label style='display:flex;align-items:center;gap:.5rem;'>
+                    <input type='checkbox' id='headless' name='headless'> 浏览器后台运行（无界面）
                 </label>
-                <small>是否爬取帖子下的评论内容</small>
-            </div>
-
-            <div class='mc-form-group'>
-                <label>
-                    <input type='checkbox' id='headless' name='headless'>
-                    无头模式
-                </label>
-                <small>浏览器是否在后台运行（无界面）</small>
             </div>
 
             <div class='mc-form-group'>
@@ -78,6 +57,17 @@ def render_admin_config() -> HTMLResponse:
                     <option value='db'>MySQL / PostgreSQL 数据库</option>
                 </select>
                 <small>选择爬取数据的存储格式</small>
+            </div>
+
+            <div class='mc-form-group'>
+                <label>输出目录</label>
+                <input type='text' id='output_dir' name='output_dir' placeholder='./data'>
+            </div>
+
+            <div class='mc-form-group'>
+                <label style='display:flex;align-items:center;gap:.5rem;'>
+                    <input type='checkbox' id='enable_save_media' name='enable_save_media'> 保存图片/视频
+                </label>
             </div>
 
             <div class='mc-form-group'>

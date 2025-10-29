@@ -30,19 +30,29 @@ def register_resources(app: FastMCP) -> None:
                 "path": str(data_path.absolute())
             }, ensure_ascii=False, indent=2)
 
-        # 统计各平台数据（非递归：根目录 + json/csv 子目录）
+        # 统计各平台数据（包含 json/csv 与 videos 目录体积，不做历史别名兼容）
         platform_stats = {}
+
+        def _collect_files(p: Path):
+            files = list(p.glob("*.json")) + list(p.glob("*.csv"))
+            json_dir = p / "json"
+            csv_dir = p / "csv"
+            videos_dir = p / "videos"
+            if json_dir.exists() and json_dir.is_dir():
+                files += list(json_dir.glob("*.json"))
+            if csv_dir.exists() and csv_dir.is_dir():
+                files += list(csv_dir.glob("*.csv"))
+            bin_files = []
+            if videos_dir.exists() and videos_dir.is_dir():
+                bin_files += [f for f in videos_dir.rglob("*") if f.is_file()]
+            return files, bin_files
+
         for platform_dir in data_path.iterdir():
             if platform_dir.is_dir():
-                files = list(platform_dir.glob("*.json")) + list(platform_dir.glob("*.csv"))
-                json_dir = platform_dir / "json"
-                csv_dir = platform_dir / "csv"
-                if json_dir.exists() and json_dir.is_dir():
-                    files += list(json_dir.glob("*.json"))
-                if csv_dir.exists() and csv_dir.is_dir():
-                    files += list(csv_dir.glob("*.csv"))
-
-                total_size = sum(f.stat().st_size for f in files if f.is_file())
+                files, bin_files = _collect_files(platform_dir)
+                total_size = sum(f.stat().st_size for f in files if f.is_file()) + sum(
+                    f.stat().st_size for f in bin_files
+                )
                 latest_file = "无"
                 if files:
                     newest = max(files, key=lambda f: f.stat().st_mtime)

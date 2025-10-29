@@ -64,15 +64,10 @@ async function loadCurrentConfig() {
       apiRequest('/config/platforms'),
     ]);
 
-    // 填充表单
-    if (crawler.max_notes !== undefined)
-      document.getElementById('max_notes').value = crawler.max_notes;
-    if (crawler.max_comments_per_note !== undefined)
-      document.getElementById('max_comments_per_note').value = crawler.max_comments_per_note;
-    document.getElementById('enable_comments').checked = crawler.enable_comments !== false;
     document.getElementById('headless').checked = crawler.headless || false;
-    if (crawler.save_data_option)
-      document.getElementById('save_data_option').value = crawler.save_data_option;
+    if (crawler.save_data_option) document.getElementById('save_data_option').value = crawler.save_data_option;
+    if (crawler.output_dir !== undefined && crawler.output_dir !== null) document.getElementById('output_dir').value = crawler.output_dir;
+    if (document.getElementById('enable_save_media')) document.getElementById('enable_save_media').checked = !!crawler.enable_save_media;
 
     // 显示配置预览
     document.getElementById('config-display').innerHTML = `<pre style="font-size: 0.875rem; overflow-x: auto;">${JSON.stringify(
@@ -111,11 +106,10 @@ async function saveCrawlerConfig(form) {
   try {
     const fd = new FormData(form);
     const payload = {
-      max_notes: parseInt(fd.get('max_notes'), 10),
-      max_comments_per_note: parseInt(fd.get('max_comments_per_note'), 10),
-      enable_comments: fd.get('enable_comments') === 'on',
       headless: fd.get('headless') === 'on',
       save_data_option: fd.get('save_data_option'),
+      output_dir: (fd.get('output_dir') || '').trim() || null,
+      enable_save_media: fd.get('enable_save_media') === 'on',
     };
 
     const r = await apiRequest('/config/crawler', {

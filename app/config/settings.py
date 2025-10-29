@@ -25,9 +25,7 @@ class Platform(str, Enum):
     BILIBILI = "bili"
     XIAOHONGSHU = "xhs"
     DOUYIN = "dy"
-    KUAISHOU = "ks"
     WEIBO = "wb"
-    TIEBA = "tieba"
     ZHIHU = "zhihu"
 
 
@@ -117,19 +115,8 @@ class BrowserConfig(BaseModel):
 
 class CrawlConfig(BaseModel):
     """爬取配置"""
-    max_notes_count: int = 15
-    max_comments_per_note: int = 10
-    enable_get_comments: bool = True
-    enable_get_sub_comments: bool = False
     max_concurrency: int = 5
     crawl_interval: float = 1.0  # 爬取间隔(秒)
-
-    # 搜索模式配置
-    search_mode: str = "normal"  # normal, all_in_time_range, daily_limit_in_time_range
-    start_page: int = 1
-    start_day: Optional[str] = None  # YYYY-MM-DD
-    end_day: Optional[str] = None
-    max_notes_per_day: int = 50
 
 
 class StoreConfig(BaseModel):

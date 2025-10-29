@@ -29,10 +29,36 @@
 
 MediaCrawler MCP Service 是面向个人的数据获取工具集，通过 MCP（Model Context Protocol）把社媒公开信息变成 AI 助手可直接调用的标准化工具。核心能力包括“登录外部化管理”“任务级配置隔离”“浏览器上下文复用”和“结构化数据输出”。
 
+本项目现已聚焦“高质量内容的爬取与自动化”，稳定与质量优先：
+
+- 优先支持高质量生态：Bilibili、小红书，其次抖音、微博、知乎、贴吧等。
+- 强调可持续的抗风控策略与最小化请求规模的精确抓取。
+- 输出面向 AI 分析的扁平结构，避免冗余嵌套与噪声字段。
+
+聚焦方向（高质量内容）：
+
+- 哔哩哔哩：视频内容与互动数据，适合视频分析与社交行为分析。
+- 小红书：电商导购、产品推荐与品牌分析。
+- 抖音：短视频与用户行为分析，适合营销效果评估。
+- 微博：舆情分析与热点追踪。
+- 知乎：知识管理与市场调研，专业领域分析价值高。
+
 
 ## 关键优势：
 
-![bili-detail.png](docs/bili-detail.png)
+- UI 升级为 FastMCP UI，管理页（/dashboard, /login, /config, /inspector）全部迁移并稳定运行。
+- 重构爬虫配置装配：去冗余封装，收敛为函数式构建与更清晰的分层。
+- 小红书改为 DOM 定位策略以降低风控敏感度，抓取更稳定（逐步完善中）。
+- Bilibili 登录与抓取逻辑优化，测试通过，运行稳定；移除部分 service 层 option 封装。
+- 路由改为直接使用 FastMCP 路由与蓝图，统一注册与调试体验。
+
+同时，数据持久化目录与展示统一为平台代号：
+
+- 目录统一：`bili`、`xhs`，不再使用历史目录名（如 `bilibili`）。
+- B 站媒体落盘路径：`data/bili/videos`。
+- “数据持久化概览”统计同时计入 `json/csv` 与 `videos` 子目录体积。
+
+![bili-detail.png](docs/bili_detail.png)
 
 ### 从脚本到标准：可复用的 MCP 工具
 
@@ -47,6 +73,8 @@ MediaCrawler MCP Service 是面向个人的数据获取工具集，通过 MCP（
 > 采用 分层解耦架构 和 Pydantic 模型，保证了高效的数据验证和一致性。状态缓存 和 风控设计 让系统更加稳定，减少了负载并提高了抓取效率。
 
 ### 文本格式友好：适合 AI 分析，不返回冗余嵌套数据
+
+![contentnice.png](docs/contentnice.png)
 
 > 与其他同类型MCP相比，media-crawler-mcp-service 返回的抓取数据 简洁、无冗余，特别适合 AI 分析。避免复杂的嵌套数据，让 AI 模型可以更轻松、更高效地处理数据。
 
@@ -69,7 +97,7 @@ MediaCrawler MCP Service 是面向个人的数据获取工具集，通过 MCP（
   - `bili_creator`
   - `bili_comments`
 
-- [x] 小红书搜索/详情/创作者/评论
+- [ ] 小红书搜索/详情/创作者/评论，**最近风控，正在修复**
   - `xhs_search`
   - `xhs_detail`
   - `xhs_creator`
@@ -77,9 +105,7 @@ MediaCrawler MCP Service 是面向个人的数据获取工具集，通过 MCP（
 
 ### 进行中
 - [ ] 抖音
-- [ ] 快手
 - [ ] 知乎
-- [ ] 贴吧
 - [ ] 微博
 - [ ] 其他外部api
 - [ ] JWT 鉴权：简单集成并实现安全的身份验证机制
@@ -123,11 +149,11 @@ poetry run python main.py    # 默认端口 9090
 ## 管理界面与登录
 
 ### 1) 打开管理界面 `http://localhost:9090/admin`
-   ![index .png](docs/index.png)
+   ![index.png](docs/index.png)
 ### 2) 进入“登录管理”，选择平台（如 B 站）
-   ![登录界面](docs/login.png)
+   ![login.png](docs/login.png)
 ### 3) 支持“二维码登录”或“Cookie 登录”，状态会持久化
-   ![登录状态](docs/login-state.png)
+   ![login_state.png](docs/login_state.png)
 
 ## 在 AI 助手中使用
 
@@ -193,24 +219,15 @@ B站端点：      /mcp/bili   - B站专用工具
   ]
 }
 ```
-![img.png](docs/bili-detail.png)
+![bili-detail.png](docs/bili_detail.png)
+
 - `bili_creator`（创作者分析）
 ```json
 { "creator_ids": ["99801185"], "creator_mode": true }
 ```
 
-![工具测试](docs/tools-test.png)
+![mcp_tools_inspector.png](docs/mcp_tools_inspector.png)
 
-**小红书端点** (`/mcp/xhs`)：
-- `xhs_search` - 小红书关键词搜索
-- `xhs_detail` - 小红书笔记详情  
-- `xhs_creator` - 小红书创作者作品
-- `xhs_comments` - 小红书笔记评论
-
-**统一爬虫端点** (`/mcp/crawl`)：
-- `crawl_search` - 跨平台搜索
-- `crawl_detail` - 跨平台详情
-- `crawl_creator` - 跨平台创作者
 
 ### 工具使用示例
 

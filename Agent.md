@@ -204,6 +204,38 @@ logger.error("[bili.login] Pong failed: %s", exc)
 - 大对象或响应体仅在 debug 级别打印，避免 info 级别刷屏。
 - 网络错误、风控触发（如 406/412/461/471）使用 warning/error 级别，并附加关键信息（endpoint、note_id、trace）。
 
+## 6. UI 前端实现规则（替代旧规范）
+
+本节为管理界面（/dashboard, /login, /config, /inspector）实现规则，替代此前所有与前端相关的说明。
+
+- 基础框架
+  - 使用 FastMCP UI 基础设施与 `app/pages/ui_base.py` 提供的样式与布局，不引入第三方前端框架（React/Vue 等）。
+  - 页面以 Python 函数方式渲染（`app/pages/*.py`），统一通过 `build_page_with_nav` 输出。
+
+- 脚本与静态资源
+  - 页面逻辑脚本放在 `app/pages/js/*.js`，通过后端路由 `GET /static/js/{file}` 提供；页面内只保留少量挂载代码。
+  - 统一使用 `fetch` 调用后端 `/api/*` 路由，封装 `apiRequest()` 处理 JSON、错误与重试。
+  - CSP 规则由 `ui_base.py` 统一设置：允许同源脚本与少量内联初始化，不允许外链第三方脚本/字体。
+
+- 布局与样式
+  - 采用 `ui_base.py` 中的 `FASTMCP_PAGE_STYLES`，不要在页面内定义额外全局样式；必要时在 `ui_base.py` 增补通用样式。
+  - 使用组件化辅助函数（`create_page_header`、`create_button_group` 等）保持一致的结构与可读性。
+
+- 交互与可用性
+  - 表单使用语义化元素与唯一 `id`，事件在 `DOMContentLoaded` 中注册，避免在标签上直接使用内联事件（少量按钮可例外）。
+  - 错误与状态统一使用页面内的消息组件或 `alert` 简单提示，不引入复杂状态管理。
+  - 所有配置变更通过 `/api/config/*` 路由写入 `.env`，内容、类型在后端严格校验。
+
+- 命名与目录
+  - 平台目录与代号统一：`bili`、`xhs` 等；媒体落盘路径 `data/{platform}/videos`，结构化数据存于 `json/`、`csv/`。
+  - 新增页面规则：页面在 `app/pages/` 下新建渲染函数；脚本在 `app/pages/js/` 下新建同名 `*.js` 并在页面底部以 `<script src="/static/js/xxx.js"></script>` 引入。
+
+- 质量与测试
+  - UI 改动需覆盖：加载失败处理、空数据占位、慢网路体验（加载占位符）。
+  - 确保与后端 schema 对齐：变更字段同时更新 JS 读写逻辑与 `/api/config/*` 的 pydantic 模型。
+
+以上规则自本次变更起生效，用以替代此前关于前端的所有规范描述。
+
 ## 4. MCP 工具（当前状态）
 
 ### 4.1 服务内置工具（通用）
@@ -385,370 +417,226 @@ bp.tool(
 
 ## 7. 扩展新平台（模板）
 
-1) 目录与文件
+目标：快速为一个新平台接入登录、抓取、MCP 工具与数据落盘，保持目录与命名统一，稳定与质量优先。
+
+1) 注册平台枚举
+- 文件：`app/config/settings.py`
+- 在 `class Platform(str, Enum)` 中新增平台代号（小写，作为目录名与端点前缀），如：`YOUR = "your"`
+
+2) 目录与最小骨架
 ```bash
-mkdir app/crawler/platforms/yourplatform
-touch app/crawler/platforms/yourplatform/__init__.py
-touch app/crawler/platforms/yourplatform/crawler.py
-touch app/crawler/platforms/yourplatform/service.py
-touch app/crawler/platforms/yourplatform/client.py
+# Crawler 实现
+mkdir -p app/core/crawler/platforms/your
+touch app/core/crawler/platforms/your/__init__.py
+touch app/core/crawler/platforms/your/crawler.py       # 爬虫主流程（search/detail/creator/comments）
+touch app/core/crawler/platforms/your/client.py        # HTTP/页面抓取客户端（httpx/Playwright）
+touch app/core/crawler/platforms/your/service.py       # 编排与上下文聚合
+# 可选：登录与枚举/异常
+touch app/core/crawler/platforms/your/field.py         # 枚举与常量（可选）
+touch app/core/crawler/platforms/your/exception.py     # 领域异常（可选）
+mkdir -p app/core/login/your && touch app/core/login/your/login.py   # 登录适配（可选）
+
+# 请求模型
+touch app/api/scheme/request/your_scheme.py
+
+# MCP 工具实现与端点注册
+touch app/core/mcp/your.py
+touch app/api/endpoints/mcp/your.py
 ```
 
-2) Crawler：`crawler.py`
+3) Crawler：`app/core/crawler/platforms/your/crawler.py`
 ```python
-from app.crawler.platforms.base import AbstractCrawler
-from app.config.settings import CrawlerConfig
+from __future__ import annotations
+from typing import Any, Dict, List, Optional
+from app.providers.logger import get_logger
+from app.config.settings import global_settings
 
-class YourPlatformCrawler(AbstractCrawler):
-    def __init__(self, config: CrawlerConfig):
-        super().__init__(config)
+logger = get_logger()
 
-    async def start(self) -> dict:
-        # TODO: 实现抓取逻辑
-        return {"ok": True}
+class YourCrawler:
+    def __init__(self, headless: Optional[bool] = None, **kwargs):
+        browser_cfg = global_settings.browser
+        self.headless = browser_cfg.headless if headless is None else headless
+        # 其他选项按需透传（如 proxy/user_agent 等，由服务层决定是否开启）
+
+    async def search(self, keywords: str, page_num: int = 1, page_size: int = 20) -> Dict:
+        logger.info(f"[your.crawler.search] keywords={keywords}")
+        # TODO: 实现页面/API 抓取
+        return {"items": [], "page_num": page_num, "page_size": page_size}
+
+    async def get_detail(self, ids: List[str]) -> Dict:
+        logger.info(f"[your.crawler.detail] ids={len(ids)}")
+        return {"items": []}
+
+    async def get_creator(self, creator_ids: List[str], page_num: int = 1, page_size: int = 30) -> Dict:
+        logger.info(f"[your.crawler.creator] creators={len(creator_ids)}")
+        return {"items": []}
+
+    async def fetch_comments(self, ids: List[str], max_comments: int = 50) -> Dict:
+        logger.info(f"[your.crawler.comments] ids={len(ids)} max={max_comments}")
+        return {"comments": {}}
 ```
 
-3) Service：`service.py`
+4) Service：`app/core/crawler/platforms/your/service.py`
 ```python
-from app.config.settings import create_search_config, Platform
-from .crawler import YourPlatformCrawler
+from __future__ import annotations
+from typing import Dict, List
+from app.config.settings import global_settings
+from .crawler import YourCrawler
 
-class YourPlatformCrawlerService:
-    async def search(self, keywords: str, **kwargs) -> dict:
-        config = create_search_config(platform=Platform.XIAOHONGSHU, keywords=keywords, **kwargs)
-        crawler = YourPlatformCrawler(config)
-        try:
-            return await crawler.start()
-        finally:
-            await crawler.close()
+class YourService:
+    async def search(self, keywords: str, page_num: int = 1, page_size: int = 20) -> Dict:
+        crawler = YourCrawler(headless=global_settings.browser.headless)
+        return await crawler.search(keywords, page_num=page_num, page_size=page_size)
+
+    async def detail(self, ids: List[str]) -> Dict:
+        crawler = YourCrawler(headless=global_settings.browser.headless)
+        return await crawler.get_detail(ids)
+
+    async def creator(self, creator_ids: List[str], page_num: int = 1, page_size: int = 30) -> Dict:
+        crawler = YourCrawler(headless=global_settings.browser.headless)
+        return await crawler.get_creator(creator_ids, page_num=page_num, page_size=page_size)
+
+    async def comments(self, ids: List[str], max_comments: int = 50) -> Dict:
+        crawler = YourCrawler(headless=global_settings.browser.headless)
+        return await crawler.fetch_comments(ids, max_comments=max_comments)
 ```
 
-4) MCP 端点：`app/api/endpoints/mcp/yourplatform.py`
+5) 请求模型：`app/api/scheme/request/your_scheme.py`
 ```python
+from pydantic import BaseModel, ConfigDict, Field
+
+class YourSearchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    keywords: str = Field(..., min_length=1)
+    page_num: int = 1
+    page_size: int = 20
+
+    def to_service_params(self) -> dict:
+        return self.model_dump()
+```
+
+6) MCP 工具：`app/core/mcp/your.py`
+```python
+from __future__ import annotations
+from typing import Dict, List
+from app.core.crawler.platforms.your.service import YourService
+
+svc = YourService()
+
+async def your_search(keywords: str, page_num: int = 1, page_size: int = 20) -> Dict:
+    """返回简化结构：适合 AI 处理的扁平字段"""
+    return await svc.search(keywords, page_num=page_num, page_size=page_size)
+```
+
+7) MCP 端点：`app/api/endpoints/mcp/your.py`
+```python
+from __future__ import annotations
 from fastmcp import FastMCP
-from app.api.endpoints.base import BaseEndpoint
-from app.crawler.platforms.yourplatform.service import YourPlatformCrawlerService
+from pydantic import ValidationError
+from app.api.scheme import error_codes
+from app.api.scheme.request.your_scheme import YourSearchRequest
+from app.core.mcp import your as your_tools
+from app.providers.logger import get_logger
 
-class YourPlatformEndpoint(BaseEndpoint):
-    def __init__(self):
-        super().__init__(prefix="/yourplatform", tags=["你的平台"])
-        self.service = YourPlatformCrawlerService()
+logger = get_logger()
+your_mcp = FastMCP(name="Your MCP")
 
-    def register_routes(self):
-        return []
-
-    def register_mcp_tools(self, app: FastMCP):
-        @app.tool(name="yourplatform_search")
-        async def yourplatform_search(keywords: str) -> str:
-            import json
-            result = await self.service.search(keywords)
-            return json.dumps(result, ensure_ascii=False)
-
-        self._add_tool_info("yourplatform_search", "搜索你的平台内容")
-```
-
-5) 注册端点：`app/api_service.py`
-```python
-from app.api.endpoints.mcp import BilibiliEndpoint  # 现有
-# from app.api.endpoints.mcp.yourplatform import YourPlatformEndpoint
-
-def auto_discover_endpoints():
-    # ... 启用平台判定
-    # endpoint_registry.register(YourPlatformEndpoint())
-    pass
-```
-
-### 问题排查黄金法则
-
-**遇到数据流问题时，永远先问这三个问题：**
-
-1. **数据从哪来？** - 上游API返回了什么字段？什么格式？
-2. **数据要到哪去？** - 下游API需要什么参数？什么格式？
-3. **原始实现怎么做的？** - MediaCrawler源码是如何处理这个流程的？
-
-**反面教材（避免）：**
-- ❌ 过早陷入技术细节（WBI签名、Cookie认证等）
-- ❌ 基于假设猜测问题（"可能是XX"而不是验证）
-- ❌ 忽略用户提供的关键信息（URL参数、错误日志等）
-
-**正确方法（推荐）：**
-1. ✅ **先画数据流图**：`search API → video_id → detail API`，标注每个环节的输入输出
-2. ✅ **对比原始代码**：第一时间查看MediaCrawler如何实现相同功能
-3. ✅ **端到端验证**：从源头（API响应）到终点（用户收到的数据）追踪每一步转换
-4. ✅ **提取用户反馈中的硬证据**：URL参数、日志片段、实际响应数据
-
-### B站爬虫特定注意事项
-
-**视频ID的两种格式（关键）：**
-- `aid`（数字ID）：detail API必需参数，如 `aid=1504494553`
-- `bvid`（BV号）：前端URL使用，如 `BV1Dr421q7YD`
-
-**数据流正确实现：**
-```
-search API 返回: {"result": [{"aid": 123, "bvid": "BV1xxx"}]}
-                      ↓
-              提取 aid 作为 video_id
-                      ↓
-detail API 调用: get_video_info(aid=123)  ← 注意：必须用aid，不能用bvid
-                      ↓
-            返回嵌套结构: {"View": {...}, "Card": {...}}
-                      ↓
-           转换为扁平格式返回给用户
-```
-
-**常见错误模式：**
-- 搜索返回`bvid`直接作为`video_id` → detail API失败（"啥都木有"）
-- detail API返回原始嵌套结构 → 用户收到空响应或难以使用
-- 频繁调用`pong()`检查登录状态 → 触发风控
-
-**正确处理方式：**
-- 搜索时：返回`aid`作为`video_id`，同时保留`bvid`字段供参考
-- 详情时：使用`aid`调用API，返回前转换为扁平格式
-- 登录检查：优先使用缓存状态（TTL 60s未登录/3600s已登录），避免频繁pong
-
-### 登录状态管理最佳实践
-
-#### 1.浏览器实例管理规范（重要 ⚠️）
-
-**问题背景**：
-- 多平台（Bilibili、小红书等）共享浏览器实例会导致状态混乱
-- 频繁创建/销毁浏览器实例会影响性能
-- 登录状态需要在浏览器上下文中持久化
-
-**解决方案：BrowserManager 统一管理**
-
-所有涉及浏览器操作的模块（Login、Crawler）必须通过 `BrowserManager` 获取浏览器实例：
-
-**使用规范**：
-
-1. **获取浏览器上下文（Login/Crawler）**：
-2. **释放浏览器上下文**：
-3. **强制清理（仅在 logout 时）**：
-4. **临时上下文（状态检查）**：
-
-
-**关键原则**：
-- ✅ 每个平台使用独立的浏览器实例（通过 `platform` 参数区分）
-- ✅ 同一平台的 Login 和 Crawler 共享浏览器实例（减少资源占用）
-- ✅ 使用 `keep_alive=True` 保持实例存活，避免频繁创建/销毁
-- ✅ BrowserManager 内部使用互斥锁，防止并发创建多个实例
-- ❌ 禁止在 Login/Crawler 模块中直接使用 `async_playwright()`
-- ❌ 禁止手动 `close()` 或 `stop()` 由 BrowserManager 管理的实例
-
-**实现位置**：
-- 浏览器管理器：`app/core/login/browser_manager.py`
-- Bilibili Login：`app/core/login/bilibili/login.py:456-464`
-- Bilibili Crawler：`app/core/crawler/platforms/bilibili/crawler.py:105-111`
-- XHS Login：`app/core/login/xhs/login.py:155-161`
-- XHS Crawler：`app/core/crawler/platforms/xhs/crawler.py:69-75`
-
-#### 2.登录防抖机制
-
-**问题背景**：
-- 用户可能在短时间内多次点击登录按钮
-- 多个登录请求同时进行会导致浏览器资源竞争
-- 登录会话状态混乱
-
-**解决方案：平台级登录锁**
-
-`LoginService` 为每个平台维护一个登录锁，防止同一平台重复登录：
-
-**关键点**：
-- ✅ 同一平台同一时间只能有一个登录流程在进行
-- ✅ 如果检测到正在进行的登录，返回友好提示而不是报错
-- ✅ 锁会在登录完成（成功/失败）后自动释放
-
-**实现位置**：`app/core/login/service.py:38-40, 44-49, 97-170`
-
-#### 3. 二维码登录规范（重要 ⚠️）
-
-**问题背景**：
-- 二维码登录时，如果检测到已有登录状态就直接返回，导致没有生成二维码
-- 二维码图片可能没有完全加载就被读取，导致返回空图片
-- 内部阻塞等待扫码会导致接口超时，应该使用异步轮询
-
-**核心原则：症状优先，数据格式优先**
-
-当遇到二维码相关问题时，应该：
-1. ✅ **优先检查用户症状**：
-   - "空图片" + "长度: 6294" → 数据已获取，格式处理有问题
-   - "二维码不显示" + 无日志 → 元素未找到或加载超时
-   - "立即登录成功" + 未扫码 → 状态验证逻辑错误
-
-2. ✅ **优先检查数据格式**：
-   ```python
-   # 二维码数据的三种格式
-   # 1. HTTP URL: "https://example.com/qrcode.png"
-   # 2. Data URL: "data:image/png;base64,iVBORw0KG..."
-   # 3. Pure base64: "iVBORw0KGgoAAAANSUhEUg..."
-
-   # 前端需要的是纯 base64，不包含任何前缀
-   ```
-
-3. ✅ **对比不同平台实现**：
-   - Bilibili: `qrcode_element.screenshot()` → 直接返回 base64
-   - 小红书: `img.getAttribute("src")` → 可能是 data URL，需要提取
-
-**常见问题与解决方案**：
-
-**问题 1：二维码显示为空图片**
-
-```python
-# 错误实现 ❌
-async def find_login_qrcode(page, selector):
-    element = await page.wait_for_selector(selector)
-    src = await element.get_property("src")
-    return src  # 直接返回 data:image/png;base64,xxx 导致前端无法显示
-
-# 正确实现 ✅
-async def find_login_qrcode(page, selector):
-    element = await page.wait_for_selector(selector)
-    src = await element.get_property("src")
-
-    # 处理 HTTP URL
-    if src.startswith("http"):
-        response = await fetch(src)
-        return base64.b64encode(response.content).decode()
-
-    # 处理 data URL（关键！）
-    if src.startswith("data:image"):
-        # 提取纯 base64 部分
-        return src.split(",", 1)[1]
-
-    # 已经是纯 base64
-    return src
-```
-
-**问题 2：未登录却显示已登录**
-
-```python
-# 错误实现 ❌
-async def has_valid_cookie(self):
-    cookies = await self.browser_context.cookies()
-    cookie_dict = {c["name"]: c["value"] for c in cookies}
-    # 仅检查 Cookie 存在，不验证有效性
-    return bool(cookie_dict.get("web_session"))
-
-# 正确实现 ✅
-async def has_valid_cookie(self):
-    cookies = await self.browser_context.cookies()
-    cookie_dict = {c["name"]: c["value"] for c in cookies}
-
-    if not cookie_dict.get("web_session"):
-        return False
-
-    # 调用 API 验证 Cookie 是否真正有效
+@your_mcp.tool(name="search", description="搜索 Your 平台")
+async def search(keywords: str, page_num: int = 1, page_size: int = 20):
     try:
-        client = self._build_client(cookie_dict)
-        return await client.pong()  # 真正的登录验证
-    except Exception:
-        return False
+        req = YourSearchRequest.model_validate({
+            "keywords": keywords, "page_num": page_num, "page_size": page_size
+        })
+    except ValidationError as exc:
+        return {"code": error_codes.PARAM_ERROR[0], "msg": error_codes.PARAM_ERROR[1], "data": {"errors": exc.errors()}}
+
+    result = await your_tools.your_search(**req.to_service_params())
+    return {"code": error_codes.SUCCESS[0], "msg": error_codes.SUCCESS[1], "data": result}
+
+__all__ = ["your_mcp"]
 ```
 
-**问题 3：二维码轮询立即成功（未扫码）**
-
+8) 挂载子服务：`app/api_service.py`
 ```python
-# 错误实现 ❌
-async def _poll_qrcode():
-    while True:
-        # 只检查 Cookie 存在
-        if await login_obj.has_valid_cookie():
-            await _save_login_success()
-            break
+from app.api.endpoints import main_app, bili_mcp, xhs_mcp
+from app.api.endpoints.mcp.your import your_mcp
 
-# 正确实现 ✅
-async def _poll_qrcode():
-    # 记录轮询开始前的 session
-    cookies_before = await browser_context.cookies()
-    before_session = cookie_dict_before.get("web_session")
-
-    while True:
-        cookies_current = await browser_context.cookies()
-        current_session = cookie_dict_current.get("web_session")
-
-        # 检查 session 是否发生变化（而不仅仅是存在）
-        if current_session and current_session != before_session:
-            await _save_login_success()
-            break
+async def setup_servers():
+    await main_app.import_server(xhs_mcp, 'xhs')
+    await main_app.import_server(bili_mcp, 'bili')
+    await main_app.import_server(your_mcp, 'your')
 ```
 
-**问题排查优先级（黄金法则）**：
+9) 数据落盘（可选）
+- 复用 `app/core/crawler/tools/async_file_writer.py`：目录固定为 `data/{platform}/{json|csv|videos}`
+- 存储格式由 `STORE__SAVE_FORMAT` 控制（json/csv/sqlite/db），平台代号必须与 `Platform` 枚举一致（如 `your`）
 
-遇到登录问题时，按此顺序排查：
+10) UI/管理联动（可选）
+- 如需在“平台会话面板”展示中文名，更新以下映射表：
+  - `app/api/endpoints/admin/status_endpoint.py` → `platform_names`
+  - `app/api/endpoints/admin/config_endpoint.py` → `platform_names`
+  - `app/core/resources/__init__.py`（资源展示）
+- MCP Inspector 会自动读取主应用工具清单，无需额外前端改动。
 
-1. **用户症状分析**（30秒）
-   - 空图片 → 数据格式问题
-   - 无二维码 → 元素选择器或加载超时
-   - 立即成功 → 状态验证逻辑错误
+11) 验收清单
+- 工具可在 `/inspector` 正常调用：search → detail → comments 流程链打通
+- `.env` 未新增无效项；数据落盘目录为 `data/your/*`
+- 日志可读（抓取/错误/风控告警），失败路径给出明确提示
 
-2. **日志关键信息**（1分钟）
-   - "长度: 6294" → 数据已获取，检查格式处理
-   - "wait_for_selector timeout" → 选择器错误或页面未加载
-   - "登录状态变化: None -> xxx" → 正常流程
+## 8. 问题排查黄金法则（稳定与质量优先）
 
-3. **数据格式验证**（2分钟）
-   - 在 `find_login_qrcode()` 添加日志：`logger.info(f"src[:100] = {src[:100]}")`
-   - 检查是否是 data URL、HTTP URL 还是纯 base64
+- 三问法（必做）
+  - 数据从哪来：上游 API/页面返回哪些字段？结构是什么？
+  - 数据要到哪去：下游工具/存储需要哪些字段？结构是什么？
+  - 代码怎么走：工具 → 请求模型 → 服务 → 爬虫 → 客户端 → 存储 各环节如何处理？
 
-4. **对比平台实现**（3分钟）
-   - Bilibili 怎么处理的？
-   - MediaCrawler 源码怎么处理的？
+- 端到端自查清单
+  - 工具可见性：`GET /api/mcp/data` 能看到你的平台工具；`/inspector` 可调用。
+  - 登录状态：`/login` 已登录；`GET /api/status/platforms` 显示 is_logged_in=true。
+  - 服务健康：`GET /api/status/services`、`GET /api/status/system` 正常。
+  - 数据落盘：`/api/status/data` 有统计，且生成 `data/{platform}/{json|csv|videos}`。
+  - 日志：查看 `logs/mcp-toolse.log`（资源 `logs://recent`）是否记录抓取/错误关键信息。
 
-5. **最后才看流程**（避免过早陷入）
-   - 登录流程编排
-   - 轮询逻辑
-   - 会话管理
+- 常见错误归因
+  - 参数错误：`code=50001(PARAM_ERROR)` → 对照 `app/api/scheme/request/{platform}_scheme.py` 修正必填项/类型。
+  - 登录失效：`code=401(INVALID_TOKEN)` 或平台 412/461/471 → 在 `/login` 重新登录并复用会话；避免高频 `pong`。
+  - 路由不存在：404/405 → 检查 `app/api/endpoints/mcp/{platform}.py` 是否存在，并在 `app/api_service.py` 通过 `import_server(..., '{code}')` 挂载。
+  - 空数据：`code=50004(NOT_DATA)` 或 items 为空 → 优先核对关键词/时间段与上游 DOM/接口是否改版。
 
-**反面教材（避免）**：
-- ❌ 一开始就阅读整个登录流程（数百行代码）
-- ❌ 过早关注技术细节（async/await、锁机制等）
-- ❌ 忽略日志中的数字线索（"长度: 6294" 说明数据存在）
-- ❌ 基于假设猜测（"可能是加载慢"而不是验证）
+- 最小复现路径
+  1) `/login` 登录 → 2) `/inspector` 跑 `search` → 3) 取 ID 跑 `detail` → 4) 跑 `comments` → 5) 看 `/status/data` 与日志。
 
-**核心要点总结**：
+- 日志与级别
+  - 重要步骤 `info`，网络/风控异常 `warning/error`，附 endpoint、note_id、trace。
+  - 大响应体仅在 debug 打印，避免 info 刷屏。
 
-1. **跳过已登录状态检查（二维码登录专用）**：
-   ```python
-   if not cookie_candidate and payload.login_type != "qrcode":
-       # 只有非二维码登录才检查现有状态
-       current_state = await service.refresh_platform_state(...)
-   ```
+## 9. 项目数据流注意事项（按现行架构）
 
-2. **等待二维码完全加载**：
-   ```python
-   await self.context_page.wait_for_selector(selector, timeout=10000)
-   await asyncio.sleep(1)  # 确保图片完全加载
-   ```
+- 标准数据流
+  工具（`app/core/mcp/{platform}.py`）
+  → 请求校验（`app/api/scheme/request/{platform}_scheme.py`）
+  → 服务（`service.py`）
+  → 爬虫（`crawler.py`）
+  → 客户端（`client.py`）
+  → 存储（AsyncFileWriter/DB）
+  → 扁平化 JSON 返回。
 
-3. **处理不同二维码格式**：
-   ```python
-   if src.startswith("data:image"):
-       return src.split(",", 1)[1]  # 提取纯 base64
-   ```
+- 参数与默认值
+  - 工具入参 → pydantic 校验 → `to_service_params()` 标准化。
+  - 服务层创建爬虫，默认读取 `global_settings.browser.headless` 等；必要时在端点层做字段映射（如 `enable_save_media → save_media`）。
 
-4. **使用异步轮询，检测 session 变化**：
-   ```python
-   before_session = cookie_dict_before.get("web_session")
-   # 轮询时检查 session 是否变化
-   if current_session and current_session != before_session:
-       await _save_login_success()
-   ```
+- 存储与目录
+  - 目录：`data/{platform}/{json|csv|videos}`，平台代号与 `Platform` 枚举一致（如 `bili`、`xhs`）。
+  - 文件：`{crawler_type}_{item_type}_{YYYY-MM-DD}.{json|csv}`；“数据持久化概览”会统计 json/csv 与 videos 体积。
 
-5. **验证登录状态要调用 API**：
-   ```python
-   async def has_valid_cookie(self):
-       if not cookie_dict.get("web_session"):
-           return False
-       # 真正验证，而不是仅检查 Cookie 存在
-       return await client.pong()
-   ```
+- 平台特定要点
+  - Bilibili：search 返回 `aid`；下游 detail/评论使用 `aid` 作为 video_id（不要用 bvid）。
+  - 小红书：detail/comments 必须提供 `xsec_token`（可从搜索结果或分享链接解析）。
 
-**实现位置**：
-- 二维码格式处理：`app/core/crawler/tools/crawler_util.py:34-69`
-- 登录状态验证：`app/core/login/xhs/login.py:132-169`
-- 二维码轮询逻辑：`app/core/login/xhs/login.py:280-352`
-- Bilibili 参考实现：`app/core/login/bilibili/login.py:438, 582-638`
-
+- 稳定性建议
+  - 最小化请求规模与页面跳转；复用持久化会话（Playwright persistent context）。
+  - DOM/接口变更优先在 `client.py` 与解析模块修复；保证工具层输出字段稳定、扁平，必要字段标可选。
 
 ## 10. 提交前自检清单
 
