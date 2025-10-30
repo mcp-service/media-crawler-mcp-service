@@ -9,6 +9,7 @@ import httpx
 from playwright.async_api import BrowserContext, Page
 
 from app.providers.logger import get_logger
+import ujson
 
 
 logger = get_logger()
@@ -102,7 +103,7 @@ class XiaoHongShuClient:
             source = xsec_source or "pc_search"
             url = f"{url}?xsec_token={xsec_token}&xsec_source={source}"
         
-        # 直接通过 Playwright 页面获取数据，类似 xiaohongshu-mcp 的实现
+        # 直接通过 Playwright 页面获取数据
         detail = await self._extract_note_via_page(url, note_id)
         logger.debug(f"[xhs.client] DOM extracted note {note_id} success={detail is not None}")
         return detail
@@ -111,40 +112,56 @@ class XiaoHongShuClient:
         """Extract note data directly from page's window.__INITIAL_STATE__ like xiaohongshu-mcp."""
         try:
             await self.page.goto(url, wait_until="domcontentloaded")
-            # 等待页面加载和 __INITIAL_STATE__ 初始化
+            
+            # 等待页面加载和 __INITIAL_STATE__.note.noteDetailMap 初始化
             try:
-                await self.page.wait_for_function("() => !!window.__INITIAL_STATE__ && !!window.__INITIAL_STATE__.note", timeout=8000)
+                await self.page.wait_for_function(
+                    "() => !!window.__INITIAL_STATE__ && !!window.__INITIAL_STATE__.note && !!window.__INITIAL_STATE__.note.noteDetailMap",
+                    timeout=10000
+                )
             except Exception:
                 # fallback wait
                 await self.page.wait_for_timeout(1000)
                 
-            # 使用 JavaScript 直接提取数据，类似 xiaohongshu-mcp 的方式
+            # 提取整个 noteDetailMap（与 Go 实现一致）
             raw_json = await self.page.evaluate(
                 """
                 () => {
                     try {
                         const st = window.__INITIAL_STATE__;
                         if (st && st.note && st.note.noteDetailMap) {
-                            const noteData = st.note.noteDetailMap[arguments[0]];
-                            if (noteData && noteData.note) {
-                                return JSON.stringify(noteData.note);
-                            }
+                            return JSON.stringify(st.note.noteDetailMap);
                         }
                     } catch (e) {
                         console.error('Extract note error:', e);
                     }
                     return "";
                 }
-                """, 
-                note_id
+                """
             )
             
             if not raw_json:
+                logger.warning(f"[xhs.client] noteDetailMap is empty for note {note_id}")
                 return None
                 
             import json
             try:
-                return json.loads(raw_json)
+                note_detail_map = json.loads(raw_json)
+                
+                # 从 map 中提取对应 note_id 的数据
+                if note_id not in note_detail_map:
+                    logger.warning(f"[xhs.client] note {note_id} not found in noteDetailMap, keys: {list(note_detail_map.keys())}")
+                    return None
+                    
+                note_data = note_detail_map[note_id]
+                
+                # 返回 note 字段（与 Go 实现一致）
+                if "note" in note_data:
+                    return note_data["note"]
+                else:
+                    logger.warning(f"[xhs.client] 'note' field not found in noteDetailMap[{note_id}]")
+                    return None
+                    
             except Exception as e:
                 logger.error(f"[xhs.client] Parse note JSON failed: {e}")
                 return None
@@ -213,87 +230,100 @@ class XiaoHongShuClient:
         self,
         user_id: str,
         *,
-        crawl_interval: float = 1.0,
+        page_num: int = 1,
+        page_size: int = 10,
         callback = None,
-        max_notes: int = 50,
     ) -> List[Dict[str, Any]]:
-        """Get all notes by creator using DOM method."""
-        import asyncio
-        
-        notes = []
-        page_num = 1
-        
-        while len(notes) < max_notes:
+        """
+        Get notes by creator using DOM method - matches xiaohongshu-mcp implementation.
+
+        Args:
+            user_id: 用户ID
+            page_num: 页码（从1开始）
+            page_size: 每页数量
+            callback: 回调函数
+
+        Returns:
+            笔记列表
+        """
+
+        try:
+            # 构建用户主页 URL
+            url = f"{self._domain}/user/profile/{user_id}"
+            await self.page.goto(url, wait_until="domcontentloaded")
+
+            # 等待页面稳定（与 xiaohongshu-mcp 的 MustWaitStable 对齐）
+            await self.page.wait_for_load_state("networkidle")
+
+            # 等待 __INITIAL_STATE__ 初始化
             try:
-                # 构建用户主页 URL
-                url = f"{self._domain}/user/profile/{user_id}"
-                await self.page.goto(url, wait_until="domcontentloaded")
-                
-                # 等待页面加载
-                try:
-                    await self.page.wait_for_function("() => !!window.__INITIAL_STATE__", timeout=5000)
-                except Exception:
-                    pass
-                    
-                # 提取当前页面的笔记数据
-                raw_json = await self.page.evaluate(
-                    """
-                    () => {
-                        try {
-                            const st = window.__INITIAL_STATE__;
-                            if (st && st.user && st.user.notes) {
-                                const notesData = st.user.notes;
-                                const feeds = notesData.value !== undefined ? notesData.value : notesData._value;
-                                if (feeds) {
-                                    return JSON.stringify(feeds);
-                                }
-                            }
-                        } catch (e) {
-                            console.error('Extract notes error:', e);
-                        }
-                        return "";
-                    }
-                    """
+                await self.page.wait_for_function(
+                    "() => window.__INITIAL_STATE__ !== undefined",
+                    timeout=8000
                 )
-                
-                if not raw_json:
-                    break
-                    
-                import json
-                try:
-                    page_notes = json.loads(raw_json)
-                    if not page_notes:
-                        break
-                        
-                    for note in page_notes:
-                        if len(notes) >= max_notes:
-                            break
-                        notes.append(note)
-                        
-                    # 如果回调函数存在，调用它
-                    if callback:
-                        await callback(page_notes)
-                        
-                    # 检查是否还有更多数据
-                    if len(page_notes) == 0:
-                        break
-                        
-                    # 休眠间隔
-                    if crawl_interval > 0:
-                        await asyncio.sleep(crawl_interval)
-                        
-                    page_num += 1
-                    
-                except Exception as e:
-                    logger.error(f"[xhs.client] Parse notes JSON failed: {e}")
-                    break
-                    
+            except Exception:
+                await self.page.wait_for_timeout(1000)
+
+            # 提取笔记数据（与 xiaohongshu-mcp 完全一致）
+            raw_json = await self.page.evaluate(
+                """
+                () => {
+                    if (window.__INITIAL_STATE__ &&
+                        window.__INITIAL_STATE__.user &&
+                        window.__INITIAL_STATE__.user.notes) {
+                        const notes = window.__INITIAL_STATE__.user.notes;
+                        // 优先使用 value（getter），如果不存在则使用 _value（内部字段）
+                        const data = notes.value !== undefined ? notes.value : notes._value;
+                        if (data) {
+                            return JSON.stringify(data);
+                        }
+                    }
+                    return "";
+                }
+                """
+            )
+
+            if not raw_json:
+                logger.warning(f"[xhs.client] No notes found for user {user_id}")
+                return []
+
+            try:
+                # 解析帖子数据（帖子为双重数组）
+                notes_feeds = ujson.loads(raw_json)
+                if not notes_feeds:
+                    return []
+
+                # 展平双重数组（与 xiaohongshu-mcp 完全一致）
+                all_notes = []
+                for feeds in notes_feeds:
+                    if isinstance(feeds, list) and len(feeds) != 0:
+                        all_notes.extend(feeds)
+
+                if not all_notes:
+                    return []
+
+                # 分页处理
+                start_idx = (page_num - 1) * page_size
+                end_idx = start_idx + page_size
+                page_notes = all_notes[start_idx:end_idx]
+
+                logger.info(f"[xhs.client] Found {len(all_notes)} notes, returning page {page_num} ({len(page_notes)} notes)")
+
+                # 回调处理
+                if callback and page_notes:
+                    await callback(page_notes)
+
+                return page_notes
+
             except Exception as e:
-                logger.error(f"[xhs.client] Get creator notes failed page {page_num}: {e}")
-                break
-                
-        return notes[:max_notes]
-        
+                import traceback
+                logger.error(f"[xhs.client] Parse notes JSON failed: {traceback.format_exc()}")
+                return []
+
+        except Exception as e:
+            logger.error(f"[xhs.client] Get creator notes failed: {e}")
+            return []
+
     async def search_notes(
         self,
         keyword: str,
@@ -310,11 +340,24 @@ class XiaoHongShuClient:
         
         try:
             await self.page.goto(search_url, wait_until="domcontentloaded")
-            # 等待搜索结果加载
+            
+            # 等待搜索结果数据加载，检查feeds数组存在且有内容
             try:
-                await self.page.wait_for_function("() => !!window.__INITIAL_STATE__ && !!window.__INITIAL_STATE__.search", timeout=8000)
-            except Exception:
-                await self.page.wait_for_timeout(1000)
+                await self.page.wait_for_function(
+                    """() => {
+                        const st = window.__INITIAL_STATE__;
+                        if (st && st.search && st.search.feeds) {
+                            const feeds = st.search.feeds;
+                            const val = feeds.value !== undefined ? feeds.value : feeds._value;
+                            return val && val.length > 0;
+                        }
+                        return false;
+                    }""",
+                    timeout=10000
+                )
+            except Exception as e:
+                logger.warning(f"[xhs.client] Search timeout or no results for keyword={keyword}: {e}")
+                return []
                 
             # 提取搜索结果
             raw_json = await self.page.evaluate(
@@ -334,7 +377,7 @@ class XiaoHongShuClient:
                 }
                 """
             )
-            
+            logger.debug(f"[xhs.client] search_notes raw_json: {raw_json}")
             if not raw_json:
                 logger.info(f"[xhs.client] No search results for keyword={keyword}")
                 return []
@@ -400,12 +443,22 @@ class XiaoHongShuClient:
         note_id: str,
         xsec_token: str,
         *,
-        crawl_interval: float = 1.0,
+        page_num: int = 1,
+        page_size: int = 20,
         callback = None,
-        max_count: int = 50,
     ) -> None:
-        """Get all comments for a note using DOM method."""
+        """
+        Get comments for a note using DOM method with pagination support.
+        
+        Args:
+            note_id: 笔记ID
+            xsec_token: 安全token
+            page_num: 页码（从1开始）
+            page_size: 每页数量
+            callback: 回调函数
+        """
         import asyncio
+        import json
         
         try:
             # 构建笔记详情页 URL
@@ -415,43 +468,91 @@ class XiaoHongShuClient:
                 
             await self.page.goto(url, wait_until="domcontentloaded")
             
-            # 等待页面加载
+            # 等待页面加载和评论数据初始化
             try:
-                await self.page.wait_for_function("() => !!window.__INITIAL_STATE__", timeout=5000)
+                await self.page.wait_for_function(
+                    "() => !!window.__INITIAL_STATE__ && !!window.__INITIAL_STATE__.note && !!window.__INITIAL_STATE__.note.noteDetailMap",
+                    timeout=8000
+                )
             except Exception:
-                pass
-                
-            # 提取评论数据
+                await self.page.wait_for_timeout(1000)
+
+            # 等待评论加载完成（等待 firstRequestFinish 为 true 或 loading 为 false）
+            try:
+                await self.page.wait_for_function(
+                    f"""() => {{
+                        try {{
+                            const st = window.__INITIAL_STATE__;
+                            if (st && st.note && st.note.noteDetailMap) {{
+                                const noteData = st.note.noteDetailMap['{note_id}'];
+                                if (noteData && noteData.comments) {{
+                                    const comments = noteData.comments;
+                                    // 等待评论加载完成：firstRequestFinish 为 true 或 loading 为 false
+                                    return comments.firstRequestFinish === true || comments.loading === false;
+                                }}
+                            }}
+                        }} catch (e) {{
+                            console.error('Wait comments error:', e);
+                        }}
+                        return false;
+                    }}""",
+                    timeout=10000
+                )
+                logger.debug(f"[xhs.client] Comments loaded for note {note_id}")
+            except Exception as e:
+                logger.warning(f"[xhs.client] Wait for comments timeout for note {note_id}: {e}")
+                # 继续尝试提取，即使超时也可能有部分评论
+
+            # 提取评论数据 - comments 是一个对象而不是数组
             raw_json = await self.page.evaluate(
-                """
-                () => {
-                    try {
+                f"""
+                () => {{
+                    try {{
                         const st = window.__INITIAL_STATE__;
-                        if (st && st.note && st.note.noteDetailMap) {
-                            const noteData = st.note.noteDetailMap[arguments[0]];
-                            if (noteData && noteData.comments) {
+                        if (st && st.note && st.note.noteDetailMap) {{
+                            const noteData = st.note.noteDetailMap['{note_id}'];
+                            if (noteData && noteData.comments) {{
+                                // comments 是对象，包含 list, cursor, hasMore 字段
                                 return JSON.stringify(noteData.comments);
-                            }
-                        }
-                    } catch (e) {
+                            }}
+                        }}
+                    }} catch (e) {{
                         console.error('Extract comments error:', e);
-                    }
+                    }}
                     return "";
-                }
-                """,
-                note_id
+                }}
+                """
             )
-            
-            if raw_json and callback:
-                import json
-                try:
-                    comments = json.loads(raw_json)
-                    # 限制评论数量
-                    comments = comments[:max_count] if isinstance(comments, list) else []
-                    await callback(note_id, comments)
-                except Exception as e:
-                    logger.error(f"[xhs.client] Parse comments JSON failed: {e}")
+            logger.debug(f"[xhs.client] search_notes raw_json: {raw_json}")
+            if not raw_json:
+                logger.warning(f"[xhs.client] No comments found for note {note_id}")
+                return
+
+            try:
+                comments_obj = json.loads(raw_json)
+                if not comments_obj:
+                    return
+
+                # comments 是对象 {list: [...], cursor: "...", hasMore: bool}
+                # 需要提取 list 字段
+                all_comments = comments_obj.get("list", []) if isinstance(comments_obj, dict) else []
+                if not all_comments:
+                    return
+
+                # 分页处理
+                start_idx = (page_num - 1) * page_size
+                end_idx = start_idx + page_size
+                page_comments = all_comments[start_idx:end_idx]
+
+                logger.info(f"[xhs.client] Found {len(all_comments)} comments, returning page {page_num} ({len(page_comments)} comments)")
+
+                # 回调处理
+                if callback and page_comments:
+                    await callback(note_id, page_comments)
                     
+            except Exception as e:
+                logger.error(f"[xhs.client] Parse comments JSON failed: {e}")
+                
         except Exception as e:
             logger.error(f"[xhs.client] Get note comments failed: {e}")
 

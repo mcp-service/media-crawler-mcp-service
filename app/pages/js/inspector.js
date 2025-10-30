@@ -24,8 +24,8 @@ const DEFAULT_PAYLOADS = {
   // 小红书 tools
   xhs_search: { keywords: '纯圆大嬛嬛', page_num: 1, page_size: 20 },
   xhs_crawler_detail: { note_id: '68f9b8b20000000004010353', xsec_token: '<xsec_token>', xsec_source: '' },
-  xhs_crawler_creator: { creator_ids: ['user123'], save_media: false },
-  xhs_crawler_comments: { note_id: '68f9b8b20000000004010353', xsec_token: '<xsec_token>', max_comments: 50 },
+  xhs_crawler_creator: { creator_id: 'user123', page_num: 1, page_size: 20 },
+  xhs_crawler_comments: { note_id: '68f9b8b20000000004010353', xsec_token: '<xsec_token>', page_num: 1, page_size: 20 },
 };
 
 async function apiRequest(endpoint, options = {}) {

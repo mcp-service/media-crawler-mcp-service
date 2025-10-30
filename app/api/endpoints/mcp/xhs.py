@@ -153,11 +153,12 @@ async def crawler_detail(note_id: str, xsec_token: str, xsec_source: str = "pc_s
     description="获取小红书创作者作品",
     tags={"xiaohongshu", "creator"}
 )
-async def crawler_creator(creator_ids: list[str], save_media: bool = False):
+async def crawler_creator(creator_id: str, page_num: int = 1, page_size: int = 20):
     try:
         req = XhsCreatorRequest.model_validate({
-            "creator_ids": creator_ids,
-            "save_media": save_media
+            "creator_id": creator_id,
+            "page_num": page_num,
+            "page_size": page_size,
         })
     except ValidationError as exc:
         return _validation_error(exc)
@@ -172,11 +173,11 @@ async def crawler_creator(creator_ids: list[str], save_media: bool = False):
         await crawler._ensure_browser_and_client()
 
         result = await crawler.get_creator(
-            creator_ids=req.creator_ids,
-            max_notes=None,
+            creator_id=req.creator_id,
+            page_num=req.page_num,
+            page_size=req.page_size,
             enable_get_comments=False,
-            enable_save_media=req.save_media,
-            crawl_interval=1.0,
+            enable_save_media=global_settings.store.enable_save_media,
         )
 
         await crawler.close()
@@ -202,13 +203,14 @@ async def crawler_creator(creator_ids: list[str], save_media: bool = False):
     description="小红书笔记评论(必传: note_id, xsec_token)",
     tags={"xiaohongshu", "comments"}
 )
-async def crawler_comments(note_id: str, xsec_token: str, xsec_source: str = "", max_comments: int = 50):
+async def crawler_comments(note_id: str, xsec_token: str, xsec_source: str = "", page_num: int = 1, page_size: int = 20):
     try:
         req = XhsCommentsRequest.model_validate({
             "note_id": note_id,
             "xsec_token": xsec_token,
             "xsec_source": xsec_source or "",
-            "max_comments": max_comments
+            "page_num": page_num,
+            "page_size": page_size,
         })
     except ValidationError as exc:
         return _validation_error(exc)
@@ -229,9 +231,10 @@ async def crawler_comments(note_id: str, xsec_token: str, xsec_source: str = "",
 
         result = await crawler.fetch_comments(
             note_items=note_items,
+            page_num=page_num,
+            page_size=page_size,
             max_concurrency=1,
             crawl_interval=1.0,
-            max_comments_per_note=req.max_comments,
         )
 
         await crawler.close()
