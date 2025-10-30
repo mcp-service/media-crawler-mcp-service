@@ -7,8 +7,8 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Dict, Optional, Tuple
-
+from typing import Dict, Optional, Tuple, List
+import json
 from playwright.async_api import BrowserContext, Page, Playwright, async_playwright
 
 from app.providers.logger import get_logger
@@ -38,6 +38,60 @@ class BrowserManager:
         self._global_lock = asyncio.Lock()
         # 使用计数器
         self._ref_counts: Dict[str, int] = {}
+
+    async def _load_cookies_from_file(self, user_data_dir: Path) -> List[Dict]:
+        """
+        从 cookies.json 文件加载 Cookie（支持两种格式）
+        
+        Args:
+            user_data_dir: 用户数据目录
+            
+        Returns:
+            Cookie 列表，格式符合 Playwright 的 add_cookies 要求
+        """
+        cookies_json = user_data_dir / "cookies.json"
+        if not cookies_json.exists():
+            return []
+            
+        try:
+            # 读取 cookies.json
+            raw_data = cookies_json.read_text(encoding="utf-8")
+            cookies_data = json.loads(raw_data)
+            
+            playwright_cookies = []
+            
+            # 判断格式：字典格式（Python storage.py保存的）还是数组格式（Go Rod保存的）
+            if isinstance(cookies_data, dict):
+                # 字典格式: {"name": "value", ...} 转换为 Playwright 格式
+                # 需要推断domain，根据platform确定
+                platform_domain_map = {
+                    "xhs": ".xiaohongshu.com",
+                    "bili": ".bilibili.com",
+                    "dy": ".douyin.com",
+                }
+                
+                # 从路径推断platform
+                platform = user_data_dir.name
+                domain = platform_domain_map.get(platform, ".xiaohongshu.com")
+                
+                for name, value in cookies_data.items():
+                    pw_cookie = {
+                        "name": name,
+                        "value": str(value),
+                        "domain": domain,
+                        "path": "/",
+                    }
+                    playwright_cookies.append(pw_cookie)
+                logger.info(f"[BrowserManager] 从 {cookies_json} 加载了 {len(playwright_cookies)} 个 Cookie")
+                return playwright_cookies
+            else:
+                logger.warning(f"[BrowserManager] 未知的 Cookie 格式: {type(cookies_data)}")
+                return []
+
+
+        except Exception as exc:
+            logger.warning(f"[BrowserManager] 加载 Cookie 文件失败: {exc}")
+            return []
 
     async def get_lock(self, platform: str) -> asyncio.Lock:
         """获取平台专属锁"""
@@ -113,6 +167,9 @@ class BrowserManager:
                     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                 )
 
+            # 在创建上下文前加载 Cookie 文件（如果存在）
+            cookies_to_load = await self._load_cookies_from_file(user_data_dir)
+
             # 创建持久化浏览器上下文
             context = await chromium.launch_persistent_context(
                 user_data_dir=str(user_data_dir),
@@ -129,6 +186,14 @@ class BrowserManager:
             )
 
             page = await context.new_page()
+
+            # 如果有 Cookie 文件，则添加到上下文中
+            if cookies_to_load:
+                try:
+                    await context.add_cookies(cookies_to_load)
+                    logger.info(f"[BrowserManager] {platform} 已加载 {len(cookies_to_load)} 个 Cookie")
+                except Exception as exc:
+                    logger.warning(f"[BrowserManager] {platform} 加载 Cookie 失败: {exc}")
 
             # 缓存实例
             self._contexts[platform] = context

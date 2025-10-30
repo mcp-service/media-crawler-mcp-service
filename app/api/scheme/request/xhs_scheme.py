@@ -75,29 +75,24 @@ class XhsDetailRequest(_XhsBaseRequest):
 
 
 class XhsCreatorRequest(_XhsBaseRequest):
-    creator_ids: List[str] = Field(..., min_length=1, description="创作者 ID 或主页 URL 列表", examples=[["user123"], ["user123", "user456"]])
+    creator_id: str = Field(..., description="创作者id")
+    page_num: int = Field(default=1, ge=1, description="页码，从1开始")
+    page_size: int = Field(default=10, ge=1, le=50, description="每页数量")
 
     @model_validator(mode="after")
     def sanitize_ids(self) -> "XhsCreatorRequest":
-        cleaned = [item.strip() for item in self.creator_ids if item and item.strip()]
-        if not cleaned:
+        self.creator_id = self.creator_id.strip()
+        if not self.creator_id:
             raise ValueError("creator_ids 不能为空")
-        self.creator_ids = cleaned
         return self
-
-    def to_service_params(self) -> Dict[str, Any]:
-        params = {
-            "creator_ids": self.creator_ids,
-        }
-        params.update(self.to_common_params())
-        return params
 
 
 class XhsCommentsRequest(_XhsBaseRequest):
     note_id: str = Field(..., description="笔记ID")
     xsec_token: str = Field(..., description="xsec token（必传，从搜索结果获取）")
     xsec_source: Optional[str] = Field(default="", description="xsec source（可选，未传默认 pc_search）")
-    max_comments: int = Field(50, ge=1, description="最大评论数", examples=[50, 100])
+    page_num: int = Field(default=1, ge=1, description="页码，从1开始")
+    page_size: int = Field(default=10, ge=1, le=50, description="每页数量")
 
     @model_validator(mode="after")
     def sanitize(self) -> "XhsCommentsRequest":
