@@ -327,7 +327,7 @@ class LoginService:
             return strftime("%Y-%m-%d %H:%M:%S", localtime(state.last_success_at))
         return "从未登录"
 
-    async def refresh_platform_state(self, platform: str, force: bool = False, strict: bool = False) -> PlatformLoginState:
+    async def refresh_platform_state(self, platform: str, force: bool = False) -> PlatformLoginState:
         """刷新或获取平台登录状态（带缓存）"""
         try:
             cached_state = await self._storage.get_platform_state(platform)
@@ -350,7 +350,7 @@ class LoginService:
         platform_module = self._get_platform_module(platform)
         try:
             # 严格模式下，平台模块必须进行实时 pong 校验，不允许 Cookie 存在即视为已登录
-            state = await platform_module.fetch_login_state(self, strict=strict)
+            state = await platform_module.fetch_login_state(self, force=force)
             state.touch()
 
             if cached_state and state.is_logged_in and not state.last_success_at:

@@ -195,29 +195,17 @@ class BilibiliLogin(AbstractLogin):
             await asyncio.sleep(interval)
         return False
 
-    async def fetch_login_state(self, strict: bool = False) -> PlatformLoginState:
+    async def fetch_login_state(self, force: bool = False) -> PlatformLoginState:
         """获取当前登录状态"""
+        # 使用已经传入的浏览器上下文，不再重新创建
+        if not self.browser_context:
+            return await self.create_failed_state("浏览器上下文未初始化")
+
         state = PlatformLoginState(platform=self.platform)
-        data_dir = self.user_data_dir
-        if not data_dir.exists():
-            state.message = "浏览器数据不存在"
-            state.last_checked_at = time.time()
-            return state
-
-        browser_context: Optional[BrowserContext] = None
-        playwright: Optional[any] = None
+        
         try:
-            # 使用浏览器管理器获取临时上下文
-            browser_context, playwright = await browser_manager.get_context_for_check(
-                platform=self.platform,
-                user_data_dir=data_dir,
-                headless=self._headless,
-                viewport=self._viewport,
-                user_agent=self._user_agent,
-            )
-
             # 检查Cookie
-            cookies = await browser_context.cookies()
+            cookies = await self.browser_context.cookies()
             cookie_str = "; ".join(f"{c['name']}={c['value']}" for c in cookies)
             cookie_dict = {c["name"]: c["value"] for c in cookies}
 
@@ -234,7 +222,7 @@ class BilibiliLogin(AbstractLogin):
                 return state
 
             # 验证登录状态
-            is_logged_in = await self._verify_login_status(cookie_str, cookie_dict, browser_context, strict=strict)
+            is_logged_in = await self._verify_login_status(cookie_str, cookie_dict, self.browser_context, strict=force)
 
             state.is_logged_in = is_logged_in
             state.cookie_str = cookie_str
@@ -261,17 +249,6 @@ class BilibiliLogin(AbstractLogin):
         except Exception as exc:
             logger.error(f"[登录管理] 检查 Bilibili 登录状态失败: {exc}")
             return await self.create_failed_state(f"状态检查失败: {exc}")
-        finally:
-            if browser_context:
-                try:
-                    await browser_context.close()
-                except Exception:
-                    pass
-            if playwright:
-                try:
-                    await playwright.stop()
-                except Exception:
-                    pass
 
     async def _build_api_client(self) -> Optional[BilibiliClient]:
         """构建API客户端"""
@@ -777,7 +754,30 @@ async def _cleanup_session_resources(session: LoginSession):
             pass
 
 
-async def fetch_login_state(service, strict: bool = False) -> PlatformLoginState:
+async def _cleanup_browser_resources(context_page, browser_context, playwright) -> None:
+    """清理浏览器资源"""
+    cleanup_tasks = []
+    
+    if context_page:
+        cleanup_tasks.append(_safe_close_resource(context_page.close(), "page"))
+    if browser_context:
+        cleanup_tasks.append(_safe_close_resource(browser_context.close(), "context"))
+    if playwright:
+        cleanup_tasks.append(_safe_close_resource(playwright.stop(), "playwright"))
+    
+    if cleanup_tasks:
+        await asyncio.gather(*cleanup_tasks, return_exceptions=True)
+
+
+async def _safe_close_resource(close_coro, resource_name: str) -> None:
+    """安全关闭资源"""
+    try:
+        await close_coro
+    except Exception as exc:
+        logger.debug(f"清理 {resource_name} 时出错: {exc}")
+
+
+async def fetch_login_state(service, force: bool = False) -> PlatformLoginState:
     """获取登录状态 - 服务接口"""
     # 临时创建登录对象来检查状态
     user_data_dir = get_user_data_dir()
@@ -789,22 +789,22 @@ async def fetch_login_state(service, strict: bool = False) -> PlatformLoginState
             last_checked_at=time.time()
         )
 
-    browser_context: Optional[BrowserContext] = None
-    playwright: Optional[any] = None
+    # 准备浏览器配置
+    browser_cfg = global_settings.browser
+    viewport = {"width": int(browser_cfg.viewport_width or 1280),
+               "height": int(browser_cfg.viewport_height or 800)}
+
+    # 获取浏览器上下文
+    browser_context, playwright = await browser_manager.get_context_for_check(
+        platform=Platform.BILIBILI.value,
+        user_data_dir=user_data_dir,
+        headless=True,
+        viewport=viewport,
+        user_agent=getattr(browser_cfg, "user_agent", "Mozilla/5.0"),
+    )
+
+    context_page = None
     try:
-        browser_cfg = global_settings.browser
-        viewport = {"width": int(browser_cfg.viewport_width or 1280),
-                   "height": int(browser_cfg.viewport_height or 800)}
-
-        # 使用浏览器管理器获取临时上下文
-        browser_context, playwright = await browser_manager.get_context_for_check(
-            platform=Platform.BILIBILI.value,
-            user_data_dir=user_data_dir,
-            headless=True,
-            viewport=viewport,
-            user_agent=getattr(browser_cfg, "user_agent", "Mozilla/5.0"),
-        )
-
         context_page = await browser_context.new_page()
 
         # 创建临时登录对象进行状态检查
@@ -816,24 +816,10 @@ async def fetch_login_state(service, strict: bool = False) -> PlatformLoginState
         )
         temp_login.playwright = playwright
 
-        return await temp_login.fetch_login_state(strict=strict)
+        return await temp_login.fetch_login_state(force=force)
 
     finally:
-        if context_page:
-            try:
-                await context_page.close()
-            except Exception:
-                pass
-        if browser_context:
-            try:
-                await browser_context.close()
-            except Exception:
-                pass
-        if playwright:
-            try:
-                await playwright.stop()
-            except Exception:
-                pass
+        await _cleanup_browser_resources(context_page, browser_context, playwright)
 
 
 async def logout(service) -> None:

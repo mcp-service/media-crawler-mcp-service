@@ -126,6 +126,41 @@ class StoreConfig(BaseModel):
     enable_save_media: bool = False  # 是否保存图片/视频
 
 
+class PublishStrategyConfig(BaseModel):
+    """发布策略配置"""
+    min_interval: int = Field(default=300, description="最小发布间隔(秒)")
+    max_concurrent: int = Field(default=1, description="最大并发数")
+    retry_count: int = Field(default=3, description="重试次数")
+    retry_delay: int = Field(default=60, description="重试延迟(秒)")
+    daily_limit: int = Field(default=10, description="每日发布限制")
+    hourly_limit: int = Field(default=5, description="每小时发布限制")
+
+
+class PublishConfig(BaseModel):
+    """发布配置"""
+    enabled: bool = Field(default=True, description="是否启用发布功能")
+    
+    # 各平台发布策略
+    xhs: PublishStrategyConfig = Field(
+        default_factory=lambda: PublishStrategyConfig(
+            min_interval=300,  # 5分钟
+            daily_limit=10,
+            hourly_limit=5
+        )
+    )
+    dy: PublishStrategyConfig = Field(
+        default_factory=lambda: PublishStrategyConfig(
+            min_interval=600,  # 10分钟
+            daily_limit=8,
+            hourly_limit=3
+        )
+    )
+    bili: PublishStrategyConfig = Field(
+        default_factory=lambda: PublishStrategyConfig(
+            min_interval=900,  # 15分钟
+            daily_limit=5,
+            hourly_limit=2
+        )
 class PlatformConfig(BaseModel):
     """平台配置"""
     enabled_platforms: List[Platform] | str = Field(
@@ -184,6 +219,9 @@ class GlobalSettings(BaseSettings):
     crawl: CrawlConfig = Field(default_factory=CrawlConfig)
     store: StoreConfig = Field(default_factory=StoreConfig)
     platform: PlatformConfig = Field(default_factory=PlatformConfig)
+    
+    # 发布相关配置
+    publish: PublishConfig = Field(default_factory=PublishConfig)
 
 
     model_config = SettingsConfigDict(

@@ -136,13 +136,13 @@ async def login_session_status(request):
 async def login_sessions(request):
     try:
         params = request.query_params or {}
-        truthy = ('1', 'true', 'yes', 'y', 'on')
-        force = str(params.get('force', '0')).lower() in truthy
+        force = params.get('force')
 
         if force:
-            # 仅刷新小红书为 DOM 检测并回写（不分离新端点）
+            # 刷新小红书和bilibili为 DOM 检测并回写（不分离新端点）
             from app.config.settings import Platform
-            await service.refresh_platform_state(Platform.XIAOHONGSHU.value, force=True, strict=True)
+            await service.refresh_platform_state(Platform.XIAOHONGSHU.value, force=True)
+            await service.refresh_platform_state(Platform.BILIBILI.value, force=True)
             # 之后走缓存读取，避免其它平台被动触发
             result = await service.list_sessions_cached()
         else:
