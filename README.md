@@ -74,7 +74,7 @@ MediaCrawler MCP Service 是面向个人的数据获取工具集，通过 MCP（
 
 ### 文本格式友好：适合 AI 分析，不返回冗余嵌套数据
 
-![contentnice.png](docs/contentnice.png)
+![content_nice.png](docs/content_nice.png)
 
 > 与其他同类型MCP相比，media-crawler-mcp-service 返回的抓取数据 简洁、无冗余，特别适合 AI 分析。避免复杂的嵌套数据，让 AI 模型可以更轻松、更高效地处理数据。
 
