@@ -12,6 +12,7 @@ main_app = FastMCP(
 import app.api.endpoints.admin.dashboard_endpoint
 import app.api.endpoints.admin.config_endpoint
 import app.api.endpoints.admin.status_endpoint
+import app.api.endpoints.admin.publish_endpoint
 import app.api.endpoints.login.login_endpoint
 
 __all__ = ["main_app", "bili_mcp", "xhs_mcp"]

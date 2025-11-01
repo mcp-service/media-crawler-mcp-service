@@ -418,6 +418,7 @@ def render_top_nav(current_path: str = "/dashboard") -> str:
     nav_items = [
         ("状态监控", "/dashboard"),
         ("登录管理", "/login"),
+        ("发布管理", "/publish"),
         ("配置管理", "/config"),
         ("MCP 调试", "/inspector"),
     ]

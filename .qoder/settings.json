@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "ask": [
+      "Read(!E:\\media-crawler-mcp-service/**)",
+      "Edit(!E:\\media-crawler-mcp-service/**)"
+    ],
+    "allow": [
+      "Read(E:\\media-crawler-mcp-service/**)",
+      "Edit(E:\\media-crawler-mcp-service/**)"
+    ]
+  },
+  "memoryImport": {},
+  "monitoring": {}
+}

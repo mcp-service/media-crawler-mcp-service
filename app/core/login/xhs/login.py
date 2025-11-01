@@ -16,7 +16,7 @@ from app.core.login.base import AbstractLogin
 from app.core.login.models import LoginSession, LoginStartPayload, PlatformLoginState
 from app.core.crawler.tools import crawler_util
 from app.providers.logger import get_logger
-from app.core.login.browser_manager import get_browser_manager
+from app.core.browser_manager import get_browser_manager
 
 logger = get_logger()
 browser_manager = get_browser_manager()

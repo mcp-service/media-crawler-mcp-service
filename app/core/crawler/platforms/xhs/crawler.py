@@ -17,9 +17,8 @@ from app.config.settings import CrawlerType, LoginType, Platform, global_setting
 from app.core.crawler.store import xhs as xhs_store
 from app.core.crawler.tools import crawler_util, time_util
 from app.core.login import login_service
-from app.core.login.browser_manager import get_browser_manager
+from app.core.browser_manager import get_browser_manager
 from app.core.login.exceptions import LoginExpiredError
-from app.core.login.xhs.login import get_user_data_dir as xhs_user_data_dir
 from app.providers.logger import get_logger
 
 from .client import XiaoHongShuClient

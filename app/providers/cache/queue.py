@@ -19,19 +19,6 @@ from app.providers.logger import get_logger
 
 logger = get_logger()
 
-
-def config_to_strategy(config) -> PublishStrategy:
-    """将配置转换为策略对象"""
-    return PublishStrategy(
-        min_interval=config.min_interval,
-        max_concurrent=config.max_concurrent,
-        retry_count=config.retry_count,
-        retry_delay=config.retry_delay,
-        daily_limit=config.daily_limit,
-        hourly_limit=config.hourly_limit
-    )
-
-
 class TaskStatus(Enum):
     """任务状态"""
     PENDING = "pending"
@@ -81,6 +68,18 @@ class PublishTask(BaseModel):
     
     class Config:
         use_enum_values = True
+
+
+def config_to_strategy(config) -> PublishStrategy:
+    """将配置转换为策略对象"""
+    return PublishStrategy(
+        min_interval=config.min_interval,
+        max_concurrent=config.max_concurrent,
+        retry_count=config.retry_count,
+        retry_delay=config.retry_delay,
+        daily_limit=config.daily_limit,
+        hourly_limit=config.hourly_limit
+    )
 
 
 class RedisQueuerManager:
@@ -408,8 +407,6 @@ class PublishQueue:
         publish_config = global_settings.publish
         self.default_strategies: Dict[str, PublishStrategy] = {
             "xhs": config_to_strategy(publish_config.xhs),
-            "dy": config_to_strategy(publish_config.dy),
-            "bili": config_to_strategy(publish_config.bili),
         }
     
     def register_platform(

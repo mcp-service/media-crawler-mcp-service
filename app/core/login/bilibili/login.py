@@ -16,7 +16,7 @@ from app.core.login.models import LoginSession, LoginStartPayload, PlatformLogin
 from app.providers.logger import get_logger
 
 from app.core.crawler.platforms.bilibili.client import BilibiliClient
-from app.core.login.browser_manager import get_browser_manager
+from app.core.browser_manager import get_browser_manager
 
 logger = get_logger()
 browser_manager = get_browser_manager()
