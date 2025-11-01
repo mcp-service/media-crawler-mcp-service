@@ -148,19 +148,8 @@ class PublishConfig(BaseModel):
             hourly_limit=5
         )
     )
-    dy: PublishStrategyConfig = Field(
-        default_factory=lambda: PublishStrategyConfig(
-            min_interval=600,  # 10分钟
-            daily_limit=8,
-            hourly_limit=3
-        )
-    )
-    bili: PublishStrategyConfig = Field(
-        default_factory=lambda: PublishStrategyConfig(
-            min_interval=900,  # 15分钟
-            daily_limit=5,
-            hourly_limit=2
-        )
+
+
 class PlatformConfig(BaseModel):
     """平台配置"""
     enabled_platforms: List[Platform] | str = Field(
