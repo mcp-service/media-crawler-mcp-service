@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import warnings
 import uvicorn
-
 from app.api_service import main_asgi
 from app.config.settings import global_settings
 

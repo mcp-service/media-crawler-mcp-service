@@ -254,20 +254,25 @@ class PlatformQueuer:
     async def _worker_loop(self, worker_id: str) -> None:
         """工作循环"""
         logger.info(f"[Queuer] {self.platform} 工作进程 {worker_id} 启动")
-        
+
         while self.is_running:
             try:
                 # 检查发布间隔
-                if not await self._can_publish_now():
+                can_publish = await self._can_publish_now()
+                if not can_publish:
+                    logger.info(f"[Queuer] {self.platform} {worker_id} 等待发布间隔")
                     await asyncio.sleep(1)
                     continue
-                
+
                 # 从队列获取任务
                 task_id = await self._pop_task()
                 if not task_id:
+                    # logger.info(f"[Queuer] {self.platform} {worker_id} 队列为空，等待...")
                     await asyncio.sleep(1)
                     continue
-                
+
+                logger.info(f"[Queuer] {self.platform} {worker_id} 获取到任务: {task_id}")
+
                 # 处理任务
                 await self._process_task(task_id, worker_id)
                 
@@ -445,6 +450,34 @@ class PlatformQueuer:
         task.payload = payload
         task.message = "待审核(已编辑)"
         await self._update_task(task)
+        return task
+
+    async def update_queued(self, task_id: str, changes: Dict[str, Any]) -> PublishTask:
+        """更新排队中任务的负载"""
+        # 检查任务是否在队列中
+        in_queue = await self.redis.zscore(self.queue_key, task_id)
+        if in_queue is None:
+            raise ValueError("任务不在发布队列")
+
+        task_data = await self.redis.hget(self.tasks_key, task_id)
+        if not task_data:
+            raise ValueError("任务不存在")
+
+        task = PublishTask.model_validate(ujson.loads(task_data))
+        if task.status != TaskStatus.QUEUED.value:
+            raise ValueError(f"任务状态非排队中，无法编辑。当前状态: {task.status}")
+
+        # 合并变更到 payload
+        payload = task.payload or {}
+        if not isinstance(payload, dict):
+            payload = {}
+        for k, v in (changes or {}).items():
+            payload[k] = v
+        task.payload = payload
+        task.message = "排队中(已编辑)"
+        await self._update_task(task)
+
+        logger.info(f"[Queuer] {self.platform} 更新排队任务: {task_id}")
         return task
     
     async def _record_publish(self, timestamp: float) -> None:
@@ -641,3 +674,35 @@ class PublishQueue:
         if platform not in self.platform_queuers:
             raise ValueError(f"未支持的平台: {platform}")
         return await self.platform_queuers[platform].update_pending(task_id, changes)
+
+    async def update_queued_task(self, platform: str, task_id: str, changes: Dict[str, Any]) -> PublishTask:
+        """更新排队中的任务"""
+        if platform not in self.platform_queuers:
+            raise ValueError(f"未支持的平台: {platform}")
+        return await self.platform_queuers[platform].update_queued(task_id, changes)
+
+    async def delete_task(self, platform: str, task_id: str) -> None:
+        """删除任务（只能删除已完成或失败的任务）"""
+        if platform not in self.platform_queuers:
+            raise ValueError(f"未支持的平台: {platform}")
+
+        queuer = self.platform_queuers[platform]
+
+        # 获取任务状态
+        task = await queuer.get_task_status(task_id)
+        if not task:
+            raise ValueError("任务不存在")
+
+        # 只允许删除成功或失败的任务
+        if task.status not in [TaskStatus.SUCCESS.value, TaskStatus.FAILED.value]:
+            raise ValueError(f"只能删除已完成或失败的任务，当前状态: {task.status}")
+
+        # 从Redis中删除任务数据
+        await queuer.redis.hdel(queuer.tasks_key, task_id)
+
+        # 确保从所有集合中移除
+        await queuer.redis.zrem(queuer.queue_key, task_id)
+        await queuer.redis.zrem(queuer.pending_key, task_id)
+        await queuer.redis.srem(queuer.processing_key, task_id)
+
+        logger.info(f"[Queuer] {platform} 任务已删除: {task_id}")

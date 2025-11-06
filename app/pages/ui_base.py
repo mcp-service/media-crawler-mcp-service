@@ -63,7 +63,7 @@ body {{
 
 /* Top Navigation Bar */
 .top-nav {{
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: #0066cc;
   color: white;
   padding: 0 2rem;
   box-shadow: 0 2px 8px rgba(0,0,0,0.1);

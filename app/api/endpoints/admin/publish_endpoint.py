@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 import uuid
 import json
+import time
 import tempfile
 from typing import Dict, Any, List
 
@@ -247,16 +248,62 @@ async def get_publish_task_status(request: Request):
     response_data = {
         "task_id": task.task_id,
         "platform": task.platform,
-        "content_type": task.task_type.value,
-        "status": task.status.value,
+        "content_type": task.task_type,
+        "status": task.status,
         "progress": task.progress,
         "message": task.message,
+        "payload": task.payload,  # 添加payload，用于展示参数
         "note_url": task.result.get("note_url") if task.result else None,
         "created_at": task.created_at,
         "updated_at": task.completed_at or task.started_at or task.queued_at or task.created_at
     }
 
     return JSONResponse(content=response_data)
+
+
+@main_app.custom_route("/api/publish/task/{task_id}", methods=["PUT"])
+async def update_publish_task(request: Request):
+    """更新排队中的任务"""
+    task_id = request.path_params.get("task_id", "")
+    platform = request.query_params.get("platform", "xhs")
+
+    try:
+        # 获取更新数据
+        payload = await request.json()
+        changes = payload.get("changes", {})
+
+        if not changes:
+            return JSONResponse(
+                content={"error": "没有提供要更新的数据"},
+                status_code=400
+            )
+
+        # 更新任务
+        publish_queue = _get_publish_queue()
+        updated_task = await publish_queue.update_queued_task(platform, task_id, changes)
+
+        return JSONResponse(content={
+            "message": "任务已更新",
+            "task": {
+                "task_id": updated_task.task_id,
+                "status": updated_task.status,
+                "payload": updated_task.payload,
+                "message": updated_task.message
+            }
+        })
+
+    except ValueError as exc:
+        return JSONResponse(
+            content={"error": str(exc)},
+            status_code=400
+        )
+    except Exception as exc:
+        import traceback
+        logger.error(f"更新任务失败: {exc} {traceback.format_exc()}")
+        return JSONResponse(
+            content={"error": "更新任务失败", "detail": str(exc)},
+            status_code=500
+        )
 
 
 @main_app.custom_route("/api/publish/tasks", methods=["GET"])
@@ -330,32 +377,68 @@ async def get_publish_strategy(request: Request):
     })
 
 
-@main_app.custom_route("/api/publish/strategy/{platform}", methods=["PUT"])
-async def update_publish_strategy(request: Request):
-    """更新平台发布策略"""
-    platform = request.path_params.get("platform", "")
+@main_app.custom_route("/api/publish/task/{task_id}/resubmit", methods=["POST"])
+async def resubmit_publish_task(request: Request):
+    """重新提交失败的任务"""
+    task_id = request.path_params.get("task_id", "")
+    platform = request.query_params.get("platform", "xhs")
 
     try:
-        payload = await request.json()
-        strategy_req = PublishStrategyRequest.model_validate(payload)
-
-        # 创建新策略
-        new_strategy = PublishStrategy(
-            min_interval=strategy_req.min_interval,
-            max_concurrent=strategy_req.max_concurrent,
-            retry_count=strategy_req.retry_count,
-            retry_delay=strategy_req.retry_delay,
-            daily_limit=strategy_req.daily_limit,
-            hourly_limit=strategy_req.hourly_limit
-        )
-
-        # 更新队列策略
         publish_queue = _get_publish_queue()
-        await publish_queue.update_platform_strategy(platform, new_strategy)
+
+        # 获取任务
+        task = await publish_queue.get_task_status(task_id, platform)
+        if not task:
+            return JSONResponse(
+                content={"error": "任务不存在"},
+                status_code=404
+            )
+
+        # 只允许失败的任务重新提交
+        if task.status != TaskStatus.FAILED.value:
+            return JSONResponse(
+                content={"error": f"只能重新提交失败的任务，当前状态: {task.status}"},
+                status_code=400
+            )
+
+        # 重置任务状态
+        task.status = TaskStatus.QUEUED
+        task.retry_count = 0  # 重置重试次数
+        task.error_detail = None
+        task.message = "任务已重新提交"
+        task.queued_at = time.time()
+        task.started_at = None
+        task.completed_at = None
+        task.progress = 0
+
+        # 重新加入队列
+        await publish_queue.submit_task(task)
 
         return JSONResponse(content={
-            "message": f"平台 {platform} 策略已更新",
-            "strategy": strategy_req.model_dump()
+            "message": "任务已重新提交到发布队列",
+            "task_id": task_id
+        })
+
+    except Exception as exc:
+        logger.error(f"重新提交任务失败: {exc}")
+        return JSONResponse(
+            content={"error": "重新提交失败", "detail": str(exc)},
+            status_code=500
+        )
+
+
+@main_app.custom_route("/api/publish/task/{task_id}", methods=["DELETE"])
+async def delete_publish_task(request: Request):
+    """删除任务"""
+    task_id = request.path_params.get("task_id", "")
+    platform = request.query_params.get("platform", "xhs")
+
+    try:
+        publish_queue = _get_publish_queue()
+        await publish_queue.delete_task(platform, task_id)
+
+        return JSONResponse(content={
+            "message": "任务已删除"
         })
 
     except ValueError as exc:
@@ -364,9 +447,9 @@ async def update_publish_strategy(request: Request):
             status_code=400
         )
     except Exception as exc:
-        logger.error(f"更新发布策略失败: {exc}")
+        logger.error(f"删除任务失败: {exc}")
         return JSONResponse(
-            content={"error": "更新策略失败", "detail": str(exc)},
+            content={"error": "删除失败", "detail": str(exc)},
             status_code=500
         )
 

@@ -235,7 +235,9 @@ async def xhs_publish_executor(task) -> Dict[str, Any]:
         publisher = XhsPublisher(page)
 
         # 根据任务类型执行不同的发布逻辑
-        if task.task_type == TaskType.IMAGE:
+        task_type_value = task.task_type if isinstance(task.task_type, str) else task.task_type.value
+
+        if task_type_value == TaskType.IMAGE.value or task_type_value == "image":
             # 验证图片路径
             valid_paths = []
             for path_str in task.payload["image_paths"]:
@@ -254,7 +256,7 @@ async def xhs_publish_executor(task) -> Dict[str, Any]:
             logger.info(f"图文发布成功: {task.payload['title']}")
             return result
 
-        elif task.task_type == TaskType.VIDEO:
+        elif task_type_value == TaskType.VIDEO.value or task_type_value == "video":
             # 验证视频路径
             video = Path(task.payload["video_path"])
             if not video.exists():
