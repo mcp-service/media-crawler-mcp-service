@@ -1,79 +1,70 @@
- services:
-    postgres:
-      image: postgres:16-alpine
-      restart: unless-stopped
-      environment:
-        POSTGRES_DB: ${DB_NAME:-mcp_tools_db}
-        POSTGRES_USER: ${DB_USER:-postgres}
-        POSTGRES_PASSWORD: ${DB_PASSWORD:-password}
-        TZ: ${TZ:-Asia/Shanghai}
-      ports:
-        - "${DB_PORT:-5432}:5432"
-      volumes:
-        - postgres_data:/var/lib/postgresql/data
-        - ./deploy/init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
-      healthcheck:
-        test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-mcp_tools_db}"]
-        interval: 10s
-        timeout: 5s
-        retries: 5
-        start_period: 30s
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-mcp_tools_db}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-password}
+      TZ: ${TZ:-Asia/Shanghai}
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-mcp_tools_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
-    redis:
-      image: redis:7-alpine
-      restart: unless-stopped
-      environment:
-        TZ: ${TZ:-Asia/Shanghai}
-      command: >                                                                                                                                                                                                                    
-        sh -c 'if [ -n "$${REDIS_PASSWORD}" ]; then                                                                                                                                                                                 
-                 redis-server --requirepass "$${REDIS_PASSWORD}" --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru;                                                                                                 
-               else                                                                                                                                                                                                                 
-                 redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru;                                                                                                                                    
-               fi'
-      ports:
-        - "${REDIS_PORT:-6379}:6379"
-      volumes:
-        - redis_data:/data
-      healthcheck:
-        test: ["CMD", "redis-cli", "ping"]
-        interval: 10s
-        timeout: 5s
-        retries: 5
-        start_period: 10s
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+    command: >
+      sh -c 'if [ -n "$${REDIS_PASSWORD}" ]; then
+               redis-server --requirepass "$${REDIS_PASSWORD}" --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru;
+             else
+               redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru;
+             fi'
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
-    mcp-service:
-      build:
-        context: .
-        dockerfile: Dockerfile
-      image: media-crawler-mcp:latest
-      restart: unless-stopped
-      depends_on:
-        postgres:
-          condition: service_healthy
-        redis:
-          condition: service_healthy
-      env_file:
-        - .env
-      environment:
-        APP_HOST: 0.0.0.0
-        APP_PORT: ${APP_PORT:-9090}
-        DB_HOST: postgres
-        DB_PORT: 5432
-        REDIS_HOST: redis
-        REDIS_PORT: 6379
-      ports:
-        - "${APP_PORT:-9090}:9090"
-      volumes:
-        - ./data:/app/data
-        - ./logs:/app/logs
-        - ./browser_data:/app/browser_data
-      healthcheck:
-        test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/health"]
-        interval: 30s
-        timeout: 10s
-        retries: 3
-        start_period: 60s
+  mcp-service:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: media-crawler-mcp:latest
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      APP__HOST: 0.0.0.0
+      APP__PORT: ${APP__PORT:-9090}
+      DB__HOST: postgres
+      DB__PORT: 5432
+      REDIS__HOST: redis
+      REDIS__PORT: 6379
+    ports:
+      - "${APP__PORT:-9090}:9090"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./browser_data:/app/browser_data
 
 volumes:
-    postgres_data:
-    redis_data:
+  postgres_data:
+  redis_data:

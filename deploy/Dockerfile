@@ -16,7 +16,7 @@ WORKDIR /app
 COPY pyproject.toml poetry.lock* ./
 
 # Install dependencies strictly from poetry.lock into the system env
-RUN poetry install --only main --no-root --sync --no-ansi
+RUN poetry install --only main --no-root --no-directory --no-ansi
 
 FROM python:3.13-slim AS runtime
 
@@ -47,7 +47,11 @@ WORKDIR /app
 COPY --from=builder /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 
-RUN playwright install chromium && playwright install-deps chromium
+# Install Playwright with increased timeout and retries
+ENV PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT=60000
+RUN playwright install chromium --with-deps || \
+    (sleep 5 && playwright install chromium --with-deps) || \
+    (sleep 10 && playwright install chromium --with-deps)
 
 COPY . .
 
@@ -60,4 +64,4 @@ USER appuser
 
 EXPOSE 9090
 
-CMD ["python", "main.py", "--transport", "sse", "--admin"]
+CMD ["python", "main.py"]
