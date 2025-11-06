@@ -10,9 +10,15 @@ from app.config.settings import Platform, global_settings
 from fastmcp import FastMCP
 from app.providers.logger import get_logger, init_logger
 from app.api.endpoints import main_app, bili_mcp, xhs_mcp
+from app.providers.cache.queue import PublishQueue
+from app.core.crawler.platforms.xhs.publish import register_xhs_publisher
 
 
 import asyncio
+from contextlib import asynccontextmanager
+
+# 创建全局发布队列实例
+_publish_queue = PublishQueue()
 
 
 def create_app() -> tuple[Any, Any]:
@@ -41,7 +47,14 @@ def create_app() -> tuple[Any, Any]:
         logger.info(f"✅ MCP prompts {await main_app.get_prompts()}")
         logger.info(f"✅ MCP custom_route {main_app._get_additional_http_routes()}")
 
+        await _publish_queue.start_all()
+        logger.info("✅ 发布队列管理器已启动")
+
     asyncio.run(setup_servers())
+
+    # 注册发布平台到队列
+    register_xhs_publisher(_publish_queue)
+    logger.info("✅ 发布平台注册完成")
 
     # 注册服务工具和资源
     from app.core.prompts import register_prompts
@@ -51,10 +64,15 @@ def create_app() -> tuple[Any, Any]:
     register_resources(main_app)
 
     logger.info("✅ MCP Prompts 和 Resources 注册成功")
-    logger.info("✅ 子服务挂载完成: 小红书MCP(/mcp/xhs), B站MCP(/mcp/bili)")
+    logger.info("✅ 子服务挂载完成: 小红书MCP(/xhs_), B站MCP(/mcp/bili_)")
     logger.info("✅ CORS 中间件已添加，支持 OPTIONS 请求")
     logger.info(f"✅ {global_settings.app.name} ASGI 应用创建完成")
-    return main_app.http_app(path='/mcp/')
+
+    # 获取底层的 Starlette 应用
+    asgi_app = main_app.http_app(path='/mcp/')
+
+
+    return asgi_app
 
 
 # 创建应用并返回

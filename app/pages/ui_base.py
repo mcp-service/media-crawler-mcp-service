@@ -32,7 +32,8 @@ from fastmcp.utilities.ui import (
 # Relaxed CSP to allow inline scripts and same-origin fetch used by pages
 DEFAULT_CSP = (
     "default-src 'self'; style-src 'unsafe-inline'; img-src https: data:; "
-    "script-src 'unsafe-inline' 'self'; connect-src 'self'; base-uri 'none'"
+    "script-src 'unsafe-inline' 'self'; connect-src 'self'; base-uri 'none'; "
+    "font-src 'self' data: https: http:"
 )
 
 
@@ -62,7 +63,7 @@ body {{
 
 /* Top Navigation Bar */
 .top-nav {{
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: #0066cc;
   color: white;
   padding: 0 2rem;
   box-shadow: 0 2px 8px rgba(0,0,0,0.1);
@@ -418,6 +419,7 @@ def render_top_nav(current_path: str = "/dashboard") -> str:
     nav_items = [
         ("状态监控", "/dashboard"),
         ("登录管理", "/login"),
+        ("发布管理", "/publish"),
         ("配置管理", "/config"),
         ("MCP 调试", "/inspector"),
     ]

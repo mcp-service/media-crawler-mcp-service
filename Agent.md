@@ -556,7 +556,7 @@ async def setup_servers():
   - 重要步骤 `info`，网络/风控异常 `warning/error`，附 endpoint、note_id、trace。
   - 大响应体仅在 debug 打印，避免 info 刷屏。
 
-## 9. 项目数据流注意事项（按现行架构）
+## 9. 项目数据流注意事项
 
 - 标准数据流
   工具（`app/core/mcp/{platform}.py`）
@@ -583,11 +583,51 @@ async def setup_servers():
   - 最小化请求规模与页面跳转；复用持久化会话（Playwright persistent context）。
   - DOM/接口变更优先在 `client.py` 与解析模块修复；保证工具层输出字段稳定、扁平，必要字段标可选。
 
-## 10. 提交前自检清单
+## 10. 代码自检清单（修改完代码后使用）
 
-- 是否遵守 Endpoint/Service/Crawler 分层与注册规范？
-- 是否使用统一的日志与配置入口？
-- 是否避免引入与任务无关的大范围重构？
-- README/Agent.md 中提到的开发者路径与命令是否仍然正确？
+### 10.1 各层职责清单
+
+**HTTP 层**（`app/api/endpoints/`）
+- 职责：接收请求 → 参数验证 → 调用业务层 → 返回响应
+- 禁止：业务逻辑、资源管理、文件操作、数据库操作
+
+**业务逻辑层**（`app/core/crawler/platforms/{platform}/`）
+- 职责：实现核心业务、管理资源生命周期、编排子模块
+- 文件：crawler.py, service.py, client.py, publish.py, login.py
+
+**数据模型层**（`app/api/scheme/`）
+- request/：请求模型
+- response/：响应模型
+- 使用 Pydantic 定义结构和验证规则
+
+**Store 层**（`app/core/crawler/store/{platform}/`）
+- 职责：数据持久化（JSON/CSV/SQLite/DB）、媒体文件保存
+
+### 10.2 常见架构违规
+
+1. **业务逻辑泄漏到 Endpoint**：在 endpoint 中管理浏览器、验证文件、执行复杂逻辑
+2. **数据模型定义混乱**：在 endpoint 文件中定义 Pydantic 模型
+3. **单一职责原则违反**：一个函数既处理 HTTP，又执行业务逻辑，还管理资源
+
+### 10.3 开发自检（三问法）
+
+1. **这段代码属于哪一层？**（HTTP/业务/数据/基础设施）
+2. **这段代码的职责是什么？**（是否单一职责）
+3. **如果换一个场景，这段代码能否复用？**（是否耦合过紧）
+
+### 10.4 参考良好实现
+
+- 规范示例：`app/core/crawler/platforms/bilibili/`
+- 分层架构：见第 2.1 节"核心流转（数据流）"
+- 扩展模板：见第 7 节"扩展新平台（模板）"
+
+## 11. 提交前自检清单
+
+- [ ] 是否遵守 Endpoint/Service/Crawler 分层与注册规范？
+- [ ] 是否使用统一的日志与配置入口？
+- [ ] 是否避免引入与任务无关的大范围重构？
+- [ ] **业务逻辑是否都在 core 层，而非 endpoint 中？**
+- [ ] **Pydantic 模型是否都在 scheme 目录中？**
+- [ ] **是否对照第 10.3 节的三问法自查？**
 
 — End —

@@ -249,4 +249,247 @@ def register_resources(app: FastMCP) -> None:
             "status": "running"
         }, ensure_ascii=False, indent=2)
 
+    # ==================== 爬取数据访问资源 ====================
+
+    @app.resource("crawler-data://{platform}/{date}")
+    async def get_platform_crawl_data(platform: str, date: str) -> str:
+        """
+        获取指定平台和日期的爬取数据
+
+        参数:
+        - platform: 平台代码 (xhs/dy/bili/ks/wb/tieba/zhihu)
+        - date: 日期 (YYYY-MM-DD格式)
+
+        示例:
+        - crawler-data://xhs/2024-01-15
+        - crawler-data://dy/2024-01-15
+        """
+        import json
+        import glob as glob_module
+
+        # 构建数据文件路径模式
+        json_pattern = f"data/{platform}/json/*_{date}.json"
+        csv_pattern = f"data/{platform}/csv/*_{date}.csv"
+
+        json_files = glob_module.glob(json_pattern)
+        csv_files = glob_module.glob(csv_pattern)
+
+        if not json_files and not csv_files:
+            return json.dumps({
+                "error": f"未找到 {platform} 平台在 {date} 的爬取数据",
+                "platform": platform,
+                "date": date,
+                "suggestion": "请检查平台代码和日期是否正确"
+            }, ensure_ascii=False, indent=2)
+
+        # 读取JSON文件数据
+        all_data = []
+        files_info = []
+
+        for json_file in json_files:
+            try:
+                with open(json_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    if isinstance(data, list):
+                        all_data.extend(data)
+                    else:
+                        all_data.append(data)
+
+                    files_info.append({
+                        "file": Path(json_file).name,
+                        "type": "json",
+                        "items": len(data) if isinstance(data, list) else 1,
+                        "size_kb": round(Path(json_file).stat().st_size / 1024, 2)
+                    })
+            except Exception as e:
+                files_info.append({
+                    "file": Path(json_file).name,
+                    "type": "json",
+                    "error": str(e)
+                })
+
+        # CSV文件只统计不加载内容
+        for csv_file in csv_files:
+            files_info.append({
+                "file": Path(csv_file).name,
+                "type": "csv",
+                "size_kb": round(Path(csv_file).stat().st_size / 1024, 2),
+                "note": "CSV文件请使用专门工具打开"
+            })
+
+        platform_names = {
+            "xhs": "小红书",
+            "dy": "抖音",
+            "bili": "B站",
+            "ks": "快手",
+            "wb": "微博",
+            "tieba": "贴吧",
+            "zhihu": "知乎"
+        }
+
+        return json.dumps({
+            "platform": platform_names.get(platform, platform),
+            "date": date,
+            "summary": {
+                "total_files": len(json_files) + len(csv_files),
+                "json_files": len(json_files),
+                "csv_files": len(csv_files),
+                "total_items": len(all_data)
+            },
+            "files": files_info,
+            "data": all_data[:100] if len(all_data) > 100 else all_data,  # 最多返回前100条
+            "note": f"返回了前100条数据(共{len(all_data)}条)" if len(all_data) > 100 else f"返回了全部{len(all_data)}条数据"
+        }, ensure_ascii=False, indent=2)
+
+    @app.resource("crawler-data://{platform}/range/{start_date}/{end_date}")
+    async def get_platform_crawl_data_range(platform: str, start_date: str, end_date: str) -> str:
+        """
+        获取指定平台和日期范围的爬取数据统计
+
+        参数:
+        - platform: 平台代码 (xhs/dy/bili/ks/wb/tieba/zhihu)
+        - start_date: 开始日期 (YYYY-MM-DD)
+        - end_date: 结束日期 (YYYY-MM-DD)
+
+        示例:
+        - crawler-data://xhs/range/2024-01-01/2024-01-07
+        """
+        import json
+        import glob as glob_module
+        from datetime import datetime, timedelta
+
+        # 解析日期范围
+        try:
+            start = datetime.strptime(start_date, "%Y-%m-%d")
+            end = datetime.strptime(end_date, "%Y-%m-%d")
+        except ValueError:
+            return json.dumps({
+                "error": "日期格式错误，请使用 YYYY-MM-DD 格式"
+            }, ensure_ascii=False, indent=2)
+
+        stats_by_date = {}
+        current = start
+
+        while current <= end:
+            date_str = current.strftime("%Y-%m-%d")
+            json_pattern = f"data/{platform}/json/*_{date_str}.json"
+            csv_pattern = f"data/{platform}/csv/*_{date_str}.csv"
+
+            json_files = glob_module.glob(json_pattern)
+            csv_files = glob_module.glob(csv_pattern)
+
+            if json_files or csv_files:
+                total_items = 0
+                for json_file in json_files:
+                    try:
+                        with open(json_file, 'r', encoding='utf-8') as f:
+                            data = json.load(f)
+                            total_items += len(data) if isinstance(data, list) else 1
+                    except:
+                        pass
+
+                stats_by_date[date_str] = {
+                    "files": len(json_files) + len(csv_files),
+                    "json_files": len(json_files),
+                    "csv_files": len(csv_files),
+                    "total_items": total_items
+                }
+
+            current += timedelta(days=1)
+
+        platform_names = {
+            "xhs": "小红书",
+            "dy": "抖音",
+            "bili": "B站",
+            "ks": "快手",
+            "wb": "微博",
+            "tieba": "贴吧",
+            "zhihu": "知乎"
+        }
+
+        return json.dumps({
+            "platform": platform_names.get(platform, platform),
+            "start_date": start_date,
+            "end_date": end_date,
+            "days_with_data": len(stats_by_date),
+            "total_days": (end - start).days + 1,
+            "stats_by_date": stats_by_date,
+            "tip": "使用 crawler-data://{platform}/{date} 获取具体某天的数据"
+        }, ensure_ascii=False, indent=2)
+
+    @app.resource("crawler-data://list/{platform}")
+    async def list_platform_crawl_data(platform: str) -> str:
+        """
+        列出指定平台的所有可用爬取数据
+
+        参数:
+        - platform: 平台代码 (xhs/dy/bili/ks/wb/tieba/zhihu)
+
+        示例:
+        - crawler-data://list/xhs
+        - crawler-data://list/dy
+        """
+        import json
+        import glob as glob_module
+        from collections import defaultdict
+
+        json_pattern = f"data/{platform}/json/*.json"
+        csv_pattern = f"data/{platform}/csv/*.csv"
+
+        json_files = glob_module.glob(json_pattern)
+        csv_files = glob_module.glob(csv_pattern)
+
+        if not json_files and not csv_files:
+            return json.dumps({
+                "error": f"未找到 {platform} 平台的爬取数据",
+                "platform": platform,
+                "suggestion": "请检查平台代码是否正确，支持: xhs, dy, bili, ks, wb, tieba, zhihu"
+            }, ensure_ascii=False, indent=2)
+
+        # 按日期分组
+        dates = set()
+        crawler_types = defaultdict(int)
+
+        for file_path in json_files + csv_files:
+            filename = Path(file_path).name
+            # 解析文件名: crawler_type_item_type_date.ext
+            parts = filename.rsplit('_', 1)
+            if len(parts) == 2:
+                date_with_ext = parts[1]
+                date = date_with_ext.replace('.json', '').replace('.csv', '')
+                dates.add(date)
+
+                # 提取爬虫类型
+                name_parts = parts[0].split('_')
+                if name_parts:
+                    crawler_type = name_parts[0]
+                    crawler_types[crawler_type] += 1
+
+        platform_names = {
+            "xhs": "小红书",
+            "dy": "抖音",
+            "bili": "B站",
+            "ks": "快手",
+            "wb": "微博",
+            "tieba": "贴吧",
+            "zhihu": "知乎"
+        }
+
+        sorted_dates = sorted(list(dates), reverse=True)
+
+        return json.dumps({
+            "platform": platform_names.get(platform, platform),
+            "summary": {
+                "total_files": len(json_files) + len(csv_files),
+                "json_files": len(json_files),
+                "csv_files": len(csv_files),
+                "total_dates": len(dates)
+            },
+            "available_dates": sorted_dates[:30],  # 只显示最近30天
+            "latest_date": sorted_dates[0] if sorted_dates else None,
+            "crawler_types": dict(crawler_types),
+            "sample_files": [Path(f).name for f in (json_files + csv_files)[:10]],
+            "tip": "使用 crawler-data://{platform}/{date} 获取具体日期的数据"
+        }, ensure_ascii=False, indent=2)
+
     get_logger().info("✅ MCP Resources注册成功")

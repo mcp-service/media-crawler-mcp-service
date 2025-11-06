@@ -16,7 +16,7 @@ from app.core.login.base import AbstractLogin
 from app.core.login.models import LoginSession, LoginStartPayload, PlatformLoginState
 from app.core.crawler.tools import crawler_util
 from app.providers.logger import get_logger
-from app.core.login.browser_manager import get_browser_manager
+from app.core.browser_manager import get_browser_manager
 
 logger = get_logger()
 browser_manager = get_browser_manager()
@@ -169,49 +169,36 @@ class XiaoHongShuLogin(AbstractLogin):
             logger.warning(f"[xhs.login] DOM 检查登录失败: {exc}")
             return False
 
-    async def fetch_login_state(self, strict: bool = False) -> PlatformLoginState:
+    async def fetch_login_state(self, force: bool = False) -> PlatformLoginState:
         """获取当前登录状态（DOM 判断）。"""
-        data_dir = self.user_data_dir
-        if not data_dir.exists():
-            return await self.create_failed_state("浏览器数据不存在")
+        # 使用已经传入的浏览器上下文，不再重新创建
+        if not self.browser_context or not self.context_page:
+            return await self.create_failed_state("浏览器上下文未初始化")
 
-        browser_context: Optional[BrowserContext] = None
-        playwright: Optional[any] = None
-        context_page: Optional[Page] = None
         try:
-            # 使用浏览器管理器获取临时上下文
-            browser_context, playwright = await browser_manager.get_context_for_check(
-                platform=self.platform,
-                user_data_dir=data_dir,
-                headless=self._headless,
-                viewport=self._viewport,
-                user_agent=self._user_agent,
-            )
-
             # 打开探索页，通过 DOM 判断登录态
-            context_page = await browser_context.new_page()
             try:
-                await context_page.goto("https://www.xiaohongshu.com/explore", wait_until="domcontentloaded", timeout=10000)
+                await self.context_page.goto("https://www.xiaohongshu.com/explore", wait_until="domcontentloaded", timeout=10000)
             except Exception:
                 try:
-                    await context_page.goto("https://www.xiaohongshu.com", wait_until="domcontentloaded", timeout=10000)
+                    await self.context_page.goto("https://www.xiaohongshu.com", wait_until="domcontentloaded", timeout=10000)
                 except Exception:
                     pass
 
             try:
-                await context_page.wait_for_timeout(600)
+                await self.context_page.wait_for_timeout(600)
             except Exception:
                 pass
 
             try:
-                is_logged_in = await context_page.evaluate(
+                is_logged_in = await self.context_page.evaluate(
                     "() => !!document.querySelector('.main-container .user .link-wrapper .channel')"
                 )
             except Exception:
                 is_logged_in = False
 
             # 读取 Cookie 并返回状态
-            cookies = await browser_context.cookies()
+            cookies = await self.browser_context.cookies()
             cookie_str, cookie_dict = crawler_util.convert_cookies(cookies)
             if is_logged_in:
                 user_info = {}
@@ -223,22 +210,6 @@ class XiaoHongShuLogin(AbstractLogin):
         except Exception as exc:
             logger.error("[xhs.login] 检查登录状态失败: %s", exc)
             return await self.create_failed_state(f"状态检查失败: {exc}")
-        finally:
-            if context_page:
-                try:
-                    await context_page.close()
-                except Exception:
-                    pass
-            if browser_context:
-                try:
-                    await browser_context.close()
-                except Exception:
-                    pass
-            if playwright:
-                try:
-                    await playwright.stop()
-                except Exception:
-                    pass
 
     @retry(stop=stop_after_attempt(240), wait=wait_fixed(0.5), retry=retry_if_result(lambda result: result is False))
     async def _wait_login_state(self, before_session: Optional[str]) -> bool:
@@ -581,7 +552,30 @@ async def _cleanup_browser_resources(session: LoginSession):
             pass
 
 
-async def fetch_login_state(service, strict: bool = False) -> PlatformLoginState:
+async def _cleanup_browser_resources(context_page, browser_context, playwright) -> None:
+    """清理浏览器资源"""
+    cleanup_tasks = []
+    
+    if context_page:
+        cleanup_tasks.append(_safe_close_resource(context_page.close(), "page"))
+    if browser_context:
+        cleanup_tasks.append(_safe_close_resource(browser_context.close(), "context"))
+    if playwright:
+        cleanup_tasks.append(_safe_close_resource(playwright.stop(), "playwright"))
+    
+    if cleanup_tasks:
+        await asyncio.gather(*cleanup_tasks, return_exceptions=True)
+
+
+async def _safe_close_resource(close_coro, resource_name: str) -> None:
+    """安全关闭资源"""
+    try:
+        await close_coro
+    except Exception as exc:
+        logger.debug(f"清理 {resource_name} 时出错: {exc}")
+
+
+async def fetch_login_state(service, force: bool = False) -> PlatformLoginState:
     """获取登录状态 - 服务接口"""
     user_data_dir = get_user_data_dir()
     if not user_data_dir.exists():
@@ -592,21 +586,21 @@ async def fetch_login_state(service, strict: bool = False) -> PlatformLoginState
             last_checked_at=time.time()
         )
 
-    browser_context: Optional[BrowserContext] = None
-    playwright: Optional[any] = None
+    # 准备浏览器配置
+    browser_cfg = global_settings.browser
+    viewport = {"width": browser_cfg.viewport_width, "height": browser_cfg.viewport_height}
+
+    # 获取浏览器上下文
+    browser_context, playwright = await browser_manager.get_context_for_check(
+        platform=Platform.XIAOHONGSHU.value,
+        user_data_dir=user_data_dir,
+        headless=True,
+        viewport=viewport,
+        user_agent=browser_cfg.user_agent or crawler_util.get_user_agent(),
+    )
+
+    context_page = None
     try:
-        browser_cfg = global_settings.browser
-        viewport = {"width": browser_cfg.viewport_width, "height": browser_cfg.viewport_height}
-
-        # 使用浏览器管理器获取临时上下文
-        browser_context, playwright = await browser_manager.get_context_for_check(
-            platform=Platform.XIAOHONGSHU.value,
-            user_data_dir=user_data_dir,
-            headless=True,
-            viewport=viewport,
-            user_agent=browser_cfg.user_agent or crawler_util.get_user_agent(),
-        )
-
         context_page = await browser_context.new_page()
 
         # 创建临时登录对象进行状态检查
@@ -618,24 +612,10 @@ async def fetch_login_state(service, strict: bool = False) -> PlatformLoginState
         )
         temp_login.playwright = playwright
 
-        return await temp_login.fetch_login_state(strict=strict)
+        return await temp_login.fetch_login_state(force=force)
 
     finally:
-        if 'context_page' in locals():
-            try:
-                await context_page.close()
-            except Exception:
-                pass
-        if browser_context:
-            try:
-                await browser_context.close()
-            except Exception:
-                pass
-        if playwright:
-            try:
-                await playwright.stop()
-            except Exception:
-                pass
+        await _cleanup_browser_resources(context_page, browser_context, playwright)
 
 
 async def logout(service) -> None:

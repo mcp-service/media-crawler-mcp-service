@@ -4,9 +4,16 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import List, Dict, Any
 
-from playwright.async_api import Page
+from playwright.async_api import Page, BrowserContext
+
+from app.core.browser_manager import get_browser_manager
+from app.config.settings import Platform, global_settings
+from app.providers.logger import get_logger
+
+logger = get_logger()
 
 
 class XhsPublisher:
@@ -194,3 +201,93 @@ class XhsPublisher:
         await self.fill_content_and_tags(content, tags)
         await self.submit()
         return {"success": True, "message": "发布视频完成(已尝试提交)"}
+
+
+# ============================================================================
+# 队列执行器 - 供队列管理器调用
+# ============================================================================
+
+async def xhs_publish_executor(task) -> Dict[str, Any]:
+    """小红书发布执行器
+
+    Args:
+        task: PublishTask 对象，包含 task_type 和 payload
+
+    Returns:
+        发布结果字典
+    """
+    from app.providers.cache.queue import TaskType
+
+    browser_context = None
+    try:
+        # 获取浏览器上下文
+        user_data_dir = Path("browser_data") / Platform.XIAOHONGSHU.value
+        viewport = {"width": 1920, "height": 1080}
+
+        browser_context, page, _ = await get_browser_manager().acquire_context(
+            platform=Platform.XIAOHONGSHU.value,
+            user_data_dir=user_data_dir,
+            headless=global_settings.browser.headless,
+            viewport=viewport,
+        )
+
+        # 创建发布器
+        publisher = XhsPublisher(page)
+
+        # 根据任务类型执行不同的发布逻辑
+        task_type_value = task.task_type if isinstance(task.task_type, str) else task.task_type.value
+
+        if task_type_value == TaskType.IMAGE.value or task_type_value == "image":
+            # 验证图片路径
+            valid_paths = []
+            for path_str in task.payload["image_paths"]:
+                path = Path(path_str)
+                if not path.exists():
+                    raise FileNotFoundError(f"图片文件不存在: {path_str}")
+                valid_paths.append(str(path))
+
+            # 调用图文发布
+            result = await publisher.publish_image_post(
+                title=task.payload["title"],
+                content=task.payload["content"],
+                tags=task.payload.get("tags", []),
+                images=valid_paths
+            )
+            logger.info(f"图文发布成功: {task.payload['title']}")
+            return result
+
+        elif task_type_value == TaskType.VIDEO.value or task_type_value == "video":
+            # 验证视频路径
+            video = Path(task.payload["video_path"])
+            if not video.exists():
+                raise FileNotFoundError(f"视频文件不存在: {task.payload['video_path']}")
+
+            # 调用视频发布
+            result = await publisher.publish_video_post(
+                title=task.payload["title"],
+                content=task.payload["content"],
+                tags=task.payload.get("tags", []),
+                video=str(video)
+            )
+            logger.info(f"视频发布成功: {task.payload['title']}")
+            return result
+
+        else:
+            raise ValueError(f"不支持的任务类型: {task.task_type}")
+
+    except Exception as e:
+        logger.error(f"发布执行失败: {e}")
+        raise
+    finally:
+        if browser_context:
+            await browser_context.close()
+
+
+def register_xhs_publisher(publish_queue) -> None:
+    """注册小红书发布器到队列管理器
+
+    Args:
+        publish_queue: PublishQueue 实例
+    """
+    publish_queue.register_platform("xhs", xhs_publish_executor)
+    logger.info("[xhs.publish] 小红书发布器已注册")

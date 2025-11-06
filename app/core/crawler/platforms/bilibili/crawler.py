@@ -24,7 +24,7 @@ from app.core.crawler.tools.time_util import get_current_timestamp
 from app.config.settings import Platform, CrawlerType, global_settings
 from app.core.login import login_service
 from app.core.login.exceptions import LoginExpiredError
-from app.core.login.browser_manager import get_browser_manager
+from app.core.browser_manager import get_browser_manager
 
 from .client import BilibiliClient
 from .exception import DataFetchError

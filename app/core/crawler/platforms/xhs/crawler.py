@@ -17,9 +17,8 @@ from app.config.settings import CrawlerType, LoginType, Platform, global_setting
 from app.core.crawler.store import xhs as xhs_store
 from app.core.crawler.tools import crawler_util, time_util
 from app.core.login import login_service
-from app.core.login.browser_manager import get_browser_manager
+from app.core.browser_manager import get_browser_manager
 from app.core.login.exceptions import LoginExpiredError
-from app.core.login.xhs.login import get_user_data_dir as xhs_user_data_dir
 from app.providers.logger import get_logger
 
 from .client import XiaoHongShuClient
@@ -264,7 +263,7 @@ class XiaoHongShuCrawler:
             details.append(note_detail)
 
         if enable_get_comments and max_comments_per_note > 0:
-            await self._batch_fetch_comments(details, max_comments_per_note)
+            await self._batch_fetch_comments(details, 1, max_comments_per_note)
 
         return {
             "notes": details,
@@ -275,52 +274,43 @@ class XiaoHongShuCrawler:
     async def get_creator(
         self,
         *,
-        creator_ids: List[str],
-        max_notes: Optional[int] = None,
+        creator_id:str,
+        page_num: Optional[int] = 1,
+        page_size: Optional[int] = 10,
         enable_get_comments: bool = False,
-        max_comments_per_note: int = 0,
         enable_save_media: bool = False,
-        crawl_interval: float = 1.0,
-        **kwargs: Any
     ) -> Dict[str, Any]:
         """获取创作者信息"""
-        if not creator_ids:
-            raise ValueError("creator_ids 不能为空")
-
-        # 使用全局配置作为默认值
-        crawl_defaults = global_settings.crawl
-        resolved_max_notes = max_notes if max_notes is not None else crawl_defaults.max_notes_count
+        if not creator_id:
+            raise ValueError("creator_id 不能为空")
 
         collected: List[Dict[str, Any]] = []
-        for raw_id in creator_ids:
-            info = _parse_creator_url(raw_id)
-            creator_detail = await self.client.get_creator_info(
-                user_id=info.user_id,
-                xsec_token=info.xsec_token,
-                xsec_source=info.xsec_source,
-            )
-            if creator_detail:
-                await xhs_store.save_creator(info.user_id, creator_detail)
-
-            notes = await self.client.get_all_notes_by_creator(
-                info.user_id,
-                crawl_interval=crawl_interval,
-                callback=self._creator_notes_callback,
-                max_notes=resolved_max_notes,
-            )
-            # 与 MediaCrawler 对齐：拉取每条作品详情，必要时再抓评论
-            details = await self._gather_details_from_items(notes, max_concurrency=5)
-            for detail in details:
-                if not detail:
-                    continue
-                await xhs_store.update_xhs_note(detail)
-                if enable_save_media:
-                    await xhs_store.update_xhs_note_media(detail)
-                collected.append(detail)
-
-            if enable_get_comments and max_comments_per_note > 0 and collected:
-                await self._batch_fetch_comments([d for d in details if d], max_comments_per_note, crawl_interval)
-            await asyncio.sleep(crawl_interval)
+        info = _parse_creator_url(creator_id)
+        creator_detail = await self.client.get_creator_info(
+            user_id=info.user_id,
+            xsec_token=info.xsec_token,
+            xsec_source=info.xsec_source,
+        )
+        if creator_detail:
+            await xhs_store.save_creator(info.user_id, creator_detail)
+        notes = await self.client.get_all_notes_by_creator(
+            info.user_id,
+            page_num=page_num,
+            page_size=page_size,
+            callback=None,  # 不使用callback，在下面统一处理
+        )
+        # 与 MediaCrawler 对齐：拉取每条作品详情，必要时再抓评论
+        details = await self._gather_details_from_items(notes, max_concurrency=5)
+        for detail in details:
+            if not detail:
+                continue
+            await xhs_store.update_xhs_note(detail)
+            if enable_save_media:
+                await xhs_store.update_xhs_note_media(detail)
+            collected.append(detail)
+        if enable_get_comments and collected:
+            # 只抓前50条评论
+            await self._batch_fetch_comments([d for d in details if d], 1, 50)
 
         return {
             "notes": collected,
@@ -332,16 +322,25 @@ class XiaoHongShuCrawler:
         self,
         *,
         note_items: List[Dict[str, Any]],
+        page_num: int = 1,
+        page_size: int = 20,
         max_concurrency: int = 5,
         crawl_interval: float = 1.0,
-        max_comments_per_note: int = 50,
         **kwargs: Any
     ) -> Dict[str, Any]:
-        """获取评论"""
+        """
+        获取评论（支持分页）
+        
+        Args:
+            note_items: 笔记列表
+            page_num: 页码（从1开始）
+            page_size: 每页数量
+            max_concurrency: 最大并发数
+            crawl_interval: 爬取间隔
+        """
         if not note_items:
             raise ValueError("note_items 不能为空")
 
-        semaphore = Semaphore(max_concurrency)
         comments: Dict[str, List[Dict[str, Any]]] = {}
 
         for item in note_items:
@@ -352,7 +351,6 @@ class XiaoHongShuCrawler:
 
             note_id = str(item.get("note_id", "")).strip()
             xsec_token = str(item.get("xsec_token", "") or "")
-            xsec_source = str(item.get("xsec_source", "") or "")
 
             if not note_id:
                 logger.warning("[xhs.comments] note_id 为空，跳过")
@@ -371,9 +369,9 @@ class XiaoHongShuCrawler:
                 await self.client.get_note_all_comments(
                     note_id=note_id,
                     xsec_token=xsec_token,
-                    crawl_interval=crawl_interval,
+                    page_num=page_num,
+                    page_size=page_size,
                     callback=_collector,
-                    max_count=max_comments_per_note,
                 )
             except Exception as exc:
                 logger.error(f"[xhs.comments] 获取评论失败 note_id={note_id}: {exc}")
@@ -526,15 +524,59 @@ class XiaoHongShuCrawler:
         return client
 
     async def _gather_details_from_items(self, items: Iterable[Dict[str, Any]], max_concurrency: int = 5) -> List[Optional[Dict]]:
-        semaphore = Semaphore(max_concurrency)
-        tasks = []
+        """
+        串行获取笔记详情（避免并发导致的page.goto冲突）
+
+        注意：由于使用同一个page对象，并发goto会导致ERR_ABORTED错误，
+        因此这里采用串行方式获取详情
+        """
+        results = []
         for item in items:
             note_info = self._extract_note_info_from_search_item(item)
             if not note_info:
+                results.append(None)
                 continue
             note_id, xsec_source, xsec_token = note_info
-            tasks.append(self._get_note_detail(str(note_id), xsec_source, xsec_token, semaphore))
-        return await asyncio.gather(*tasks)
+
+            # 添加重试机制
+            max_retries = 2
+            detail = None
+            for retry in range(max_retries):
+                try:
+                    detail = await self.client.get_note_by_id_from_html(
+                        note_id,
+                        xsec_source,
+                        xsec_token,
+                        enable_cookie=True,
+                    )
+                    if detail:
+                        # Normalize essential fields
+                        if not detail.get("note_id"):
+                            detail["note_id"] = note_id
+                        xsec_token_val = detail.get("xsec_token") or detail.get("xsecToken") or xsec_token
+                        xsec_source_val = detail.get("xsec_source") or detail.get("xsecSource") or xsec_source
+                        detail["xsec_token"] = xsec_token_val or ""
+                        detail["xsec_source"] = xsec_source_val or ""
+                        if "xsecToken" in detail:
+                            detail.pop("xsecToken", None)
+                        if "xsecSource" in detail:
+                            detail.pop("xsecSource", None)
+                        break
+                    elif retry < max_retries - 1:
+                        logger.warning(f"[xhs.detail] 获取笔记失败，重试 {retry+1}/{max_retries} note_id={note_id}")
+                        await asyncio.sleep(1)
+                except Exception as e:
+                    if retry < max_retries - 1:
+                        logger.warning(f"[xhs.detail] 获取笔记异常，重试 {retry+1}/{max_retries} note_id={note_id}: {e}")
+                        await asyncio.sleep(1)
+                    else:
+                        logger.error(f"[xhs.detail] 获取笔记失败 note_id={note_id}: {e}")
+
+            results.append(detail)
+            # 添加短暂延迟，避免请求过快
+            await asyncio.sleep(0.5)
+
+        return results
 
     def _extract_note_info_from_search_item(self, item: Dict[str, Any]) -> Optional[tuple[str, str, str]]:
         """Best-effort extraction of note_id and xsec fields from a search item.
@@ -542,6 +584,7 @@ class XiaoHongShuCrawler:
         The search API may return different shapes. We support:
         - Top-level note with fields: id/note_id, xsec_token, xsec_source
         - Nested under 'note' or 'note_card'
+        - User profile notes (from user.notes)
         - Only accept items that look like note results (model_type contains 'note')
         """
         model_type = str(item.get("model_type", "")).lower()
@@ -551,6 +594,8 @@ class XiaoHongShuCrawler:
 
         # Candidates to inspect in order
         candidates: List[Dict[str, Any]] = [item]
+        
+        # Handle nested structures
         if isinstance(item.get("note"), dict):
             candidates.append(item.get("note") or {})
         if isinstance(item.get("note_card"), dict):
@@ -563,13 +608,21 @@ class XiaoHongShuCrawler:
         note_id = ""
         xsec_token = ""
         xsec_source = ""
+        
         for cand in candidates:
-            note_id = cand.get("note_id") or cand.get("id") or note_id
-            xsec_token = cand.get("xsec_token", xsec_token)
-            xsec_source = cand.get("xsec_source", xsec_source)
+            # Try multiple field names for note_id
+            if not note_id:
+                note_id = cand.get("note_id") or cand.get("id") or cand.get("noteId") or ""
+            # Get xsec fields
+            if not xsec_token:
+                xsec_token = cand.get("xsec_token") or cand.get("xsecToken") or ""
+            if not xsec_source:
+                xsec_source = cand.get("xsec_source") or cand.get("xsecSource") or ""
+                
         if not note_id:
             return None
-        return str(note_id), str(xsec_source or ""), str(xsec_token or "")
+            
+        return str(note_id), str(xsec_source or "pc_user"), str(xsec_token or "")
 
     async def _get_note_detail(
         self,
@@ -605,7 +658,7 @@ class XiaoHongShuCrawler:
                 detail.pop("xsecSource", None)
             return detail
 
-    async def _batch_fetch_comments(self, details: List[Dict[str, Any]], max_comments: int, crawl_interval: float = 1.0) -> None:
+    async def _batch_fetch_comments(self, details: List[Dict[str, Any]], page_num, page_size) -> None:
         for detail in details:
             note_id = detail.get("note_id")
             if not note_id:
@@ -613,9 +666,9 @@ class XiaoHongShuCrawler:
             await self.client.get_note_all_comments(
                 note_id=note_id,
                 xsec_token=detail.get("xsec_token", ""),
-                crawl_interval=crawl_interval,
                 callback=xhs_store.batch_update_xhs_note_comments,
-                max_count=max_comments,
+                page_num=page_num,
+                page_size=page_size
             )
 
     async def _creator_notes_callback(self, notes: List[Dict[str, Any]]) -> None:
