@@ -14,153 +14,28 @@ from .ui_base import (
 # 表单片段（统一使用 mc-* 样式）
 # ----------------------------------------------------------------------------
 
-def create_platform_selector() -> str:
-    return """
-    <div class="mc-form-group">
-        <label>发布平台</label>
-        <select id="platform-select">
-            <option value="xhs">小红书</option>
-        </select>
-    </div>
-    """
 
 
-def create_content_type_selector() -> str:
-    return """
-    <div class="mc-form-group">
-        <label>内容类型</label>
-        <div class="btn-group" role="group">
-            <button type="button" class="btn btn-secondary is-active" data-type="image" id="btn-type-image">图文</button>
-            <button type="button" class="btn btn-secondary" data-type="video" id="btn-type-video">视频</button>
-        </div>
-        <input type="hidden" id="content-type" value="image" />
-    </div>
-    """
 
 
-def create_title_input() -> str:
-    return """
-    <div class="mc-form-group">
-        <label for="title">标题</label>
-        <input type="text" id="title" placeholder="请输入标题">
-    </div>
-    """
 
 
-def create_content_textarea() -> str:
-    return """
-    <div class="mc-form-group">
-        <label for="content">正文内容</label>
-        <textarea id="content" rows="5" placeholder="请输入正文内容"></textarea>
-    </div>
-    """
 
 
-def create_tags_input() -> str:
-    return """
-    <div class="mc-form-group">
-        <label for="tags">标签</label>
-        <input type="text" id="tags" placeholder="多个标签用逗号分隔，如：美食推荐,好吃">
-    </div>
-    """
 
 
-def create_topics_input() -> str:
-    return """
-    <div class="mc-form-group">
-        <label for="topics">话题</label>
-        <input type="text" id="topics" placeholder="多个话题用逗号分隔，如：#美食探店,#周末好去处">
-    </div>
-    """
 
 
-def create_image_upload_section() -> str:
-    return """
-    <div class="mc-form-group" id="image-upload-section">
-        <label>图片</label>
-        <div class="btn-group" role="group" style="margin-bottom:.5rem;">
-            <button type="button" class="btn btn-secondary is-active" data-mode="path" id="btn-image-path">本地路径</button>
-            <button type="button" class="btn btn-secondary" data-mode="file" id="btn-image-file">文件上传</button>
-        </div>
-        <div id="image-path-input">
-            <textarea id="image-paths" rows="3" placeholder="每行一个本地图片绝对路径"></textarea>
-            <small>最多 9 张图片</small>
-        </div>
-        <div id="image-file-input" class="is-hidden">
-            <div class="mc-dropzone">
-                <p>点击选择或直接拖拽图片到此处</p>
-                <input type="file" id="image-files" multiple accept="image/*" style="display:none">
-                <button type="button" class="btn btn-secondary" id="choose-image-files">选择图片</button>
-            </div>
-        </div>
-        <div id="image-preview" style="margin-top:.75rem;"></div>
-    </div>
-    """
 
 
-def create_video_upload_section() -> str:
-    return """
-    <div class="mc-form-group is-hidden" id="video-upload-section">
-        <label>视频</label>
-        <div class="mc-dropzone">
-            <p>点击选择或拖拽视频到此处</p>
-            <input type="file" id="video-file" accept="video/*" style="display:none">
-            <button type="button" class="btn btn-secondary" id="choose-video-file">选择视频</button>
-        </div>
-        <div id="video-preview" style="margin-top:.75rem;"></div>
-    </div>
-    """
 
 
-def create_location_input() -> str:
-    return """
-    <div class="mc-form-group">
-        <label for="location">定位（可选）</label>
-        <input type="text" id="location" placeholder="请输入地点">
-    </div>
-    """
 
 
-def create_private_switch() -> str:
-    return """
-    <div class="mc-form-group">
-        <label style="display:flex;align-items:center;gap:.5rem;">
-            <input type="checkbox" id="is-private"> 私密发布（仅自己可见）
-        </label>
-    </div>
-    """
 
 
-def create_publish_button() -> str:
-    return """
-    <div class="mc-form-group">
-        <div class="btn-group">
-            <button type="button" class="btn btn-primary" id="publish-btn">发布内容</button>
-            <button type="button" class="btn btn-secondary" id="clear-form-btn">清空</button>
-        </div>
-    </div>
-    """
 
 
-def create_publish_form_card() -> str:
-    return f"""
-    <div class="mc-status-card">
-        <h3>新建发布任务</h3>
-        <div class="mc-form">
-            {create_platform_selector()}
-            {create_content_type_selector()}
-            {create_title_input()}
-            {create_content_textarea()}
-            {create_tags_input()}
-            {create_topics_input()}
-            {create_location_input()}
-            {create_image_upload_section()}
-            {create_video_upload_section()}
-            {create_private_switch()}
-            {create_publish_button()}
-        </div>
-    </div>
-    """
 
 
 def create_strategy_form() -> str:
@@ -206,9 +81,87 @@ def create_task_list_card() -> str:
         <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem; margin-bottom: .5rem;">
             <h3 style="margin:0;">发布任务队列</h3>
             <div class="btn-group">
+                <button type="button" class="btn btn-primary" id="btn-publish-xhs">发布小红书</button>
+                <button type="button" class="btn btn-primary" id="btn-publish-dy" disabled>发布抖音</button>
                 <button type="button" class="btn btn-secondary" id="refresh-tasks-btn">刷新</button>
             </div>
         </div>
+        
+        <!-- 小红书发布折叠框 -->
+        <div id="xhs-publish-collapse" class="publish-collapse" style="display: none;">
+            <div class="mc-form" style="border: 1px solid var(--border-color, #e2e8f0); border-radius: .5rem; padding: 1rem; margin-bottom: 1rem; background: var(--item-bg, #f8fafc);">
+                <h5 style="margin: 0 0 1rem 0; color: var(--text-color, #1f2937);">小红书发布参数</h5>
+                <div class="mc-form-group">
+                    <label>内容类型</label>
+                    <div class="btn-group" role="group">
+                        <button type="button" class="btn btn-secondary is-active" data-type="image" id="xhs-btn-type-image">图文</button>
+                        <button type="button" class="btn btn-secondary" data-type="video" id="xhs-btn-type-video">视频</button>
+                    </div>
+                    <input type="hidden" id="xhs-content-type" value="image" />
+                </div>
+                <div class="mc-form-group">
+                    <label for="xhs-title">标题</label>
+                    <input type="text" id="xhs-title" placeholder="请输入标题">
+                </div>
+                <div class="mc-form-group">
+                    <label for="xhs-content">正文内容</label>
+                    <textarea id="xhs-content" rows="5" placeholder="请输入正文内容"></textarea>
+                </div>
+                <div class="mc-form-group">
+                    <label for="xhs-tags">标签</label>
+                    <input type="text" id="xhs-tags" placeholder="多个标签用逗号分隔，如：美食推荐,好吃">
+                </div>
+                <div class="mc-form-group">
+                    <label for="xhs-topics">话题</label>
+                    <input type="text" id="xhs-topics" placeholder="多个话题用逗号分隔，如：#美食探店,#周末好去处">
+                </div>
+                <div class="mc-form-group" id="xhs-image-upload-section">
+                    <label>图片上传</label>
+                    <div class="mc-dropzone" id="xhs-image-dropzone">
+                        <p>点击选择或直接拖拽图片到此处</p>
+                        <input type="file" id="xhs-image-files" multiple accept="image/*" style="display:none">
+                        <button type="button" class="btn btn-secondary" id="xhs-choose-images">选择图片</button>
+                        <small style="display:block;margin-top:0.5rem;">最多支持9张图片，支持JPG、PNG等格式</small>
+                    </div>
+                    <div id="xhs-image-preview" style="margin-top:0.75rem;"></div>
+                </div>
+                <div class="mc-form-group is-hidden" id="xhs-video-upload-section">
+                    <label>视频上传</label>
+                    <div class="mc-dropzone" id="xhs-video-dropzone">
+                        <p>点击选择或直接拖拽视频到此处</p>
+                        <input type="file" id="xhs-video-file" accept="video/*" style="display:none">
+                        <button type="button" class="btn btn-secondary" id="xhs-choose-video">选择视频</button>
+                        <small style="display:block;margin-top:0.5rem;">支持MP4、MOV等格式</small>
+                    </div>
+                    <div id="xhs-video-preview" style="margin-top:0.75rem;"></div>
+                </div>
+                <div class="mc-form-group">
+                    <label for="xhs-location">定位（可选）</label>
+                    <input type="text" id="xhs-location" placeholder="请输入地点">
+                </div>
+                <div class="mc-form-group">
+                    <label style="display:flex;align-items:center;gap:.5rem;">
+                        <input type="checkbox" id="xhs-is-private"> 私密发布（仅自己可见）
+                    </label>
+                </div>
+                <div class="mc-form-group">
+                    <div class="btn-group">
+                        <button type="button" class="btn btn-primary" id="xhs-publish-btn">立即发布</button>
+                        <button type="button" class="btn btn-secondary" id="xhs-clear-btn">清空</button>
+                        <button type="button" class="btn btn-secondary" id="xhs-cancel-btn">取消</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 抖音发布折叠框（暂时禁用） -->
+        <div id="dy-publish-collapse" class="publish-collapse" style="display: none;">
+            <div class="mc-form" style="border: 1px solid var(--border-color, #e2e8f0); border-radius: .5rem; padding: 1rem; margin-bottom: 1rem; background: var(--item-bg, #f8fafc);">
+                <h5 style="margin: 0 0 1rem 0; color: var(--text-color, #1f2937);">抖音发布参数</h5>
+                <p style="color: var(--text-muted, #6b7280);">抖音发布功能暂未开放</p>
+            </div>
+        </div>
+        
         <div id="queue-stats" style="color: var(--text-muted, #6b7280); margin-bottom:.5rem;">统计加载中...</div>
         <div id="task-list" class="mc-queue-list"></div>
         <div id="pagination" class="mc-pagination" aria-label="Pagination"></div>
@@ -216,11 +169,74 @@ def create_task_list_card() -> str:
     """
 
 
+
+
 def create_publish_styles() -> str:
     return """
     <style>
-    .mc-dropzone { border: 1px dashed var(--border-color, #e2e8f0); padding: 1rem; text-align:center; border-radius: .5rem; color: var(--text-muted, #6b7280); }
-    .mc-dropzone:hover { background: var(--item-bg, #f8fafc); }
+    .mc-dropzone { 
+        border: 2px dashed var(--border-color, #e2e8f0); 
+        padding: 2rem; 
+        text-align: center; 
+        border-radius: .5rem; 
+        color: var(--text-muted, #6b7280);
+        background: var(--bg-color, #fafafa);
+        transition: all 0.3s ease;
+        cursor: pointer;
+    }
+    .mc-dropzone:hover { 
+        background: var(--item-bg, #f0f0f0); 
+        border-color: var(--primary-color, #007bff);
+    }
+    .mc-dropzone.dragover {
+        background: var(--primary-bg, #e3f2fd);
+        border-color: var(--primary-color, #007bff);
+        color: var(--primary-color, #007bff);
+    }
+    .is-hidden { display: none !important; }
+    .publish-collapse { 
+        transition: all 0.3s ease-in-out; 
+        overflow: hidden;
+    }
+    .btn.is-active {
+        background-color: var(--primary-color, #007bff) !important;
+        color: white !important;
+        border-color: var(--primary-color, #007bff) !important;
+    }
+    .image-preview-item {
+        display: inline-block;
+        position: relative;
+        margin: 0.25rem;
+        border-radius: 0.375rem;
+        overflow: hidden;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+    }
+    .image-preview-item img {
+        width: 80px;
+        height: 80px;
+        object-fit: cover;
+        display: block;
+    }
+    .image-preview-item .remove-btn {
+        position: absolute;
+        top: 4px;
+        right: 4px;
+        width: 20px;
+        height: 20px;
+        background: rgba(220, 53, 69, 0.9);
+        color: white;
+        border: none;
+        border-radius: 50%;
+        font-size: 12px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+    }
+    .image-preview-item .remove-btn:hover {
+        background: rgba(220, 53, 69, 1);
+    }
     </style>
     """
 
@@ -241,9 +257,10 @@ def render_publish_management_page() -> HTMLResponse:
     main = f"""
         {header}
         <div class="mc-dashboard-grid">
-            {create_publish_form_card()}
-            {create_strategy_card()}
             {create_task_list_card()}
+        </div>
+        <div class="mc-dashboard-grid" style="margin-top: 2rem;">
+            {create_strategy_card()}
         </div>
         {create_publish_styles()}
         {create_publish_scripts()}
@@ -254,4 +271,3 @@ def render_publish_management_page() -> HTMLResponse:
         title="发布管理 · MediaCrawler MCP",
         current_path="/publish"
     )
-

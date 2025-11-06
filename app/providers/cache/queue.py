@@ -66,6 +66,16 @@ class PublishTask(BaseModel):
     error_detail: Optional[str] = Field(None, description="错误详情")
     result: Optional[Dict[str, Any]] = Field(None, description="执行结果")
     
+    def model_dump(self, **kwargs) -> Dict[str, Any]:
+        """重写model_dump确保枚举值被正确序列化"""
+        data = super().model_dump(**kwargs)
+        # 确保枚举类型被转换为值
+        if isinstance(data.get('status'), TaskStatus):
+            data['status'] = data['status'].value
+        if isinstance(data.get('task_type'), TaskType):
+            data['task_type'] = data['task_type'].value
+        return data
+    
     class Config:
         use_enum_values = True
 
@@ -122,6 +132,7 @@ class PlatformQueuer:
         # Redis键前缀
         self.key_prefix = f"publish_queue:{platform}"
         self.queue_key = f"{self.key_prefix}:queue"
+        self.pending_key = f"{self.key_prefix}:pending"
         self.processing_key = f"{self.key_prefix}:processing"
         self.tasks_key = f"{self.key_prefix}:tasks"
         self.stats_key = f"{self.key_prefix}:stats"
@@ -180,7 +191,8 @@ class PlatformQueuer:
         task.status = TaskStatus.QUEUED
         task.queued_at = time.time()
         
-        task_json = ujson.dumps(task.model_dump())
+        task_data = task.model_dump()
+        task_json = ujson.dumps(task_data)
         await self.redis.hset(self.tasks_key, task.task_id, task_json)
         
         # 加入优先级队列
@@ -188,6 +200,17 @@ class PlatformQueuer:
         await self.redis.zadd(self.queue_key, {task.task_id: score})
         
         logger.info(f"[Queuer] {self.platform} 任务已入队: {task.task_id}")
+
+    async def add_pending(self, task: PublishTask) -> None:
+        """添加任务到待审核列表（不进入发布队列）"""
+        task.status = TaskStatus.PENDING
+        task.queued_at = None
+        task_data = task.model_dump()
+        task_json = ujson.dumps(task_data)
+        await self.redis.hset(self.tasks_key, task.task_id, task_json)
+        # 使用创建时间作为排序，最新在前
+        await self.redis.zadd(self.pending_key, {task.task_id: task.created_at})
+        logger.info(f"[Queuer] {self.platform} 任务进入待审核: {task.task_id}")
     
     async def get_task_status(self, task_id: str) -> Optional[PublishTask]:
         """获取任务状态"""
@@ -202,6 +225,7 @@ class PlatformQueuer:
         """获取队列统计"""
         queue_size = await self.redis.zcard(self.queue_key)
         processing_count = await self.redis.scard(self.processing_key)
+        pending_count = await self.redis.zcard(self.pending_key)
         
         # 发布历史统计
         now = time.time()
@@ -219,6 +243,7 @@ class PlatformQueuer:
             "platform": self.platform,
             "queue_size": queue_size,
             "processing_count": processing_count,
+            "pending_count": pending_count,
             "daily_published": daily_count,
             "hourly_published": hourly_count,
             "last_publish_time": last_publish_time,
@@ -339,8 +364,88 @@ class PlatformQueuer:
     
     async def _update_task(self, task: PublishTask) -> None:
         """更新任务数据"""
-        task_json = ujson.dumps(task.model_dump())
+        task_data = task.model_dump()
+        task_json = ujson.dumps(task_data)
         await self.redis.hset(self.tasks_key, task.task_id, task_json)
+
+    async def list_pending(self, limit: int = 50, offset: int = 0) -> List[PublishTask]:
+        """列出待审核任务（按创建时间倒序）"""
+        # zrange 默认从小到大；我们使用 zrevrange 取最新
+        ids = await self.redis.zrevrange(self.pending_key, offset, offset + limit - 1)
+        if not ids:
+            return []
+        if len(ids) == 1:
+            data = [await self.redis.hget(self.tasks_key, ids[0])]
+        else:
+            data = await self.redis.hmget(self.tasks_key, *ids)
+        tasks: List[PublishTask] = []
+        for raw in data:
+            if not raw:
+                continue
+            try:
+                tasks.append(PublishTask.model_validate(ujson.loads(raw)))
+            except Exception:
+                continue
+        return tasks
+
+    async def approve(self, task_id: str) -> None:
+        """审核通过：从待审核移动到发布队列"""
+        # 先从 pending 集合移除
+        await self.redis.zrem(self.pending_key, task_id)
+        # 读取任务并入队
+        task_data = await self.redis.hget(self.tasks_key, task_id)
+        if not task_data:
+            raise ValueError("任务不存在")
+        task = PublishTask.model_validate(ujson.loads(task_data))
+        await self.add_task(task)
+
+    async def reject(self, task_id: str, reason: str | None = None) -> None:
+        """审核拒绝：标记任务为取消并从待审核移除"""
+        task_data = await self.redis.hget(self.tasks_key, task_id)
+        if not task_data:
+            return
+        task = PublishTask.model_validate(ujson.loads(task_data))
+        task.status = TaskStatus.CANCELLED
+        task.completed_at = time.time()
+        task.message = reason or "审核拒绝"
+        await self._update_task(task)
+        await self.redis.zrem(self.pending_key, task_id)
+
+    async def list_tasks(self, limit: int = 50) -> List[PublishTask]:
+        """列出平台所有任务（按创建时间倒序，限制数量）"""
+        all_map = await self.redis.hgetall(self.tasks_key)
+        items: List[PublishTask] = []
+        for _, raw in all_map.items():
+            try:
+                items.append(PublishTask.model_validate(ujson.loads(raw)))
+            except Exception:
+                continue
+        items.sort(key=lambda x: x.created_at or 0, reverse=True)
+        return items[:limit]
+
+    async def update_pending(self, task_id: str, changes: Dict[str, Any]) -> PublishTask:
+        """更新待审核任务的负载或附加字段"""
+        # 必须是待审核集合中的任务
+        in_pending = await self.redis.zscore(self.pending_key, task_id)
+        if in_pending is None:
+            raise ValueError("任务不在待审核列表")
+        task_data = await self.redis.hget(self.tasks_key, task_id)
+        if not task_data:
+            raise ValueError("任务不存在")
+        task = PublishTask.model_validate(ujson.loads(task_data))
+        if task.status != TaskStatus.PENDING:
+            raise ValueError("任务状态非待审核，无法编辑")
+
+        # 合并变更到 payload
+        payload = task.payload or {}
+        if not isinstance(payload, dict):
+            payload = {}
+        for k, v in (changes or {}).items():
+            payload[k] = v
+        task.payload = payload
+        task.message = "待审核(已编辑)"
+        await self._update_task(task)
+        return task
     
     async def _record_publish(self, timestamp: float) -> None:
         """记录发布时间"""
@@ -447,6 +552,13 @@ class PublishQueue:
         
         queuer = self.platform_queuers[task.platform]
         await queuer.add_task(task)
+
+    async def submit_task_pending(self, task: PublishTask) -> None:
+        """提交待审核任务（不立即入队）"""
+        if task.platform not in self.platform_queuers:
+            raise ValueError(f"未支持的平台: {task.platform}")
+        queuer = self.platform_queuers[task.platform]
+        await queuer.add_pending(task)
     
     async def get_task_status(self, task_id: str, platform: str) -> Optional[PublishTask]:
         """获取任务状态"""
@@ -479,7 +591,8 @@ class PublishQueue:
         """获取平台发布策略"""
         if platform not in self.platform_queuers:
             return None
-        
+        return self.platform_queuers[platform].strategy
+
     async def get_all_stats(self) -> Dict[str, Any]:
         """获取所有队列统计"""
         stats = {
@@ -502,3 +615,29 @@ class PublishQueue:
             stats["platforms"][platform] = platform_stats
         
         return stats
+
+    # ----- 审核相关的便捷方法 -----
+    async def list_pending_tasks(self, platform: str, limit: int = 50, offset: int = 0) -> List[PublishTask]:
+        if platform not in self.platform_queuers:
+            return []
+        return await self.platform_queuers[platform].list_pending(limit=limit, offset=offset)
+
+    async def approve_task(self, platform: str, task_id: str) -> None:
+        if platform not in self.platform_queuers:
+            raise ValueError(f"未支持的平台: {platform}")
+        await self.platform_queuers[platform].approve(task_id)
+
+    async def reject_task(self, platform: str, task_id: str, reason: Optional[str] = None) -> None:
+        if platform not in self.platform_queuers:
+            raise ValueError(f"未支持的平台: {platform}")
+        await self.platform_queuers[platform].reject(task_id, reason)
+
+    async def list_tasks(self, platform: str, limit: int = 50) -> List[PublishTask]:
+        if platform not in self.platform_queuers:
+            return []
+        return await self.platform_queuers[platform].list_tasks(limit=limit)
+
+    async def update_pending_task(self, platform: str, task_id: str, changes: Dict[str, Any]) -> PublishTask:
+        if platform not in self.platform_queuers:
+            raise ValueError(f"未支持的平台: {platform}")
+        return await self.platform_queuers[platform].update_pending(task_id, changes)

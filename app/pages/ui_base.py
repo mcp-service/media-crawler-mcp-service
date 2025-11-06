@@ -32,7 +32,8 @@ from fastmcp.utilities.ui import (
 # Relaxed CSP to allow inline scripts and same-origin fetch used by pages
 DEFAULT_CSP = (
     "default-src 'self'; style-src 'unsafe-inline'; img-src https: data:; "
-    "script-src 'unsafe-inline' 'self'; connect-src 'self'; base-uri 'none'"
+    "script-src 'unsafe-inline' 'self'; connect-src 'self'; base-uri 'none'; "
+    "font-src 'self' data: https: http:"
 )
 
 

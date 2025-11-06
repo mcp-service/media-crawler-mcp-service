@@ -21,6 +21,8 @@ from app.config.settings import Platform, global_settings
 from app.core.crawler.platforms import xhs as xhs_core
 from app.core.login.exceptions import LoginExpiredError
 from app.providers.logger import get_logger
+from app.providers.cache.queue import PublishTask, TaskType
+import uuid
 
 logger = get_logger()
 
@@ -271,47 +273,34 @@ async def publish_image(title: str, content: str, images: list[str], tags: list[
     except ValidationError as exc:
         return _validation_error(exc)
 
+    # 改为进入待审核队列，不直接发布
     try:
-        # 直接实例化Crawler调用方法
-        crawler = xhs_core.XiaoHongShuCrawler(
-            headless=global_settings.browser.headless,
-            extra={"no_auto_login": True}
-        )
-        await crawler._ensure_browser_and_client()
+        from app.api_service import get_publish_queue
 
-        # Import and use publisher
-        from app.core.crawler.platforms.xhs.publish import XhsPublisher
-
-        publisher = XhsPublisher(
-            page=crawler.context_page,
-        )
-
-        result = await publisher.publish_image_post(
-            title=req.title,
-            content=req.content,
-            images=req.images,
-            tags=req.tags or [],
+        task_id = str(uuid.uuid4())
+        task = PublishTask(
+            task_id=task_id,
+            platform="xhs",
+            task_type=TaskType.IMAGE,
+            payload={
+                "title": req.title,
+                "content": req.content,
+                "tags": req.tags or [],
+                # 队列执行器使用 image_paths 字段
+                "image_paths": req.images,
+            },
         )
 
-        await crawler.close()
+        await get_publish_queue().submit_task_pending(task)
 
         return {
             "code": error_codes.SUCCESS[0],
             "msg": error_codes.SUCCESS[1],
-            "data": {
-                "success": result.get("success", False),
-                "message": result.get("message", ""),
-            },
+            "data": {"task_id": task_id, "status": "pending", "message": "已进入审核队列"},
         }
-    except LoginExpiredError:
-        return {
-            "code": error_codes.INVALID_TOKEN[0],
-            "msg": "登录过期，Cookie失效",
-            "data": {},
-        }
-    except Exception as exc:
-        logger.error(f"[xhs.publish] failed: {exc}")
-        return _server_error(f"小红书发布失败: {exc}")
+    except Exception as exc:  # pragma: no cover - runtime safeguard
+        logger.error(f"[xhs.publish.enqueue] failed: {exc}")
+        return _server_error(f"小红书发布任务入队失败: {exc}")
 
 
 @xhs_mcp.tool(
@@ -330,47 +319,34 @@ async def publish_video(title: str, content: str, video: str, tags: list[str] | 
     except ValidationError as exc:
         return _validation_error(exc)
 
+    # 改为进入待审核队列，不直接发布
     try:
-        # 直接实例化Crawler调用方法
-        crawler = xhs_core.XiaoHongShuCrawler(
-            headless=global_settings.browser.headless,
-            extra={"no_auto_login": True}
-        )
-        await crawler._ensure_browser_and_client()
+        from app.api_service import get_publish_queue
 
-        # Import and use publisher
-        from app.core.crawler.platforms.xhs.publish import XhsPublisher
-
-        publisher = XhsPublisher(
-            page=crawler.context_page,
-        )
-
-        result = await publisher.publish_video_post(
-            title=req.title,
-            content=req.content,
-            video=req.video,
-            tags=req.tags or [],
+        task_id = str(uuid.uuid4())
+        task = PublishTask(
+            task_id=task_id,
+            platform="xhs",
+            task_type=TaskType.VIDEO,
+            payload={
+                "title": req.title,
+                "content": req.content,
+                "tags": req.tags or [],
+                # 队列执行器使用 video_path 字段
+                "video_path": req.video,
+            },
         )
 
-        await crawler.close()
+        await get_publish_queue().submit_task_pending(task)
 
         return {
             "code": error_codes.SUCCESS[0],
             "msg": error_codes.SUCCESS[1],
-            "data": {
-                "success": result.get("success", False),
-                "message": result.get("message", ""),
-            },
+            "data": {"task_id": task_id, "status": "pending", "message": "已进入审核队列"},
         }
-    except LoginExpiredError:
-        return {
-            "code": error_codes.INVALID_TOKEN[0],
-            "msg": "登录过期，Cookie失效",
-            "data": {},
-        }
-    except Exception as exc:
-        logger.error(f"[xhs.publish_video] failed: {exc}")
-        return _server_error(f"小红书发布视频失败: {exc}")
+    except Exception as exc:  # pragma: no cover - runtime safeguard
+        logger.error(f"[xhs.publish_video.enqueue] failed: {exc}")
+        return _server_error(f"小红书发布视频任务入队失败: {exc}")
 
 
 async def _safe_json(request) -> Dict[str, Any]:
