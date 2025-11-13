@@ -42,7 +42,7 @@ services:
 
   mcp-service:
     build:
-      context: ..
+      context: .
       dockerfile: Dockerfile
     image: media-crawler-mcp:latest
     restart: unless-stopped
@@ -53,7 +53,7 @@ services:
         condition: service_healthy
     environment:
       APP__HOST: 0.0.0.0
-      APP__PORT: ${APP__PORT:-9090}
+      APP__PORT: 9090
       DB__HOST: postgres
       DB__PORT: 5432
       REDIS__HOST: redis

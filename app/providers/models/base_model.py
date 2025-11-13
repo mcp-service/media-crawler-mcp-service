@@ -1,7 +1,7 @@
-from tortoise.queryset import QuerySet
-from tortoise import Model, fields
-from tortoise.manager import Manager
 from tortoise.models import Model
+from tortoise import fields
+from tortoise.manager import Manager
+from tortoise.queryset import QuerySet
 from datetime import datetime
 
 
